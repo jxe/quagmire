@@ -1,4 +1,4 @@
-# Editor
+# Quagmire
 
 A single-page block editor for iOS 26 / macOS 26, written in SwiftUI. The
 host owns three things per editing session: a `Document` (the persisted
@@ -10,6 +10,38 @@ or navigation.** The host wires those up.
 
 Designed to be embedded in apps that want a native block editor without
 inheriting a particular filesystem, serialization format, or visual identity.
+
+The name is deliberate: rich-text editing is notoriously a quagmire, while the
+package's job is to make that complexity embeddable. The known search tradeoffs
+were accepted at naming time: an unrelated Python package already uses
+`quagmire`, and the ordinary word and popular-culture associations are crowded;
+no conflicting Swift module was found in the 2026-08-15 screening.
+
+---
+
+## Installation
+
+Quagmire currently supports iOS 26 and macOS 26 with Swift 6.2. Until the
+standalone repository and `0.1.0` release are published, add it as a local
+SwiftPM dependency:
+
+```swift
+dependencies: [
+    .package(path: "../Quagmire")
+],
+targets: [
+    .target(
+        name: "YourApp",
+        dependencies: [
+            .product(name: "Quagmire", package: "Quagmire")
+        ]
+    )
+]
+```
+
+Then use `import Quagmire`. A remote URL and exact-version installation snippet
+will replace the local-path example when `0.1.0` is published; this README does
+not advertise a repository or release that does not yet exist.
 
 ---
 
@@ -152,7 +184,7 @@ staying put.
 
 ```swift
 import SwiftUI
-import Editor
+import Quagmire
 
 @MainActor
 final class MyHost: EditorHost {
@@ -341,68 +373,29 @@ public final class Document: Identifiable {
 
 The volatile session state that lives alongside `Document`: selection,
 edit mode, in-flight gestures, expanded toggles, hover, drop targets.
-The host constructs and owns one `EditorState` per `EditorView` (and can
-`@Bindable` it for sibling UI like a status bar to observe). Mutation
-flows through named methods inside the package — `internal(set)` blocks
-external writes.
-
-The state space is one enum carrying what the user is fundamentally
-doing, plus ambient annotations:
+The host constructs and owns one `EditorState` per `EditorView`. Quagmire keeps
+the transition machinery internal and exposes the stable read-only projections
+a sibling host UI can use:
 
 ```swift
 @Observable @MainActor
 public final class EditorState {
-    public internal(set) var sessionState: SessionState
-
-    // Ambient — coexist with any session state
-    public internal(set) var hoveredBlock: BlockID?
-    public internal(set) var hoveredHandle: BlockID?
-    public internal(set) var currentDropTarget: DropTarget?
-    public internal(set) var expandedToggles: Set<BlockID>
-    public internal(set) var expandedTemplates: Set<BlockID>
-    public internal(set) var actionToast: String?
-}
-
-public enum SessionState: Equatable, Sendable {
-    /// Block-level selection, no caret. The `gesture` rides on top of
-    /// nav-mode selection — nil during normal navigation, non-nil during
-    /// drag-reorder or pinch-to-insert.
-    case navigating(Selection, gesture: Gesture?)
-    /// One block has the live `BlockTextEditor` mounted; cursor lives
-    /// inside NSTextView/UITextView. The optional overlay is a modal
-    /// popover layered on top (currently only the @-mention menu).
-    case editing(BlockID, overlay: Overlay?)
-}
-
-public enum Overlay: Equatable, Sendable {
-    case mention(MentionMenuState)
-}
-
-public enum Gesture: Equatable, Sendable {
-    case reordering(ReorderLift)
-    case pinchOpening(PinchPreviewState)
+    public init()
+    public var selection: Set<BlockID> { get }
+    public var anchor: BlockID? { get }
+    public var cursor: BlockID? { get }
+    public var editingBlock: BlockID? { get }
+    public func appendBlocks(
+        _ blocks: [Block],
+        actionName: String = "Insert Blocks"
+    )
 }
 ```
 
-- `.navigating(Selection, gesture:)` — block-level selection. The
-  `gesture` slot makes "gesturing while editing" structurally impossible:
-  beginning a gesture commits or cancels any active edit first.
-- `.editing(BlockID, overlay:)` — one block has the live editor mounted,
-  with an optional modal overlay (currently the @-mention popover).
-- Ambient state (hover, drop targets, expanded toggles, action toast)
-  coexists with any session state.
-
-**Computed read accessors** flatten the cases back to flat properties so
-hosts that only want one slice don't have to switch on `sessionState`:
-`state.selection`, `state.cursor`, `state.anchor`, `state.editingBlock`,
-`state.mentionMenu`, `state.reorderLift`, `state.pinchPreview`,
-`state.dropHoverPath` (the insertion-path projection of
-`currentDropTarget`), `state.dropOntoBlockID` (the row-id projection).
-
-**Mutation flows through named methods inside the package**
-(`enterEditMode`, `setReorderLift`, `setMentionMenu`, etc.). Public
-properties are `internal(set)` so the host can read but not write —
-all transitions are funneled through methods that maintain invariants.
+`selection`, `anchor`, `cursor`, and `editingBlock` are computed views of the
+internal editing state. Hover, menus, drop targets, expanded containers, and
+gesture transitions are intentionally package-private implementation details.
+This keeps hosts from constructing invalid transition combinations.
 
 **`appendBlocks(_:actionName:)`** is the one externally-mutating method
 exposed to hosts: a buffered append that the editor consumes via an
@@ -486,6 +479,20 @@ is one extension point. Only `persistCommit` and `flush` are mandatory.
   resets; explicitly cleared on document switch via `.onChange(of:
   document.id)`.
 
+### Actor and threading expectations
+
+- `Document`, `EditorState`, `EditorView`, and `EditorHost` are main-actor
+  APIs. Construct them and call their methods from `@MainActor` code.
+- `persistCommit` is synchronous because it runs at the document mutation
+  boundary. A host that performs asynchronous I/O should enqueue that work and
+  make `flush(_:)` await everything already queued for the document.
+- Async host hooks may suspend while doing storage or network work, but their
+  protocol entry and result handling remain main-actor isolated.
+- Value snapshots such as `Block`, `BlockID`, and `DocumentChange` are
+  `Sendable`, so a host can copy the values it needs into its own background
+  persistence task without passing the observable document object across
+  actors.
+
 ---
 
 ## What the editor doesn't do
@@ -503,11 +510,25 @@ is one extension point. Only `persistCommit` and `flush` are mandatory.
 ## Tests
 
 ```sh
-swift test --package-path Packages/Editor
+swift test
+./scripts/verify.sh
 ```
 
-Covers autotransforms, document tree mutations + walker semantics,
-mention-trigger detection, the reorder drop resolver, the nav-mode
-key binding table, the inline-marks bridge (NSAttributedString ↔
-typed `InlineAttributes` round-trip), and title abbreviation. Headless,
-fast.
+`swift test` runs the internal behavior suite, the bundled-resource smoke test,
+and a separate public-consumer target that uses a normal `import Quagmire` and
+implements only `persistCommit` and `flush`. The verification script starts
+from a clean package build, runs those tests, and then performs clean macOS and
+iOS Simulator builds.
+
+## Versioning
+
+Quagmire follows Semantic Versioning. Before `1.0.0`, minor releases may refine
+the public API and exact-version dependencies are recommended for production
+consumers. Patch releases should remain source-compatible within their minor
+line. `1.0.0` will be an explicit compatibility commitment after the host
+boundary has been exercised outside Hunch.
+
+The package manifest uses compatible dependency requirements so downstream
+consumers can resolve one coherent graph. This library intentionally does not
+track `Package.resolved`; verification records the version SwiftPM actually
+selected.

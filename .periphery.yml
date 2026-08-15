@@ -1,8 +1,8 @@
-# Periphery config for the Editor SPM package.
+# Periphery config for the Quagmire SPM package.
 #
 # Run from this directory: `periphery scan`
 #
-# - `retain_public: true` because Editor IS a library — its public surface
+# - `retain_public: true` because Quagmire IS a library — its public surface
 #   is consumed by the Hunch app target (not visible to this scan).
 #   Without this, every public method on `EditorView`, `EditorState`,
 #   `Document`, `EditorHost`, etc. would surface as redundant.

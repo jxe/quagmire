@@ -2,28 +2,32 @@
 import PackageDescription
 
 let package = Package(
-    name: "Editor",
+    name: "Quagmire",
     platforms: [
         .iOS(.v26),
         .macOS(.v26)
     ],
     products: [
-        .library(name: "Editor", type: .static, targets: ["Editor"])
+        .library(name: "Quagmire", targets: ["Quagmire"])
     ],
     dependencies: [
-        .package(url: "https://github.com/danielsaidi/EmojiKit.git", exact: "3.0.0")
+        .package(url: "https://github.com/danielsaidi/EmojiKit.git", from: "3.0.0")
     ],
     targets: [
         .target(
-            name: "Editor",
+            name: "Quagmire",
             dependencies: [
                 .product(name: "EmojiKit", package: "EmojiKit")
             ],
             resources: [.process("Resources/Sounds")]
         ),
         .testTarget(
-            name: "EditorTests",
-            dependencies: ["Editor"]
+            name: "QuagmireTests",
+            dependencies: ["Quagmire"]
+        ),
+        .testTarget(
+            name: "QuagmirePublicAPITests",
+            dependencies: ["Quagmire"]
         )
     ],
     swiftLanguageModes: [.v6]
