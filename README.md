@@ -21,13 +21,15 @@ no conflicting Swift module was found in the 2026-08-15 screening.
 
 ## Installation
 
-Quagmire currently supports iOS 26 and macOS 26 with Swift 6.2. Until the
-standalone repository and `0.1.0` release are published, add it as a local
-SwiftPM dependency:
+Quagmire supports iOS 26 and macOS 26 with Swift 6.2. Add the package with an
+exact version while its pre-1.0 API is settling:
 
 ```swift
 dependencies: [
-    .package(path: "../Quagmire")
+    .package(
+        url: "https://github.com/jxe/quagmire.git",
+        exact: "0.1.0"
+    )
 ],
 targets: [
     .target(
@@ -39,9 +41,10 @@ targets: [
 ]
 ```
 
-Then use `import Quagmire`. A remote URL and exact-version installation snippet
-will replace the local-path example when `0.1.0` is published; this README does
-not advertise a repository or release that does not yet exist.
+Then use `import Quagmire`. For coordinated local development, replace the
+remote package with a local checkout in Xcode or temporarily use
+`.package(path: "../quagmire")`; restore an exact released version before
+shipping the host.
 
 ---
 
