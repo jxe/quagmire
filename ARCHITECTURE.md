@@ -1,7 +1,10 @@
 # Quagmire architecture
 
-Quagmire is one SwiftPM library target. It intentionally presents a coherent
-editor rather than a collection of independently versioned submodules.
+Quagmire's core is one SwiftPM library target. It intentionally presents a
+coherent editor rather than a collection of independently versioned
+submodules. The separately imported `QuagmireExtras` product offers reusable,
+opt-in host implementations without expanding the core editor's dependencies
+or responsibilities.
 
 ## Ownership
 
@@ -17,6 +20,19 @@ The embedding host owns:
 - persistence, durability, serialization, and recovery;
 - page identity resolution, navigation, images, previews, and page lifecycle;
 - optional product actions, fonts, colors, feedback policy, and logging policy.
+
+`QuagmireExtras` supplies implementations a host may choose to adopt:
+
+- inline external-link metadata fetching and an injected-directory disk cache;
+- durable voice recording, transcription, interrupted-recording recovery, a
+  reusable toolbar button, and the package's App Intent;
+- the shared conservative on-device transcript-polishing action.
+
+Hosts still choose support directories, recording destinations, transcript
+delivery, toolbar placement, entitlements, usage descriptions, and surrounding
+error/recovery presentation. An app-target `AppShortcutsProvider` must register
+`StartVoiceRecordingIntent` with literal shortcut metadata so Xcode includes
+the reusable intent in the built application's shortcut metadata.
 
 `EditorHost` is the seam between those responsibilities. Only
 `persistCommit(changes:in:)` and `flush(_:)` are mandatory; every optional

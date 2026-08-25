@@ -8,7 +8,8 @@ let package = Package(
         .macOS(.v26)
     ],
     products: [
-        .library(name: "Quagmire", targets: ["Quagmire"])
+        .library(name: "Quagmire", targets: ["Quagmire"]),
+        .library(name: "QuagmireExtras", targets: ["QuagmireExtras"])
     ],
     dependencies: [
         .package(url: "https://github.com/danielsaidi/EmojiKit.git", from: "3.0.0")
@@ -24,6 +25,10 @@ let package = Package(
                 .process("Resources/EmojiAnnotations")
             ]
         ),
+        .target(
+            name: "QuagmireExtras",
+            dependencies: ["Quagmire"]
+        ),
         .testTarget(
             name: "QuagmireTests",
             dependencies: ["Quagmire"]
@@ -31,6 +36,14 @@ let package = Package(
         .testTarget(
             name: "QuagmirePublicAPITests",
             dependencies: ["Quagmire"]
+        ),
+        .testTarget(
+            name: "QuagmireExtrasTests",
+            dependencies: ["QuagmireExtras", "Quagmire"]
+        ),
+        .testTarget(
+            name: "QuagmireExtrasPublicAPITests",
+            dependencies: ["QuagmireExtras", "Quagmire"]
         )
     ],
     swiftLanguageModes: [.v6]

@@ -21,8 +21,8 @@ From the repository root:
 
 For a quicker edit-test loop, run `swift test`. The full script cleans the
 package, runs every test target, and performs clean macOS and iOS Simulator
-builds. It is the local release gate; the project deliberately has no duplicate
-example app or CI workflow.
+builds for both `Quagmire` and `QuagmireExtras`. It is the local release gate;
+the project deliberately has no duplicate example app or CI workflow.
 
 ## Change boundaries
 

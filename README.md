@@ -28,7 +28,7 @@ exact version while its pre-1.0 API is settling:
 dependencies: [
     .package(
         url: "https://github.com/jxe/quagmire.git",
-        exact: "0.1.0"
+        exact: "0.2.0"
     )
 ],
 targets: [
@@ -45,6 +45,23 @@ Then use `import Quagmire`. For coordinated local development, replace the
 remote package with a local checkout in Xcode or temporarily use
 `.package(path: "../quagmire")`; restore an exact released version before
 shipping the host.
+
+### Optional host features
+
+The optional `QuagmireExtras` product contains reusable host-side features for
+Apple-platform apps: external-link previews, durable voice recording and
+transcription (including the Start Voice Recording App Intent), and conservative
+on-device transcript polishing. Add
+`.product(name: "QuagmireExtras", package: "Quagmire")` to the app target and
+`import QuagmireExtras`; the core `Quagmire` product does not link these
+frameworks.
+
+Apps provide their own cache/support directories, durable voice destination,
+transcript-delivery closure, entitlements, usage descriptions, and UI placement.
+Because Xcode discovers and extracts App Shortcuts providers only from literal
+definitions in the application target, apps also declare a tiny local
+`AppShortcutsProvider` whose `AppShortcut` references
+`StartVoiceRecordingIntent`.
 
 ---
 

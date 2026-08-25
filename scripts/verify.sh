@@ -21,6 +21,17 @@ echo "Building Quagmire for macOS"
         clean build
 )
 
+echo "Building QuagmireExtras for macOS"
+(
+    cd "$quagmire_package_dir"
+    xcodebuild \
+        -scheme QuagmireExtras \
+        -destination 'generic/platform=macOS' \
+        -derivedDataPath "$quagmire_derived_root/extras-macos" \
+        CODE_SIGNING_ALLOWED=NO \
+        clean build
+)
+
 echo "Building Quagmire for iOS Simulator"
 (
     cd "$quagmire_package_dir"
@@ -28,6 +39,17 @@ echo "Building Quagmire for iOS Simulator"
         -scheme Quagmire \
         -destination 'generic/platform=iOS Simulator' \
         -derivedDataPath "$quagmire_derived_root/ios-simulator" \
+        CODE_SIGNING_ALLOWED=NO \
+        clean build
+)
+
+echo "Building QuagmireExtras for iOS Simulator"
+(
+    cd "$quagmire_package_dir"
+    xcodebuild \
+        -scheme QuagmireExtras \
+        -destination 'generic/platform=iOS Simulator' \
+        -derivedDataPath "$quagmire_derived_root/extras-ios-simulator" \
         CODE_SIGNING_ALLOWED=NO \
         clean build
 )
