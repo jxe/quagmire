@@ -28,7 +28,7 @@ exact version while its pre-1.0 API is settling:
 dependencies: [
     .package(
         url: "https://github.com/jxe/quagmire.git",
-        exact: "0.2.0"
+        exact: "0.3.0"
     )
 ],
 targets: [
@@ -512,13 +512,14 @@ and there is nothing for a marker to protect.
 | `loadDocumentBlocks` | `DocumentLinksUnsupported` | `nil` |
 | `inlineAndRetireDocument` | `DocumentLinksUnsupported` | `false` |
 | `appendToDocument` | `DocumentLinksUnsupported` | `false` |
+| `relocateDocument` | `DocumentLinksUnsupported` | `false` |
 | `moveDestination` | `MoveDestinationUnsupported` | `nil` |
 | `navigateBack` | `NavigationUnsupported` | No-op |
 | `serializeBlocksForPasteboard` | always available | Plain text in visible tree order, one block per line. |
 | `parseBlocksFromPasteboard` | always available | Nonblank plain-text lines become paragraph blocks; blank input returns `nil`. |
 | `saveImages` | `ImagesUnsupported` | `[]` |
 | `linkPreview` | `LinkPreviewsUnsupported` | `nil` |
-| `imageURL` | `ImagesUnsupported` | `nil` |
+| `imageResource` | `ImagesUnsupported` | `nil` |
 | `blockActions` | `BlockActionsUnsupported` | `[]` |
 
 | Method | Signature | When it fires | Return semantics |
@@ -531,15 +532,16 @@ and there is nothing for a marker to protect.
 | `loadDocumentBlocks` | `(_ reference: DocumentReference) async -> [Block]?` | First step of Turn Into another block kind on a document-link row. Async so the host can read off MainActor. Paired with `inlineAndRetireDocument(_:)`. | Host returns the target document's blocks. nil makes the action a no-op. |
 | `inlineAndRetireDocument` | `(_ reference: DocumentReference, parent: Document) async -> Bool` | Second step of Turn Into another block kind on a document-link row: after the editor inlined the loaded blocks into the parent, ask the host to flush the parent and retire the source. Async so the parent's save lands before the source goes away. | true = source retired; false = abort (editor surfaces an orphan warning). |
 | `appendToDocument` | `(_ reference: DocumentReference, _ blocks: [Block]) async -> Bool` | User drops blocks onto a document-link row. Async so the host can sequence log-then-file durability before returning. | true = host wrote them (proceed with local removal). false = no-op. |
+| `relocateDocument` | `(_ reference: DocumentReference, from document: Document) async -> Bool` | User chooses “Move Linked Page” on a single resolved document-link row whose lookup advertises `.relocate`. | Host presents and performs its structural destination flow. The referring block is never mutated; false means cancelled or failed. Hosts must advertise this only when the reference carries real hierarchy semantics. |
 | `moveDestination` | `(for blockIDs: [BlockID], candidates: [InDocMoveTarget]) async -> MoveDestination?` | "Move To" picker. Editor supplies pre-filtered legal in-doc candidates; host merges with its own document list, presents UI, returns the user's `MoveDestination` (`.document` or `.block`) or nil to cancel. | Async — editor `await`s the picker result at the call site. |
 | `navigateBack` | `() -> Void` | Cmd-[ in nav mode (or Cmd-[ in edit mode — that path commits live text first). | Host pops its navigation stack. |
 | `persistCommit` | `(changes: [DocumentChange], in: Document) -> Void` | Once per `Document.transaction` (the unified mutation entry point): structural edits via `EditorView.mutate(_:_:)`, typing commits via `BlockTextEditor.Coordinator.commitLiveText`, autotransforms, paste, move-to, and undo/redo all funnel through it. Called *synchronously* on the mutation-commit thread (the editor can't await mid-transaction). `changes` carries removed and inserted block snapshots plus stable-child parent-reference updates; it contains no storage hashes or journal operations. On undo the semantic before/after snapshots are inverted. Empty changes means a pure reorder/move — the host should still persist the new tree shape. | Host should treat the call as its unit of save, translating semantic snapshots into whatever persistence model it owns. The host typically schedules async work internally and awaits it via `flush(_:)`; the editor's sync hook stays synchronous. |
 | `flush` | `(_ document: Document) async -> Void` | Editor loses focus (window/key/scene transitions, document switch). Host also calls it directly from scene-phase / navigation paths. Async so callers can await durability where it matters. | Host should force-save the current document. |
 | `serializeBlocksForPasteboard` | `(_ blocks: [Block]) -> String` | User cuts or copies. | Host returns a string for the system pasteboard (markdown, RTF, plain — host's choice). Empty string cancels the copy. |
 | `parseBlocksFromPasteboard` | `(_ string: String) -> [Block]?` | User pastes. | Host returns blocks parsed from the pasteboard string. nil cancels the paste. |
-| `saveImages` | `(_ items: [PastedImage]) -> [String]` | User pastes one or more images (or image URLs from another app). | Host writes them to disk; returns relative paths suitable for `BlockKind.image.source`. Empty / shorter array cancels the paste. |
+| `saveImages` | `(_ items: [PastedImage], in document: Document) async -> [String]` | User pastes one or more images (or image URLs from another app). | Host durably stores them in document scope before blocks are inserted. Returned sources retain input order; empty means no insertion and a shorter array inserts only the durable prefix. Paste imports are serialized per editor and each batch is one transaction. |
 | `linkPreview` | `(for url: URL) async -> LinkPreview?` | Editor calls this once per external `http`/`https` link in a rendered (read-only) row to fetch favicon + page title. Async; nil → no preview rendered. | Host returns metadata for the URL, or nil on fetch failure / known-failed state. |
-| `imageURL` | `(for source: String) -> URL?` | Resolve an image block's `source` (markdown path like `Assets/foo.png`) to a file URL the renderer can load. | nil → renderer shows a missing-image placeholder. |
+| `imageResource` | `(for source: String, in document: Document) async -> EditorImageResource?` | Resolve an authored image source in the owning document's scope. | Return `.file(URL)` for local storage or `.data(Data)` for remote/replica bytes. The editor owns loading, stale-result cancellation, missing presentation, and full-size viewing; nil means missing. |
 | `blockActions` | `(in document: Document) -> [EditorBlockAction]` | The block-action surface is rendered or a focused host command checks/invokes an action id. | Empty hides host actions. Each action decides applicability and returns proposed replacements; the editor owns validation, mutation, progress, success, and errors. |
 
 ---

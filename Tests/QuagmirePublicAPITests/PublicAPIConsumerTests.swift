@@ -45,6 +45,7 @@ private final class FullHost: EditorHost {
     func loadDocumentBlocks(_ reference: DocumentReference) async -> [Block]? { [] }
     func inlineAndRetireDocument(_ reference: DocumentReference, parent: Document) async -> Bool { true }
     func appendToDocument(_ reference: DocumentReference, _ blocks: [Block]) async -> Bool { true }
+    func relocateDocument(_ reference: DocumentReference, from document: Document) async -> Bool { true }
     func moveDestination(for blockIDs: [BlockID], candidates: [InDocMoveTarget]) async -> MoveDestination? {
         .document(DocumentReference("picked"))
     }
@@ -53,9 +54,11 @@ private final class FullHost: EditorHost {
     func flush(_ document: Document) async {}
     func serializeBlocksForPasteboard(_ blocks: [Block]) -> String { "serialized" }
     func parseBlocksFromPasteboard(_ string: String) -> [Block]? { [.paragraph(text: AttributedString("parsed"))] }
-    func saveImages(_ items: [PastedImage]) -> [String] { ["saved"] }
+    func saveImages(_ items: [PastedImage], in document: Document) async -> [String] { ["saved"] }
     func linkPreview(for url: URL) async -> LinkPreview? { nil }
-    func imageURL(for source: String) -> URL? { URL(string: "file:///image") }
+    func imageResource(for source: String, in document: Document) async -> EditorImageResource? {
+        .file(URL(fileURLWithPath: "/image"))
+    }
     func blockActions(in document: Document) -> [EditorBlockAction] { [] }
 
     var opened: DocumentReference?
@@ -86,11 +89,14 @@ struct PublicAPIConsumerTests {
         #expect(await host.loadDocumentBlocks(DocumentReference("d")) != nil)
         #expect(await host.inlineAndRetireDocument(DocumentReference("d"), parent: document))
         #expect(await host.appendToDocument(DocumentReference("d"), []))
+        #expect(await host.relocateDocument(DocumentReference("d"), from: document))
         #expect(await host.moveDestination(for: [], candidates: []) != nil)
         #expect(host.serializeBlocksForPasteboard([]) == "serialized")
         #expect(host.parseBlocksFromPasteboard("x") != nil)
-        #expect(!host.saveImages([]).isEmpty)
-        #expect(host.imageURL(for: "x") != nil)
+        let savedImages = await host.saveImages([], in: document)
+        let imageResource = await host.imageResource(for: "x", in: document)
+        #expect(!savedImages.isEmpty)
+        #expect(imageResource != nil)
 
         host.openDocument(DocumentReference("opened"))
         host.didDeleteDocumentLink(reference: DocumentReference("gone"), label: "L", from: document)

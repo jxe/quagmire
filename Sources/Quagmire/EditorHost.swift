@@ -25,8 +25,11 @@ public struct DocumentCapabilities: OptionSet, Hashable, Sendable {
     public static let inline = DocumentCapabilities(rawValue: 1 << 2)
     /// Set the target's icon from the row's icon picker.
     public static let setIcon = DocumentCapabilities(rawValue: 1 << 3)
+    /// Physically relocate an eligible linked child page. Hosts must only
+    /// advertise this when the reference carries real hierarchy semantics.
+    public static let relocate = DocumentCapabilities(rawValue: 1 << 4)
 
-    public static let all: DocumentCapabilities = [.navigate, .receiveBlocks, .inline, .setIcon]
+    public static let all: DocumentCapabilities = [.navigate, .receiveBlocks, .inline, .setIcon, .relocate]
 }
 
 /// Everything the editor needs to draw a reference row and decide what it may
@@ -237,6 +240,11 @@ public protocol EditorHost: AnyObject {
     /// the editor's local-block-removal only fires on success.
     func appendToDocument(_ reference: DocumentReference, _ blocks: [Block]) async -> Bool
 
+    /// Present the host-owned structural destination flow for one eligible
+    /// linked page. False means cancelled or failed; the editor never mutates
+    /// the referring block as part of this operation.
+    func relocateDocument(_ reference: DocumentReference, from document: Document) async -> Bool
+
     /// Ask the host to present its picker for a "Move to" action. The editor
     /// passes the moving block ids plus a list of in-document destinations
     /// (already filtered to legal drop targets); the host merges those with its own
@@ -295,7 +303,10 @@ public protocol EditorHost: AnyObject {
     /// Persist pasted image bytes. Returns relative paths suitable for
     /// `Block.image.source` (one per input, in order). Empty / shorter
     /// returned array cancels the paste.
-    func saveImages(_ items: [PastedImage]) -> [String]
+    /// Durably persist pasted image bytes for `document` before the editor
+    /// inserts any image blocks. Results retain input order; a shorter result
+    /// represents partial success and only those durable images are inserted.
+    func saveImages(_ items: [PastedImage], in document: Document) async -> [String]
 
     /// Fetch external-URL preview metadata (favicon + page title) for an
     /// inline link. Editor calls this for every external `http`/`https` link
@@ -306,7 +317,10 @@ public protocol EditorHost: AnyObject {
     /// Resolve an image block's `source` (a markdown path like
     /// `Assets/foo.png`) to a file URL the renderer can load. Nil →
     /// renderer shows a missing-image placeholder.
-    func imageURL(for source: String) -> URL?
+    /// Resolve one authored image source in the scope of its document. The
+    /// editor owns loading/missing presentation and discards stale async
+    /// results when the source or document changes.
+    func imageResource(for source: String, in document: Document) async -> EditorImageResource?
 
     /// Host-supplied actions for selected text-bearing blocks. Returning an
     /// empty array hides the host-action surface. Each action carries its own
@@ -350,6 +364,7 @@ public extension DocumentLinksUnsupported {
     func loadDocumentBlocks(_ reference: DocumentReference) async -> [Block]? { nil }
     func inlineAndRetireDocument(_ reference: DocumentReference, parent: Document) async -> Bool { false }
     func appendToDocument(_ reference: DocumentReference, _ blocks: [Block]) async -> Bool { false }
+    func relocateDocument(_ reference: DocumentReference, from document: Document) async -> Bool { false }
 }
 
 /// No "Move to…" picker. The editor hides the action.
@@ -372,8 +387,8 @@ public extension NavigationUnsupported {
 public protocol ImagesUnsupported: EditorHost {}
 
 public extension ImagesUnsupported {
-    func saveImages(_ items: [PastedImage]) -> [String] { [] }
-    func imageURL(for source: String) -> URL? { nil }
+    func saveImages(_ items: [PastedImage], in document: Document) async -> [String] { [] }
+    func imageResource(for source: String, in document: Document) async -> EditorImageResource? { nil }
 }
 
 /// No favicon/title fetching for external links.
@@ -473,6 +488,10 @@ private struct EditorHostKey: @preconcurrency EnvironmentKey {
     @MainActor static let defaultValue: EditorHost? = nil
 }
 
+private struct EditorDocumentKey: @preconcurrency EnvironmentKey {
+    @MainActor static let defaultValue: Document? = nil
+}
+
 extension EnvironmentValues {
     /// The active `EditorHost` for the current `EditorView`. Set once by
     /// `EditorView` at the top of its body so deep renderers (image rows,
@@ -481,5 +500,12 @@ extension EnvironmentValues {
     public var editorHost: EditorHost? {
         get { self[EditorHostKey.self] }
         set { self[EditorHostKey.self] = newValue }
+    }
+
+    /// The document owning this editor subtree. Relative image sources are
+    /// always resolved in this scope.
+    public var editorDocument: Document? {
+        get { self[EditorDocumentKey.self] }
+        set { self[EditorDocumentKey.self] = newValue }
     }
 }

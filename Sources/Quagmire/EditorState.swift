@@ -97,6 +97,14 @@ public final class EditorState {
     @ObservationIgnored
     internal var onStructureChange: (() -> Void)? = nil
 
+    // Image persistence is asynchronous, but paste ordering is user-visible.
+    // Serialize imports per editor session and remember the last durable block
+    // inserted after an anchor so consecutive pastes cannot reverse order.
+    @ObservationIgnored
+    private var imageImportTail: Task<Void, Never>? = nil
+    @ObservationIgnored
+    private var imageImportFollowers: [BlockID: BlockID] = [:]
+
     // Transient bottom-of-page toast (e.g. "Deleted") with an Undo affordance.
     var actionToast: String? = nil
 
@@ -108,6 +116,30 @@ public final class EditorState {
     internal var pendingAppendBuffer: (blocks: [Block], actionName: String)? = nil
 
     public init() {}
+
+    func enqueueImageImport(_ operation: @escaping @MainActor () async -> Void) {
+        let previous = imageImportTail
+        imageImportTail = Task { @MainActor in
+            if let previous { await previous.value }
+            guard !Task.isCancelled else { return }
+            await operation()
+        }
+    }
+
+    func awaitImageImports() async {
+        await imageImportTail?.value
+    }
+
+    func imageImportAnchor(after original: BlockID?, in document: Document) -> BlockID? {
+        guard let original,
+              let follower = imageImportFollowers[original],
+              document.find(follower) != nil else { return original }
+        return follower
+    }
+
+    func recordImageImport(_ last: BlockID, after original: BlockID?) {
+        if let original { imageImportFollowers[original] = last }
+    }
 
     /// Append host-supplied blocks to the end of the document. Wraps the
     /// mutation in undo registration with `actionName` and transfers focus

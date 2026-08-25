@@ -432,6 +432,20 @@ extension EditorView {
                                 }
                             }
                         }
+                        if targetBlocks.count == 1,
+                           case .documentLink(_, let reference) = targetBlocks[0].kind,
+                           host.lookupDocument(reference).can(.relocate) {
+                            compactMenuButton(
+                                title: "Move Linked Page",
+                                systemImage: "folder"
+                            ) {
+                                Task { @MainActor in
+                                    if await host.relocateDocument(reference, from: document) {
+                                        showActionToast("Page moved")
+                                    }
+                                }
+                            }
+                        }
                         ForEach(indentTargets, id: \.self) { action in
                             compactMenuButton(
                                 title: action.title,

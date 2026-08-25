@@ -136,8 +136,8 @@ enum BlockKey: Sendable, Equatable {
     /// paste, preserving cursor + undo coalescing).
     case paste(String)
     /// Pasteboard contained one or more images (or image file URLs). EditorView
-    /// hands the bytes to the host via `EditorHost.saveImages(_:)`, builds image blocks, and
-    /// splices them below the row — no fall-through to native paste.
+    /// hands the bytes to the document-scoped async image host, then builds
+    /// image blocks only after their authored sources are durable.
     case imagesPasted([PastedImage])
 }
 

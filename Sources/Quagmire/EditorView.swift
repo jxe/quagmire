@@ -322,6 +322,7 @@ public struct EditorView: View {
             // to register typing-burst checkpoints and the final blur flush.
             .environment(\.documentUndoController, undoController)
             .environment(\.editorHost, host)
+            .environment(\.editorDocument, document)
             #if os(macOS)
             .environment(\.macActiveTextView, macActiveTextView)
             #endif
@@ -1942,10 +1943,8 @@ public struct EditorView: View {
         let images = readPasteboardImages(UIPasteboard.general)
         #endif
         if !images.isEmpty {
-            let paths = host.saveImages(images)
-            guard !paths.isEmpty else { return true }
-            let blocks: [Block] = paths.map { .image(source: $0, alt: "") }
-            return spliceParsedBlocksAfter(state.cursor, parsed: blocks, focusLast: false)
+            enqueueImageImport(images, after: state.cursor, focusLast: false)
+            return true
         }
 
         let pasted: String
@@ -2082,18 +2081,32 @@ public struct EditorView: View {
         }
     }
 
-    /// Persist pasted image bytes via the host, splice the resulting image
-    /// blocks immediately below the row's section, and move focus to the last
-    /// inserted image. If the host returns no paths (callback unset, or the
-    /// host cancelled), we drop the paste — `.handled` either way so the
-    /// platform text view doesn't ALSO try to paste a string fallback.
+    /// Queue pasted image bytes for durable, document-scoped host storage, then
+    /// insert all returned sources in one transaction. The paste is handled
+    /// immediately so the platform text view never inserts a string fallback.
     private func handleEditorImagePaste(_ images: [PastedImage], blockID: BlockID) -> KeyPress.Result {
         guard !images.isEmpty else { return .handled }
-        let paths = host.saveImages(images)
-        guard !paths.isEmpty else { return .handled }
-        let blocks: [Block] = paths.map { .image(source: $0, alt: "") }
-        spliceParsedBlocksAfter(blockID, parsed: blocks, focusLast: false)
+        enqueueImageImport(images, after: blockID, focusLast: false)
         return .handled
+    }
+
+    private func enqueueImageImport(
+        _ images: [PastedImage],
+        after originalAnchor: BlockID?,
+        focusLast: Bool
+    ) {
+        let host = host
+        let document = document
+        let state = state
+        state.enqueueImageImport { @MainActor in
+            let sources = await host.saveImages(images, in: document)
+            guard !Task.isCancelled, !sources.isEmpty else { return }
+            let blocks = sources.map { Block.image(source: $0, alt: "") }
+            let anchor = state.imageImportAnchor(after: originalAnchor, in: document)
+            guard spliceParsedBlocksAfter(anchor, parsed: blocks, focusLast: focusLast),
+                  let last = state.cursor else { return }
+            state.recordImageImport(last, after: originalAnchor)
+        }
     }
 
     /// Decide what to do with a paste arriving from the active row's editor:

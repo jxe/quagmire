@@ -262,7 +262,7 @@ private final class TestHost: EditorHostDefaults {
     func flush(_ document: Document) async {}
     func serializeBlocksForPasteboard(_ blocks: [Block]) -> String { "" }
     func parseBlocksFromPasteboard(_ string: String) -> [Block]? { nil }
-    func saveImages(_ items: [PastedImage]) -> [String] { [] }
+    func saveImages(_ items: [PastedImage], in document: Document) async -> [String] { [] }
     func linkPreview(for url: URL) async -> LinkPreview? { nil }
-    func imageURL(for source: String) -> URL? { nil }
+    func imageResource(for source: String, in document: Document) async -> EditorImageResource? { nil }
 }
