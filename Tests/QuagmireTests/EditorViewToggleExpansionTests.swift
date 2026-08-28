@@ -77,6 +77,43 @@ struct EditorViewToggleExpansionTests {
         #expect(!editor.canUnfoldAllHeadings)
     }
 
+    @Test func headingChevronLongPressFoldsOrUnfoldsAllFromPressedState() {
+        let inner = Block.heading(level: .h3, text: AttributedString("Inner"))
+        let outer = Block.heading(level: .h2, text: AttributedString("Outer"), children: [inner])
+        let doc = Document(id: DocumentID("test"), children: [outer])
+        let state = EditorState()
+        let editor = EditorView(document: doc, state: state, host: TestHost())
+        editor.installUndoApply()
+
+        editor.handleHeadingChevronLongPress(outer)
+        #expect(state.collapsedHeadings == [outer.id, inner.id])
+
+        editor.handleHeadingChevronLongPress(outer)
+        #expect(state.collapsedHeadings.isEmpty)
+        #expect(!doc.undoManager!.canUndo)
+    }
+
+    @Test func headingChevronTouchTargetDoesNotBeginReorder() {
+        let section = Block.heading(level: .h2, text: AttributedString("Section"))
+        let paragraph = Block.paragraph(text: AttributedString("Body"))
+        let doc = Document(id: DocumentID("test"), children: [section, paragraph])
+        let editor = EditorView(document: doc, state: EditorState(), host: TestHost())
+        editor.layoutCache.contentOriginX = 20
+        editor.layoutCache.contentOriginY = 10
+        editor.layoutCache.setRealizedInternalFrame(
+            CGRect(x: 0, y: 0, width: 300, height: 40),
+            for: section.id
+        )
+        editor.layoutCache.setRealizedInternalFrame(
+            CGRect(x: 0, y: 40, width: 300, height: 40),
+            for: paragraph.id
+        )
+
+        #expect(!editor.shouldBeginIOSReorder(on: section.id, at: CGPoint(x: 300, y: 30)))
+        #expect(editor.shouldBeginIOSReorder(on: section.id, at: CGPoint(x: 250, y: 30)))
+        #expect(editor.shouldBeginIOSReorder(on: paragraph.id, at: CGPoint(x: 300, y: 70)))
+    }
+
     @Test func foldingRepairsHiddenEditingFocusToVisibleHeading() {
         let leaf = Block.paragraph(text: AttributedString("leaf"))
         let inner = Block.heading(level: .h3, text: AttributedString("Inner"), children: [leaf])

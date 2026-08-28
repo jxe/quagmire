@@ -73,6 +73,7 @@ extension View {
     func iosPageReorder<ID: Hashable>(
         isEnabled: Bool,
         layoutCache: RowSurfaceLayoutCache<ID>,
+        shouldBegin: @escaping (ID, CGPoint) -> Bool,
         onBegin: @escaping (ID, CGPoint) -> Void,
         onChanged: @escaping (CGPoint) -> Void,
         onEnded: @escaping (CGPoint) -> Void,
@@ -86,6 +87,7 @@ extension View {
             IOSPageReorderGestureBridge(
                 isEnabled: isEnabled,
                 layoutCache: layoutCache,
+                shouldBegin: shouldBegin,
                 onBegin: onBegin,
                 onChanged: onChanged,
                 onEnded: onEnded,
@@ -370,6 +372,7 @@ struct IOSNavigationBackGestureGate: UIViewControllerRepresentable {
 struct IOSPageReorderGestureBridge<ID: Hashable>: UIViewRepresentable {
     var isEnabled: Bool
     var layoutCache: RowSurfaceLayoutCache<ID>
+    var shouldBegin: (ID, CGPoint) -> Bool
     var onBegin: (ID, CGPoint) -> Void
     var onChanged: (CGPoint) -> Void
     var onEnded: (CGPoint) -> Void
@@ -498,7 +501,10 @@ struct IOSPageReorderGestureBridge<ID: Hashable>: UIViewRepresentable {
                 return true
             }
             let location = pageCoordinateLocation(for: gestureRecognizer, scrollView: scrollView)
-            return parent.layoutCache.realizedBlockIDAtPageY(location.y) != nil
+            guard let blockID = parent.layoutCache.realizedBlockIDAtPageY(location.y) else {
+                return false
+            }
+            return parent.shouldBegin(blockID, location)
         }
     }
 }

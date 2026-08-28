@@ -51,6 +51,7 @@ struct RowSurfaceActions<ID: Hashable> {
     var onTapBelowRows: (CGPoint) -> Void = { _ in }
 
     var onReorderBegin: (ID, _ location: CGPoint, _ anchor: CGPoint) -> Void = { _, _, _ in }
+    var shouldBeginIOSReorder: (ID, CGPoint) -> Bool = { _, _ in true }
     var onReorderChanged: (_ location: CGPoint, _ anchor: CGPoint) -> Void = { _, _ in }
     var onReorderEnded: (CGPoint) -> Void = { _ in }
     var onReorderCancelled: () -> Void = {}
@@ -183,6 +184,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
             .iosPageReorder(
                 isEnabled: isIOSReorderEnabled,
                 layoutCache: layoutCache,
+                shouldBegin: actions.shouldBeginIOSReorder,
                 onBegin: { id, location in
                     activeReorderLocation = location
                     actions.onReorderBegin(id, location, location)

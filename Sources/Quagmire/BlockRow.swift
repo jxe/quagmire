@@ -145,6 +145,7 @@ struct BlockRow: View, Equatable {
     var onToggleTodo: (BlockID) -> Void { actions.onToggleTodo }
     var onClickAtPoint: (CGPoint) -> Void { actions.onClickAtPoint }
     var onToggleExpansion: () -> Void { actions.onToggleExpansion }
+    var onHeadingChevronLongPress: () -> Void { actions.onHeadingChevronLongPress }
     var onTemplateButtonPress: () -> Void { actions.onTemplateButtonPress }
     var onLinkPreviewLoaded: (URL, LinkPreview) -> Void { actions.onLinkPreviewLoaded }
     var host: EditorHost { actions.host }
@@ -394,6 +395,9 @@ struct BlockRow: View, Equatable {
                         withAnimation(.easeInOut(duration: 0.15)) {
                             onToggleExpansion()
                         }
+                    }
+                    .onLongPressGesture(minimumDuration: 0.5) {
+                        onHeadingChevronLongPress()
                     }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -681,6 +685,7 @@ struct BlockRowActions {
     let onToggleTodo: (BlockID) -> Void
     let onClickAtPoint: (CGPoint) -> Void
     let onToggleExpansion: () -> Void
+    let onHeadingChevronLongPress: () -> Void
     let onTemplateButtonPress: () -> Void
     let onLinkPreviewLoaded: (URL, LinkPreview) -> Void
     let host: EditorHost

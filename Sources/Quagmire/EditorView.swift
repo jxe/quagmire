@@ -242,6 +242,9 @@ public struct EditorView: View {
                     }
                     tickReorderLift(blockID: blockID, at: location, anchorAt: anchor, snapshot: document.children)
                 },
+                shouldBeginIOSReorder: { blockID, location in
+                    shouldBeginIOSReorder(on: blockID, at: location)
+                },
                 onReorderChanged: { location, anchor in
                     guard let id = state.reorderLift?.ids.first else { return }
                     tickReorderLift(blockID: id, at: location, anchorAt: anchor, snapshot: document.children)
@@ -639,6 +642,9 @@ public struct EditorView: View {
             onToggleExpansion: {
                 toggleSectionExpansion(block)
             },
+            onHeadingChevronLongPress: {
+                handleHeadingChevronLongPress(block)
+            },
             onTemplateButtonPress: {
                 instantiateTemplateButton(blockID: block.id)
             },
@@ -685,6 +691,32 @@ public struct EditorView: View {
         )
         BlockRow(model: rowModel, state: state, actions: rowActions, configuration: configuration)
         .equatable()
+    }
+
+    func handleHeadingChevronLongPress(_ block: Block) {
+        guard isCollapsibleSection(block) else { return }
+        if isSectionExpanded(block) {
+            foldAllHeadings()
+        } else {
+            unfoldAllHeadings()
+        }
+        Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
+    }
+
+    func shouldBeginIOSReorder(on blockID: BlockID, at location: CGPoint) -> Bool {
+        guard let block = document.find(blockID),
+              block.isHeading,
+              isCollapsibleSection(block),
+              let frame = layoutCache.realizedFrame(of: blockID)
+        else { return true }
+
+        // iOS headings place their disclosure control in a 28-point trailing
+        // column. Reserve a standard 44-point touch target around it so the
+        // page-level reorder recognizer does not also lift the heading.
+        let chevronHitWidth: CGFloat = 44
+        let hitsChevron = location.x >= frame.maxX - chevronHitWidth
+            && location.x <= frame.maxX
+        return !hitsChevron
     }
 
     func topSelectedBlockID() -> BlockID? {

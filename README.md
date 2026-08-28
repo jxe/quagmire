@@ -183,6 +183,9 @@ needed. Cross-app drag falls through to the pasteboard codecs.
   defined by Markdown heading containment.
 - Click a chevron, or use Left/Right on a selected collapsible section in nav
   mode. Heading Return still enters edit mode.
+- On iOS, a host can use the heading chevron's long press directly: long-press
+  an expanded heading to fold all headings, or a collapsed heading to unfold
+  all. The chevron's trailing touch target is excluded from row reordering.
 - Move Block Up/Down treats closed headings as opaque sections, skipping their
   hidden bodies while preserving the existing enter-open-section behavior.
 - Hosts can expose `foldAllHeadings` / `unfoldAllHeadings` through
