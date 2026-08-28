@@ -111,6 +111,10 @@ extension EditorView {
                     edit: { bid in moveBlocksInDocument(Set([bid]), by: +1) },
                     nav: { moveSelectionInDocument(by: +1) }
                 )
+            case .foldAllHeadings:
+                foldAllHeadings()
+            case .unfoldAllHeadings:
+                unfoldAllHeadings()
 
             // Nav-mode keyboard actions. Fired from `handleNavKeyPress` via
             // the binding table below; not exposed in the menu bar (the
@@ -157,6 +161,10 @@ extension EditorView {
                 }
                 let roots = document.selectionSubtreeRoots(state.selection)
                 return !roots.isEmpty && roots.allSatisfy { document.canOutdent($0) }
+            case .canFoldAllHeadings:
+                return canFoldAllHeadings
+            case .canUnfoldAllHeadings:
+                return canUnfoldAllHeadings
             }
         }
 

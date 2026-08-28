@@ -67,7 +67,7 @@ enum VisibleRowKind: Equatable {
 }
 
 /// Tree-aware visible-row layout entry. One per displayed block, in
-/// document-preorder, with rows under collapsed toggles/templateButtons
+/// document-preorder, with rows under collapsed headings/toggles/templateButtons
 /// elided. Carries id, kind, depth, parent, slot, and prev-sibling metadata so
 /// `ForEach`-time consumers don't need a second walk to compute spacing
 /// / drop targets. Lifted out of `EditorView` so `BlockLayoutCache` can
@@ -83,7 +83,7 @@ struct VisibleRow {
 }
 
 /// Tree-preorder walk that emits one `VisibleRow` per visible block,
-/// skipping any subtree under a closed toggle/templateButton.
+/// skipping any subtree under a closed heading/toggle/templateButton.
 /// `isCollapsed` is injected because expand state lives on
 /// `EditorState`, which this file deliberately doesn't import — keeps
 /// the cache + walker decoupled from the editor's session model.
@@ -139,7 +139,7 @@ private func appendVisible(
     }
 }
 
-/// Set of block IDs hidden under a collapsed toggle/templateButton.
+/// Set of block IDs hidden under a collapsed heading/toggle/templateButton.
 /// The container itself stays visible; only its descendants hide.
 func hiddenBlockIDs(in blocks: [Block], isCollapsed: (Block) -> Bool) -> Set<BlockID> {
     var hidden: Set<BlockID> = []

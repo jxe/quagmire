@@ -265,7 +265,12 @@ struct BlockRow: View, Equatable {
                 // and were the source of the "destroyed mid-drag" failure
                 // mode that needed the NSEvent mouse-up backstop.
                 DragHandle(theme: theme)
-                    .opacity(isHandleVisible && !isEditing ? 1 : 0)
+                    .opacity(
+                        isHandleVisible
+                            && !isEditing
+                            && !(block.isHeading && !isPageTitle)
+                            ? 1 : 0
+                    )
                     .offset(x: -DragHandle.gutterWidth, y: BlockSpacing.dragHandleYOffset(block))
                     .allowsHitTesting(false)
             }
@@ -339,12 +344,62 @@ struct BlockRow: View, Equatable {
             .padding(.leading, theme.nonListLeading(depth: depth))
     }
 
+    @ViewBuilder
     private func headingRow(level: HeadingLevel) -> some View {
         let size: CGFloat = (isPageTitle && level == .h1) ? theme.pageTitleSize
                                                           : theme.headingSize(level)
         let font = theme.body(size: size, weight: theme.headingWeight)
-        return editableText(font: font, fontSize: size, bold: true, lineSpacing: theme.headingLineSpacing)
+        if isPageTitle {
+            editableText(font: font, fontSize: size, bold: true, lineSpacing: theme.headingLineSpacing)
+                .padding(.leading, theme.nonListLeading(depth: depth))
+        } else {
+#if os(macOS)
+            let textLeading = theme.nonListLeading(depth: depth)
+            editableText(font: font, fontSize: size, bold: true, lineSpacing: theme.headingLineSpacing)
+                .padding(.leading, textLeading)
+                .overlay(alignment: .leading) {
+                    Image(systemName: "arrowtriangle.right.fill")
+                        .font(.system(size: theme.chevronSize, weight: .medium))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .foregroundStyle(theme.foreground)
+                        .frame(
+                            width: theme.bulletMarkerColumnWidth,
+                            height: theme.listMarkerFrameHeight,
+                            alignment: .trailing
+                        )
+                        .offset(
+                            x: textLeading
+                                - theme.bulletMarkerColumnWidth
+                                - theme.listMarkerGap
+                                + theme.markerCenteringOffset(markerWidth: theme.chevronSize)
+                        )
+                        // The stable page-level gutter gesture owns clicks
+                        // and drags here: click folds, drag reorders.
+                        .allowsHitTesting(false)
+                }
+#else
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                editableText(font: font, fontSize: size, bold: true, lineSpacing: theme.headingLineSpacing)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .foregroundStyle(isExpanded ? theme.mutedForeground.opacity(0.45) : theme.foreground)
+                    .frame(width: 28, height: 28)
+                    .alignmentGuide(.firstTextBaseline) { dimensions in
+                        dimensions[VerticalAlignment.center] + theme.bulletMarkerBaselineOffset
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            onToggleExpansion()
+                        }
+                    }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, theme.nonListLeading(depth: depth))
+#endif
+        }
     }
 
     private func bulletRow() -> some View {
@@ -953,8 +1008,48 @@ struct BlockRowPreview: View, Equatable {
             let size: CGFloat = (isPageTitle && level == .h1) ? theme.pageTitleSize
                                                               : theme.headingSize(level)
             let font = theme.body(size: size, weight: theme.headingWeight)
-            text(font: font, fontSize: size, lineSpacing: theme.headingLineSpacing)
+            if isPageTitle {
+                text(font: font, fontSize: size, lineSpacing: theme.headingLineSpacing)
+                    .padding(.leading, theme.nonListLeading(depth: depth))
+            } else {
+#if os(macOS)
+                let textLeading = theme.nonListLeading(depth: depth)
+                text(font: font, fontSize: size, lineSpacing: theme.headingLineSpacing)
+                    .padding(.leading, textLeading)
+                    .overlay(alignment: .leading) {
+                        Image(systemName: "arrowtriangle.right.fill")
+                            .font(.system(size: theme.chevronSize, weight: .medium))
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                            .foregroundStyle(theme.foreground)
+                            .frame(
+                                width: theme.bulletMarkerColumnWidth,
+                                height: theme.listMarkerFrameHeight,
+                                alignment: .trailing
+                            )
+                            .offset(
+                                x: textLeading
+                                    - theme.bulletMarkerColumnWidth
+                                    - theme.listMarkerGap
+                                    + theme.markerCenteringOffset(markerWidth: theme.chevronSize)
+                            )
+                    }
+#else
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    text(font: font, fontSize: size, lineSpacing: theme.headingLineSpacing)
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .foregroundStyle(isExpanded ? theme.mutedForeground.opacity(0.45) : theme.foreground)
+                        .frame(width: 28, height: 28)
+                        .alignmentGuide(.firstTextBaseline) { dimensions in
+                            dimensions[VerticalAlignment.center] + theme.bulletMarkerBaselineOffset
+                        }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, theme.nonListLeading(depth: depth))
+#endif
+            }
 
         case .bullet:
             HStack(alignment: .firstTextBaseline, spacing: theme.listMarkerGap) {

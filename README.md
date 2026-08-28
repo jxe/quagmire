@@ -177,9 +177,15 @@ needed. Cross-app drag falls through to the pasteboard codecs.
 - Drop blocks onto a document-link row → editor calls `appendToDocument` to move
   them into the child page.
 
-**Toggle / template-button expand/collapse**
-Click the chevron, or hit Return on a selected toggle. Toggle expansion is
-page-local view state (not persisted to the model).
+**Heading / toggle / template-button expand/collapse**
+- Every heading except the leading page-title H1 has a disclosure chevron.
+  Heading sections start expanded; collapsing one hides the body already
+  defined by Markdown heading containment.
+- Click a chevron, or use Left/Right on a selected collapsible section in nav
+  mode. Heading Return still enters edit mode.
+- Hosts can expose `foldAllHeadings` / `unfoldAllHeadings` through
+  `EditorCommands`, with matching availability predicates.
+- Expansion is page-local session state and is never persisted to the model.
 
 **Undo/redo**
 Cmd-Z / Shift-Cmd-Z. The editor owns a `DocumentUndoController` that

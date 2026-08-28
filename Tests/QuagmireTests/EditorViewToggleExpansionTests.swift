@@ -6,6 +6,109 @@ import Testing
 @MainActor
 @Suite("EditorView toggle expansion policy")
 struct EditorViewToggleExpansionTests {
+    @Test func nonTitleHeadingsStartExpandedAndTitleDoesNotCollapse() {
+        let body = Block.paragraph(text: AttributedString("body"))
+        let section = Block.heading(level: .h2, text: AttributedString("Section"), children: [body])
+        let title = Block.heading(level: .h1, text: AttributedString("Title"), children: [section])
+        let doc = Document(id: DocumentID("test"), children: [title])
+        let state = EditorState()
+        let host = TestHost()
+        let editor = EditorView(document: doc, state: state, host: host)
+        editor.installUndoApply()
+
+        #expect(!editor.isCollapsibleSection(title))
+        #expect(editor.isCollapsibleSection(section))
+        #expect(editor.isSectionExpanded(section))
+        #expect(editor.hiddenBlockIDs(in: doc.children).isEmpty)
+
+        editor.toggleSectionExpansion(section)
+
+        #expect(state.collapsedHeadings == [section.id])
+        #expect(editor.hiddenBlockIDs(in: doc.children).contains(body.id))
+        #expect(host.persistCalls == 0, "folding is view state, not an authored change")
+        #expect(!doc.undoManager!.canUndo)
+
+        editor.toggleSectionExpansion(title)
+        #expect(state.collapsedHeadings == [section.id])
+    }
+
+    @Test func headingLeftAndRightArrowsFoldAndUnfold() {
+        let body = Block.paragraph(text: AttributedString("body"))
+        let section = Block.heading(level: .h4, text: AttributedString("Section"), children: [body])
+        let doc = Document(id: DocumentID("test"), children: [section])
+        let state = EditorState()
+        state.setCursor(section.id)
+        let editor = EditorView(document: doc, state: state, host: TestHost())
+        editor.installUndoApply()
+
+        #expect(editor.handleNavLeftArrow())
+        #expect(state.collapsedHeadings.contains(section.id))
+        #expect(editor.handleNavRightArrow())
+        #expect(!state.collapsedHeadings.contains(section.id))
+    }
+
+    @Test func foldAndUnfoldAllPreserveNestedHeadingState() {
+        let leaf = Block.paragraph(text: AttributedString("leaf"))
+        let inner = Block.heading(level: .h3, text: AttributedString("Inner"), children: [leaf])
+        let outer = Block.heading(level: .h2, text: AttributedString("Outer"), children: [inner])
+        let title = Block.heading(level: .h1, text: AttributedString("Title"), children: [outer])
+        let doc = Document(id: DocumentID("test"), children: [title])
+        let state = EditorState()
+        let editor = EditorView(document: doc, state: state, host: TestHost())
+        editor.installUndoApply()
+
+        #expect(editor.canFoldAllHeadings)
+        #expect(!editor.canUnfoldAllHeadings)
+        editor.foldAllHeadings()
+
+        #expect(state.collapsedHeadings == [outer.id, inner.id])
+        #expect(editor.hiddenBlockIDs(in: doc.children).contains(inner.id))
+        #expect(!editor.canFoldAllHeadings)
+        #expect(editor.canUnfoldAllHeadings)
+
+        editor.toggleSectionExpansion(outer)
+        #expect(!state.collapsedHeadings.contains(outer.id))
+        #expect(state.collapsedHeadings.contains(inner.id))
+        #expect(editor.hiddenBlockIDs(in: doc.children).contains(leaf.id))
+
+        editor.unfoldAllHeadings()
+        #expect(state.collapsedHeadings.isEmpty)
+        #expect(editor.hiddenBlockIDs(in: doc.children).isEmpty)
+        #expect(!editor.canUnfoldAllHeadings)
+    }
+
+    @Test func foldingRepairsHiddenEditingFocusToVisibleHeading() {
+        let leaf = Block.paragraph(text: AttributedString("leaf"))
+        let inner = Block.heading(level: .h3, text: AttributedString("Inner"), children: [leaf])
+        let outer = Block.heading(level: .h2, text: AttributedString("Outer"), children: [inner])
+        let doc = Document(id: DocumentID("test"), children: [outer])
+        let state = EditorState()
+        state.enterEditMode(on: leaf.id)
+        let editor = EditorView(document: doc, state: state, host: TestHost())
+        editor.installUndoApply()
+
+        editor.foldAllHeadings()
+
+        #expect(state.editingBlock == nil)
+        #expect(state.cursor == outer.id)
+        #expect(state.selection == [outer.id])
+    }
+
+    @Test func focusingAChildAutomaticallyUnfoldsItsHeading() {
+        let leaf = Block.paragraph(text: AttributedString("leaf"))
+        let section = Block.heading(level: .h6, text: AttributedString("Section"), children: [leaf])
+        let doc = Document(id: DocumentID("test"), children: [section])
+        let state = EditorState()
+        state.collapsedHeadings.insert(section.id)
+        let editor = EditorView(document: doc, state: state, host: TestHost())
+        editor.installUndoApply()
+
+        editor.transferFocus(to: .editor(leaf.id, initialCursor: nil))
+
+        #expect(!state.collapsedHeadings.contains(section.id))
+        #expect(state.editingBlock == leaf.id)
+    }
+
     @Test func turnIntoToggleStartsClosedAndClearsTemplateExpansion() {
         let doc = Document(
             id: DocumentID("test"),
@@ -235,6 +338,7 @@ private final class TestHost: EditorHostDefaults {
     var appendedReference: DocumentReference?
     var appendedBlocks: [Block] = []
     var appendSucceeds = true
+    var persistCalls = 0
 
     init(loadedDocumentBlocks: [Block]? = nil) {
         self.loadedDocumentBlocks = loadedDocumentBlocks
@@ -258,7 +362,7 @@ private final class TestHost: EditorHostDefaults {
     }
     func moveDestination(for blockIDs: [BlockID], candidates: [InDocMoveTarget]) async -> MoveDestination? { nil }
     func navigateBack() {}
-    func persistCommit(changes: [DocumentChange], in document: Document) {}
+    func persistCommit(changes: [DocumentChange], in document: Document) { persistCalls += 1 }
     func flush(_ document: Document) async {}
     func serializeBlocksForPasteboard(_ blocks: [Block]) -> String { "" }
     func parseBlocksFromPasteboard(_ string: String) -> [Block]? { nil }

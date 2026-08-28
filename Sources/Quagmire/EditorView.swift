@@ -224,7 +224,15 @@ public struct EditorView: View {
                         handleRowClick(blockID: id)
                     }
                 },
-                onTapGutter: { id in handleHandleClick(blockID: id) },
+                onTapGutter: { id in
+                    if let block = document.find(id),
+                       block.isHeading,
+                       isCollapsibleSection(block) {
+                        toggleSectionExpansion(block)
+                    } else {
+                        handleHandleClick(blockID: id)
+                    }
+                },
                 onTapBelowRows: { point in handleTapBelowRows(at: point) },
                 onReorderBegin: { blockID, location, anchor in
                     state.selectForReorderStart(on: blockID)
@@ -602,7 +610,7 @@ public struct EditorView: View {
             isActiveEditor: editing?.isActive ?? false,
             completionActive: editing?.completionActive ?? false,
             isIconPickerPresented: iconPickerBlockID == block.id,
-            isExpanded: state.expandedToggles.contains(block.id) || state.expandedTemplates.contains(block.id),
+            isExpanded: isSectionExpanded(block),
             isDropTarget: state.dropOntoBlockID == block.id,
             isActionMenuTarget: isActionMenuTarget,
             isActionMenuPresented: actionSheet?.id == block.id,
@@ -629,17 +637,7 @@ public struct EditorView: View {
                 transferFocus(to: .editor(block.id, initialCursor: .point(point)))
             },
             onToggleExpansion: {
-                if case .templateButton = block.kind {
-                    if state.expandedTemplates.contains(block.id) {
-                        state.expandedTemplates.remove(block.id)
-                    } else {
-                        state.expandedTemplates.insert(block.id)
-                    }
-                } else if state.expandedToggles.contains(block.id) {
-                    state.expandedToggles.remove(block.id)
-                } else {
-                    state.expandedToggles.insert(block.id)
-                }
+                toggleSectionExpansion(block)
             },
             onTemplateButtonPress: {
                 instantiateTemplateButton(blockID: block.id)
@@ -962,8 +960,11 @@ public struct EditorView: View {
 
     private func isPageTitleBlock(_ block: Block) -> Bool {
         guard case .heading(.h1, _) = block.kind else { return false }
-        guard let first = document.children.first else { return false }
-        return first.id == block.id
+        return isPageTitleID(block.id)
+    }
+
+    private func isPageTitleID(_ id: BlockID) -> Bool {
+        document.children.first?.id == id
     }
 
     // MARK: - Undo
@@ -1134,6 +1135,9 @@ public struct EditorView: View {
 
         switch target {
         case .editor(let id, let initialCursor):
+            // A command can create/focus a child of a closed heading. Never
+            // mount the live text editor on a row the page is hiding.
+            revealHiddenBlocks([id])
             // Soft lookup: only redirect to nav on POSITIVE confirmation that the
             // block is non-editable. On absence we assume editable and proceed.
             // SwiftUI snapshots `document.children` at last view-render time and
@@ -1296,7 +1300,7 @@ public struct EditorView: View {
         withAnimation(.easeInOut(duration: 0.15)) {
             expandSection(block)
         }
-        // Re-attach AppKit first responder: the `expandedToggles` mutation rebuilds
+        // Re-attach AppKit first responder: expansion-state mutation rebuilds
         // the VStack inside an animation transaction and drops it. `pageFocused`
         // stays `true`, so a same-value setter is a no-op.
         forcePageFocusGrab()
@@ -1443,7 +1447,7 @@ public struct EditorView: View {
     }
 
     /// Innermost collapsible-section ancestor of `blockID`. Walks the parent
-    /// chain and returns the first toggle/templateButton encountered.
+    /// chain and returns the first heading/toggle/templateButton encountered.
     private func enclosingCollapsibleSectionID(forBlockID blockID: BlockID) -> BlockID? {
         var current: BlockID? = document.parent(of: blockID)
         while let id = current {
@@ -1465,8 +1469,10 @@ public struct EditorView: View {
         Quagmire.hiddenBlockIDs(in: blocks, isCollapsed: isCollapsedSection)
     }
 
-    private func isCollapsibleSection(_ block: Block) -> Bool {
+    func isCollapsibleSection(_ block: Block) -> Bool {
         switch block.kind {
+        case .heading:
+            return !isPageTitleBlock(block)
         case .toggle, .templateButton:
             return true
         default:
@@ -1476,6 +1482,8 @@ public struct EditorView: View {
 
     func isCollapsedSection(_ block: Block) -> Bool {
         switch block.kind {
+        case .heading:
+            return !isPageTitleBlock(block) && state.collapsedHeadings.contains(block.id)
         case .toggle:
             return !state.expandedToggles.contains(block.id)
         case .templateButton:
@@ -1487,6 +1495,8 @@ public struct EditorView: View {
 
     func isCollapsedSection(id: BlockID, kind: VisibleRowKind) -> Bool {
         switch kind {
+        case .heading:
+            return !isPageTitleID(id) && state.collapsedHeadings.contains(id)
         case .toggle:
             return !state.expandedToggles.contains(id)
         case .templateButton:
@@ -1496,8 +1506,10 @@ public struct EditorView: View {
         }
     }
 
-    private func isSectionExpanded(_ block: Block) -> Bool {
+    func isSectionExpanded(_ block: Block) -> Bool {
         switch block.kind {
+        case .heading:
+            return isCollapsibleSection(block) && !state.collapsedHeadings.contains(block.id)
         case .toggle:
             return state.expandedToggles.contains(block.id)
         case .templateButton:
@@ -1509,6 +1521,8 @@ public struct EditorView: View {
 
     private func expandSection(_ block: Block) {
         switch block.kind {
+        case .heading:
+            state.collapsedHeadings.remove(block.id)
         case .toggle:
             state.expandedToggles.insert(block.id)
         case .templateButton:
@@ -1520,6 +1534,8 @@ public struct EditorView: View {
 
     private func collapseSection(_ block: Block) {
         switch block.kind {
+        case .heading where !isPageTitleBlock(block):
+            state.collapsedHeadings.insert(block.id)
         case .toggle:
             state.expandedToggles.remove(block.id)
         case .templateButton:
@@ -1529,7 +1545,100 @@ public struct EditorView: View {
         }
     }
 
-    /// Expand any closed toggle/templateButton ancestors so every id in `ids` is
+    func toggleSectionExpansion(_ block: Block) {
+        guard isCollapsibleSection(block) else { return }
+        withAnimation(.easeInOut(duration: 0.15)) {
+            if isSectionExpanded(block) {
+                repairFocusBeforeHidingDescendants(of: block)
+                collapseSection(block)
+            } else {
+                expandSection(block)
+            }
+        }
+    }
+
+    private func repairFocusBeforeHidingDescendants(of block: Block) {
+        let descendants = document.subtreeIDs(of: block.id).subtracting([block.id])
+        let hidesEditor = state.editingBlock.map(descendants.contains) == true
+        let hidesSelection = !state.selection.isDisjoint(with: descendants)
+        if hidesEditor || hidesSelection {
+            transferFocus(to: .nav(cursor: block.id))
+        }
+    }
+
+    private var collapsibleHeadingIDs: Set<BlockID> {
+        var result: Set<BlockID> = []
+        document.walk { block, _, _ in
+            if block.isHeading, isCollapsibleSection(block) {
+                result.insert(block.id)
+            }
+        }
+        return result
+    }
+
+    var canFoldAllHeadings: Bool {
+        !collapsibleHeadingIDs.isSubset(of: state.collapsedHeadings)
+    }
+
+    var canUnfoldAllHeadings: Bool {
+        !state.collapsedHeadings.isDisjoint(with: collapsibleHeadingIDs)
+    }
+
+    func foldAllHeadings() {
+        let headings = collapsibleHeadingIDs
+        guard !headings.isEmpty, !headings.isSubset(of: state.collapsedHeadings) else { return }
+
+        let hiddenAfterFold = Quagmire.hiddenBlockIDs(in: document.children) { block in
+            if block.isHeading, headings.contains(block.id) { return true }
+            return isCollapsedSection(block)
+        }
+        let affectedID: BlockID? = {
+            if let editing = state.editingBlock, hiddenAfterFold.contains(editing) { return editing }
+            if let cursor = state.cursor, hiddenAfterFold.contains(cursor) { return cursor }
+            var first: BlockID?
+            document.walk { block, _, _ in
+                if first == nil,
+                   state.selection.contains(block.id),
+                   hiddenAfterFold.contains(block.id) {
+                    first = block.id
+                }
+            }
+            return first
+        }()
+        if let affectedID,
+           let target = visibleHeadingAncestor(of: affectedID, hidden: hiddenAfterFold) {
+            transferFocus(to: .nav(cursor: target))
+        }
+
+        withAnimation(.easeInOut(duration: 0.15)) {
+            state.collapsedHeadings = headings
+        }
+        forcePageFocusGrab()
+    }
+
+    func unfoldAllHeadings() {
+        guard canUnfoldAllHeadings else { return }
+        withAnimation(.easeInOut(duration: 0.15)) {
+            state.collapsedHeadings.removeAll()
+        }
+        forcePageFocusGrab()
+    }
+
+    private func visibleHeadingAncestor(of blockID: BlockID, hidden: Set<BlockID>) -> BlockID? {
+        var current: BlockID? = blockID
+        while let id = current {
+            if let block = document.find(id),
+               block.isHeading,
+               isCollapsibleSection(block),
+               !hidden.contains(id) {
+                return id
+            }
+            current = document.parent(of: id)
+        }
+        return nil
+    }
+
+    /// Expand any closed heading/toggle/templateButton ancestors so every id in `ids` is
     /// visible. Called after explicit indent/outdent commands that can land a
     /// selected block inside a collapsed container — without this, the selection
     /// is preserved by id but invisible to the user.
@@ -1604,7 +1713,7 @@ public struct EditorView: View {
     }
 
     /// Move the cursor by `delta` rows; collapse to a single-block selection at the new cursor.
-    /// Skips blocks hidden inside collapsed toggles.
+    /// Skips blocks hidden inside collapsed sections.
     func moveCursor(by delta: Int) {
         let blocks = preorderFlat()
         guard !blocks.isEmpty else { return }

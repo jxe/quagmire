@@ -75,8 +75,8 @@ public final class EditorState {
     // about one shape of target.
     var currentDropTarget: DropTarget? = nil
 
-    // Page-local view state — defaults to all closed every time the page opens.
-    // Toggle expansion is intentionally not persisted to markdown.
+    // Page-local view state. Toggles/templates default closed; ordinary
+    // headings default expanded. None of this is persisted to the document.
     //
     // The `didSet` observers fire `onStructureChange` so the editor's
     // layout cache can drop its cached `[VisibleRow]` — expand/collapse
@@ -89,9 +89,12 @@ public final class EditorState {
     var expandedTemplates: Set<BlockID> = [] {
         didSet { onStructureChange?() }
     }
+    var collapsedHeadings: Set<BlockID> = [] {
+        didSet { onStructureChange?() }
+    }
 
     /// Fired when state that affects the visible-row layout changes
-    /// (toggle/templateButton expand/collapse). Wired by `EditorView`
+    /// (heading/toggle/templateButton expand/collapse). Wired by `EditorView`
     /// at mount; the editor invalidates its `BlockLayoutCache`'s
     /// structural-row cache from here.
     @ObservationIgnored

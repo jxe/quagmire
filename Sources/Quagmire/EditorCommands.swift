@@ -44,6 +44,8 @@ public enum EditorAction: Sendable, Equatable {
     case newBlockBelow
     case moveBlockUp
     case moveBlockDown
+    case foldAllHeadings
+    case unfoldAllHeadings
 
     // Nav-mode keyboard only (the menu bar uses the system equivalents directly).
     case copySelection
@@ -64,6 +66,8 @@ public enum EditorAction: Sendable, Equatable {
 public enum EditorPredicate: Sendable {
     case canIndent
     case canOutdent
+    case canFoldAllHeadings
+    case canUnfoldAllHeadings
 }
 
 struct EditorCommandsFocusKey: FocusedValueKey {

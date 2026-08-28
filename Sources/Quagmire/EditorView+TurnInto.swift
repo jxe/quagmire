@@ -410,6 +410,19 @@ extension EditorView {
                         ) {
                             _ = copyBlocksToPasteboard(ids: targetIDs)
                         }
+                        if targetBlocks.count == 1,
+                           let heading = targetBlocks.first,
+                           heading.isHeading,
+                           isCollapsibleSection(heading) {
+                            compactMenuButton(
+                                title: isSectionExpanded(heading) ? "Fold Section" : "Unfold Section",
+                                systemImage: isSectionExpanded(heading)
+                                    ? "rectangle.compress.vertical"
+                                    : "rectangle.expand.vertical"
+                            ) {
+                                toggleSectionExpansion(heading)
+                            }
+                        }
                         if host.supportsMoveDestinationPicker {
                             compactMenuButton(
                                 title: "Move to",
