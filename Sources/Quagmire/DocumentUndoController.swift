@@ -72,6 +72,10 @@ public final class DocumentUndoController {
     /// SwiftUI update would both lag and lose useful caret placement context.
     var synchronizeActiveText: ((Document) -> Void)?
 
+    /// Inserts text through the mounted native editor so its caret, selection,
+    /// typing attributes, and ordinary typing checkpoint behavior are retained.
+    var insertTextIntoActiveEditor: ((String) -> Bool)?
+
     public init() {
         self.undoManager = UndoManager()
         self.undoManager.levelsOfUndo = 100

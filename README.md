@@ -146,8 +146,14 @@ trashes the source file (`inlineAndRetireDocument(_:parent:)`).
   same action through `EditorCommands.performBlockAction` using its id.
 
 **Pinch-to-insert** (trackpad / touchscreen)
-Spread fingers between two rows to open a gap. Past threshold, releases
-into a new empty paragraph at that index.
+Spread fingers between two rows to open a gap. The smaller threshold inserts
+a neighbour-shaped paragraph/list row; the larger threshold inserts a heading.
+Hosts may supply `EditorPinchDictation`: recording begins when the smaller
+threshold is crossed and finishes on release. A transcript fills the inserted
+row and leaves it selected in nav mode; silence or an unavailable recorder
+focuses the empty row for keyboard entry. Cancelled and heading-sized pinches
+discard gesture audio. Microphone permission, transcription, recovery, and
+error presentation remain host-owned.
 
 **Copy / paste**
 The editor reads/writes the system pasteboard. The host owns the wire

@@ -29,6 +29,7 @@ public struct EditorView: View {
     /// `EditorHost`.
     public let host: any EditorHost
     public let configuration: EditorConfiguration
+    public let pinchDictation: EditorPinchDictation?
     public let pageFooter: AnyView?
 
     // View-shaped @State that doesn't move into EditorState because it's tied to
@@ -104,6 +105,13 @@ public struct EditorView: View {
     /// below it, mutating their `midY`, which can flip the calculation to an
     /// adjacent slot mid-gesture.
     @State var pinchPendingInsertIndex: Int?
+    /// The recorder begins asynchronously when a small pinch crosses its
+    /// insertion threshold. Holding the task lets release await a start that
+    /// may still be activating the audio session.
+    @State var pinchDictationBeginTask: Task<Bool, Never>?
+    /// While transcription is finishing, further pinch inserts are gated so
+    /// one shared host recorder cannot be asked to serve two inline drafts.
+    @State var pinchDictationCompletionTask: Task<Void, Never>?
     @State var scrollMetrics = PageScrollMetrics()
     @State var scrollPosition = ScrollPosition()
     /// Drives the compact block action popover. On iOS this is opened by a
@@ -131,12 +139,14 @@ public struct EditorView: View {
         document: Document,
         state: EditorState,
         host: any EditorHost,
-        configuration: EditorConfiguration = EditorConfiguration()
+        configuration: EditorConfiguration = EditorConfiguration(),
+        pinchDictation: EditorPinchDictation? = nil
     ) {
         self.document = document
         self.state = state
         self.host = host
         self.configuration = configuration
+        self.pinchDictation = pinchDictation
         self.pageFooter = nil
     }
 
@@ -145,12 +155,14 @@ public struct EditorView: View {
         state: EditorState,
         host: any EditorHost,
         configuration: EditorConfiguration = EditorConfiguration(),
+        pinchDictation: EditorPinchDictation? = nil,
         @ViewBuilder pageFooter: () -> Footer
     ) {
         self.document = document
         self.state = state
         self.host = host
         self.configuration = configuration
+        self.pinchDictation = pinchDictation
         self.pageFooter = AnyView(pageFooter())
     }
 
@@ -291,7 +303,7 @@ public struct EditorView: View {
                 scrollPosition: $scrollPosition,
                 isIOSReorderEnabled: !pinchGestureActive,
                 isMacReorderEnabled: state.editingBlock == nil,
-                isPinchEnabled: state.editingBlock == nil,
+                isPinchEnabled: state.editingBlock == nil && pinchDictationCompletionTask == nil,
                 footer: pageFooter,
                 actions: surfaceActions
             ) { id in

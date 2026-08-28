@@ -23,6 +23,17 @@ public final class EditorCommands {
     public var performBlockAction: (String) -> Void = { _ in }
     public var canPerformBlockAction: (String) -> Bool = { _ in false }
 
+    /// The live text block, if this editor is in edit mode. Voice-recording
+    /// hosts capture this when recording starts so later transcription cannot
+    /// be diverted by a page-level destination such as a microphone heading.
+    public var activeEditingBlock: () -> BlockID? = { nil }
+
+    /// Insert plain text into a block previously returned by
+    /// `activeEditingBlock`. Returns false only when that block no longer
+    /// exists. If it is still the live editor, insertion happens at its caret;
+    /// otherwise the text is appended to that same block.
+    public var insertText: (_ text: String, _ target: BlockID) -> Bool = { _, _ in false }
+
     public init() {}
 }
 

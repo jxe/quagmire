@@ -70,6 +70,47 @@ struct VoiceRecordingTests {
         #expect(session.errorMessage?.contains("preserved") == true)
     }
 
+    @MainActor
+    @Test func inlineTranscriptionReturnsTextWithoutDelivering() async throws {
+        let directory = temporaryDirectory("voice-inline")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PendingVoiceRecordingStore<String>(directoryURL: directory)
+        var delivered = false
+        let session = VoiceRecordingSession(
+            recorder: StubVoiceRecorder(transcript: "  captured inline  "),
+            recoveryStore: store,
+            recoveryDelivery: { _, _ in delivered = true }
+        )
+
+        await session.start(destination: "inbox")
+        let result = await session.stopAndReturnTranscript()
+
+        #expect(result == .transcript("captured inline"))
+        #expect(!delivered)
+        #expect(try store.pendingRecordings().isEmpty)
+        #expect(session.errorMessage == nil)
+    }
+
+    @MainActor
+    @Test func inlineSilenceIsNormalAndDiscarded() async throws {
+        let directory = temporaryDirectory("voice-inline-silence")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PendingVoiceRecordingStore<String>(directoryURL: directory)
+        let session = VoiceRecordingSession(
+            recorder: StubVoiceRecorder(transcript: "   "),
+            recoveryStore: store,
+            recoveryDelivery: { _, _ in }
+        )
+
+        await session.start(destination: "inbox")
+        let result = await session.stopAndReturnTranscript()
+
+        #expect(result == .noSpeech)
+        #expect(try store.pendingRecordings().isEmpty)
+        #expect(session.pendingRecovery == nil)
+        #expect(session.errorMessage == nil)
+    }
+
     private func temporaryDirectory(_ name: String) -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("quagmire-\(name)-\(UUID().uuidString)", isDirectory: true)

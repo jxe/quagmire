@@ -6,6 +6,12 @@ public typealias VoiceTranscriptDelivery<Destination> = @MainActor (
     _ destination: Destination
 ) async throws -> Void
 
+public enum VoiceRecordingTranscriptionResult: Equatable, Sendable {
+    case transcript(String)
+    case noSpeech
+    case failed
+}
+
 @MainActor
 @Observable
 public final class VoiceRecordingSession<Destination: Codable & Sendable> {
@@ -91,6 +97,46 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
             activeRecording = nil
             refreshPendingRecovery()
             errorMessage = recoveryFailureMessage(for: error)
+        }
+    }
+
+    /// Stop the active recording and return its transcript without invoking a
+    /// destination delivery. Used when the caller owns an inline insertion
+    /// target, such as Quagmire's pinch-to-insert gesture.
+    ///
+    /// Silence is an ordinary result: its empty audio is discarded and no
+    /// alert is produced. Retryable recorder failures still preserve the
+    /// pending audio and populate `errorMessage` for the host to surface.
+    public func stopAndReturnTranscript() async -> VoiceRecordingTranscriptionResult {
+        guard !isTransitioning, state == .recording else { return .failed }
+        isTransitioning = true
+        let recording = activeRecording
+        activeDelivery = nil
+        defer { isTransitioning = false }
+
+        do {
+            guard let recording else { throw VoiceRecordingSessionError.missingDestination }
+            let rawTranscript = try await recorder.stopAndTranscribe()
+            let transcript = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !transcript.isEmpty else { throw VoiceRecordingSessionError.emptyTranscript }
+            try recoveryStore.remove(recording)
+            activeRecording = nil
+            errorMessage = nil
+            return .transcript(transcript)
+        } catch {
+            recorder.cancel(discardingAudio: false)
+            let disposition = VoiceRecordingFailureDisposition(error: error)
+            if disposition == .discard, let recording {
+                try? recoveryStore.remove(recording)
+            }
+            activeRecording = nil
+            refreshPendingRecovery()
+            if disposition == .discard {
+                errorMessage = nil
+                return .noSpeech
+            }
+            errorMessage = recoveryFailureMessage(for: error)
+            return .failed
         }
     }
 

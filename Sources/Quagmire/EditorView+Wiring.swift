@@ -188,6 +188,40 @@ extension EditorView {
                 action.id == actionID && action.isApplicable(to: context)
             }
         }
+
+        editorCommands.activeEditingBlock = { state.editingBlock }
+        editorCommands.insertText = { text, target in
+            insertExternalText(text, into: target)
+        }
+    }
+
+    /// Deliver delayed external text to the block captured when the operation
+    /// began. Prefer the mounted native editor so insertion uses its live caret;
+    /// if focus moved meanwhile, preserve the captured destination and append.
+    func insertExternalText(_ rawText: String, into target: BlockID) -> Bool {
+        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let block = document.find(target) else { return false }
+
+        if state.editingBlock == target {
+            undoController.breakCoalescing()
+            if undoController.insertTextIntoActiveEditor?(text) == true {
+                undoController.breakCoalescing()
+                return true
+            }
+        }
+
+        let existing = String(block.text.characters)
+        let insertion = inlineDictationInsertion(
+            text,
+            in: existing,
+            replacing: NSRange(location: (existing as NSString).length, length: 0)
+        )
+        mutate("Insert Dictation") {
+            var updated = block.text
+            updated.append(AttributedString(insertion))
+            document.setText(target, updated)
+        }
+        return true
     }
 
     /// Wire the editor's per-document hooks onto `Document`. After this:

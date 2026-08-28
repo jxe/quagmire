@@ -112,8 +112,18 @@ struct PublicAPIConsumerTests {
         )
         let state = EditorState()
         let host = MinimalHost()
+        let dictation = EditorPinchDictation(
+            begin: { true },
+            finish: { .transcript("captured") },
+            cancel: {}
+        )
 
-        let view = EditorView(document: document, state: state, host: host)
+        let view = EditorView(
+            document: document,
+            state: state,
+            host: host,
+            pinchDictation: dictation
+        )
 
         #expect(document.title == "Untitled")
         _ = view

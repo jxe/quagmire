@@ -1,0 +1,95 @@
+import Foundation
+import Testing
+@testable import Quagmire
+
+@MainActor
+@Suite("EditorView pinch dictation")
+struct EditorViewPinchDictationTests {
+    @Test func transcriptFillsInsertedBlockAndKeepsNavigationMode() {
+        let block = Block.bullet(text: AttributedString())
+        let document = Document(id: DocumentID("test"), children: [block])
+        let state = EditorState()
+        state.setCursor(block.id)
+        let host = PinchDictationTestHost()
+        let editor = EditorView(document: document, state: state, host: host)
+        editor.installUndoApply()
+
+        editor.applyPinchDictationCompletion(.transcript("  captured thought  "), to: block.id)
+
+        #expect(String(document.find(block.id)!.text.characters) == "captured thought")
+        #expect(state.cursor == block.id)
+        #expect(state.editingBlock == nil)
+        #expect(document.undoManager!.canUndo)
+        #expect(host.persistCalls == 1)
+    }
+
+    @Test func silenceFocusesTheEmptyInsertedBlock() {
+        let block = Block.paragraph(text: AttributedString())
+        let document = Document(id: DocumentID("test"), children: [block])
+        let state = EditorState()
+        state.setCursor(block.id)
+        let editor = EditorView(document: document, state: state, host: PinchDictationTestHost())
+        editor.installUndoApply()
+
+        editor.applyPinchDictationCompletion(.noSpeech, to: block.id)
+
+        #expect(state.editingBlock == block.id)
+        #expect(document.find(block.id)!.text.characters.isEmpty)
+        #expect(!document.undoManager!.canUndo)
+    }
+
+    @Test func completionDoesNotOverwriteAChangedBlockOrStealMovedFocus() {
+        let inserted = Block.paragraph(text: AttributedString("typed instead"))
+        let other = Block.paragraph(text: AttributedString("other"))
+        let document = Document(id: DocumentID("test"), children: [inserted, other])
+        let state = EditorState()
+        state.setCursor(other.id)
+        let editor = EditorView(document: document, state: state, host: PinchDictationTestHost())
+        editor.installUndoApply()
+
+        editor.applyPinchDictationCompletion(.transcript("late transcript"), to: inserted.id)
+        editor.applyPinchDictationCompletion(.noSpeech, to: inserted.id)
+
+        #expect(String(document.find(inserted.id)!.text.characters) == "typed instead")
+        #expect(state.cursor == other.id)
+        #expect(state.editingBlock == nil)
+    }
+
+    @Test func delayedExternalTextTargetsTheOriginallyEditingBlock() {
+        let editing = Block.paragraph(text: AttributedString("Before"))
+        let voiceHeading = Block.heading(level: .h2, text: AttributedString("🎙 Recordings"))
+        let document = Document(id: DocumentID("test"), children: [editing, voiceHeading])
+        let state = EditorState()
+        state.enterEditMode(on: editing.id)
+        let host = PinchDictationTestHost()
+        let editor = EditorView(document: document, state: state, host: host)
+        editor.installUndoApply()
+        editor.wireEditorCommands()
+
+        let target = editor.editorCommands.activeEditingBlock()
+        state.enterEditMode(on: voiceHeading.id)
+        let inserted = target.map { editor.editorCommands.insertText("spoken words", $0) } ?? false
+
+        #expect(inserted)
+        #expect(String(document.find(editing.id)!.text.characters) == "Before spoken words")
+        #expect(String(document.find(voiceHeading.id)!.text.characters) == "🎙 Recordings")
+        #expect(host.persistCalls == 1)
+    }
+
+    @Test func inlineDictationAddsOnlyNeededBoundarySpaces() {
+        #expect(inlineDictationInsertion("spoken", in: "Before", replacing: NSRange(location: 6, length: 0)) == " spoken")
+        #expect(inlineDictationInsertion("spoken", in: "Before after", replacing: NSRange(location: 6, length: 0)) == " spoken")
+        #expect(inlineDictationInsertion(" spoken ", in: "", replacing: NSRange(location: 0, length: 0)) == "spoken")
+    }
+}
+
+@MainActor
+private final class PinchDictationTestHost: EditorHostDefaults {
+    var persistCalls = 0
+
+    func persistCommit(changes: [DocumentChange], in document: Document) {
+        persistCalls += 1
+    }
+
+    func flush(_ document: Document) async {}
+}

@@ -74,6 +74,7 @@ extension EditorView {
                 pinchCrossedInsertThreshold = true
                 Haptics.medium(enabled: configuration.isHapticFeedbackEnabled)
                 SoundFX.play(.pinchOpen, enabled: configuration.isAudioFeedbackEnabled)
+                beginPinchDictationIfAvailable()
             } else if gapHeight < Self.pinchInsertCommitGap {
                 pinchCrossedInsertThreshold = false
             }
@@ -122,10 +123,12 @@ extension EditorView {
             let path = dropPath(forVisibleSlot: slot, rows: rows)
             let above: VisibleRowKind? = (slot - 1 >= 0 && slot - 1 < rows.count) ? rows[slot - 1].kind : nil
             let below: VisibleRowKind? = (slot >= 0 && slot < rows.count) ? rows[slot].kind : nil
-            // Tier 1 (smaller pinch): pick a kind based on neighbours.
-            // Tier 2 (larger pinch, past the second threshold): always H1.
-            // Both tiers focus the new block.
-            let newBlock: Block = (gap >= Self.pinchInsertFocusGap)
+            let insertsHeading = gap >= Self.pinchInsertFocusGap
+            // Tier 1 (smaller pinch): pick a kind based on neighbours and let
+            // optional host dictation decide whether the empty row stays in
+            // nav mode with transcribed text or enters edit mode. Tier 2
+            // (larger pinch) always inserts and focuses an H1.
+            let newBlock: Block = insertsHeading
                 ? .heading(level: 1, text: AttributedString())
                 : smartInsertBlock(above: above, below: below)
             // Bundle the structural insert and the gap collapse into the same
@@ -135,16 +138,102 @@ extension EditorView {
             // pops in afterwards — visually disjoint.
             Haptics.heavy(enabled: configuration.isHapticFeedbackEnabled)
             withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
-                insertBlock(newBlock, at: path, focus: true)
+                insertBlock(newBlock, at: path, focus: insertsHeading || pinchDictation == nil)
+                if !insertsHeading, pinchDictation != nil {
+                    transferFocus(to: .nav(cursor: newBlock.id))
+                }
                 state.setPinchPreview(nil)
             }
+            if insertsHeading {
+                cancelPinchDictationIfNeeded()
+            } else if pinchDictation != nil {
+                finishPinchDictation(for: newBlock.id)
+            }
         } else {
+            cancelPinchDictationIfNeeded()
             withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
                 state.setPinchPreview(nil)
             }
         }
         clearPinchThresholds()
         pinchGestureActive = false
+    }
+
+    private func beginPinchDictationIfAvailable() {
+        guard pinchDictationBeginTask == nil,
+              pinchDictationCompletionTask == nil,
+              let pinchDictation else { return }
+        pinchDictationBeginTask = Task { @MainActor in
+            await pinchDictation.begin()
+        }
+    }
+
+    private func cancelPinchDictationIfNeeded() {
+        guard let beginTask = pinchDictationBeginTask,
+              let pinchDictation else { return }
+        pinchDictationBeginTask = nil
+        Task { @MainActor in
+            if await beginTask.value {
+                pinchDictation.cancel()
+            }
+        }
+    }
+
+    private func finishPinchDictation(for blockID: BlockID) {
+        let beginTask = pinchDictationBeginTask
+        pinchDictationBeginTask = nil
+        guard let beginTask, let pinchDictation else {
+            applyPinchDictationCompletion(.failed, to: blockID)
+            return
+        }
+
+        pinchDictationCompletionTask = Task { @MainActor in
+            let began = await beginTask.value
+            guard !Task.isCancelled else {
+                if began { pinchDictation.cancel() }
+                return
+            }
+            guard began else {
+                applyPinchDictationCompletion(.failed, to: blockID)
+                pinchDictationCompletionTask = nil
+                return
+            }
+            let completion = await pinchDictation.finish()
+            guard !Task.isCancelled else { return }
+            applyPinchDictationCompletion(completion, to: blockID)
+            pinchDictationCompletionTask = nil
+        }
+    }
+
+    func applyPinchDictationCompletion(
+        _ completion: EditorPinchDictation.Completion,
+        to blockID: BlockID
+    ) {
+        guard let block = document.find(blockID), block.text.characters.isEmpty else { return }
+        let isStillWaitingAtInsertedBlock = state.editingBlock == nil && state.cursor == blockID
+
+        switch completion {
+        case .transcript(let rawTranscript):
+            let transcript = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !transcript.isEmpty else {
+                if isStillWaitingAtInsertedBlock {
+                    transferFocus(to: .editor(blockID, initialCursor: nil))
+                }
+                return
+            }
+            mutate("Insert Dictation") {
+                document.mutate(blockID) { current in
+                    current = current.withText(AttributedString(transcript))
+                }
+            }
+            if isStillWaitingAtInsertedBlock {
+                transferFocus(to: .nav(cursor: blockID))
+            }
+        case .noSpeech, .failed:
+            if isStillWaitingAtInsertedBlock {
+                transferFocus(to: .editor(blockID, initialCursor: nil))
+            }
+        }
     }
 
     /// The insert slot for a pinch whose midpoint is at `point` (page hover

@@ -17,6 +17,28 @@ enum InitialCursorTarget: Sendable, Equatable {
 
 let typingCheckpointDelay = Duration.milliseconds(750)
 
+/// Add spoken text at a caret without running words together. Speech
+/// transcription is already trimmed by the recording session; this helper is
+/// deliberately conservative about adding a boundary space on either side.
+func inlineDictationInsertion(_ rawText: String, in current: String, replacing range: NSRange) -> String {
+    var insertion = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !insertion.isEmpty else { return "" }
+    let source = current as NSString
+    let lower = min(max(0, range.location), source.length)
+    let upper = min(max(lower, range.location + range.length), source.length)
+    if lower > 0,
+       let scalar = UnicodeScalar(source.character(at: lower - 1)),
+       !CharacterSet.whitespacesAndNewlines.contains(scalar) {
+        insertion = " " + insertion
+    }
+    if upper < source.length,
+       let scalar = UnicodeScalar(source.character(at: upper)),
+       !CharacterSet.whitespacesAndNewlines.contains(scalar) {
+        insertion += " "
+    }
+    return insertion
+}
+
 /// Place the caret at the end of the range changed by undo/redo. NSString
 /// indexing matches NSTextView/UITextView's UTF-16 NSRange coordinates.
 func caretRangeAfterTextReplacement(
@@ -414,6 +436,14 @@ struct MacBlockTextEditor: NSViewRepresentable {
             guard let coordinator, let view,
                   let restored = document.find(blockID)?.text else { return }
             coordinator.synchronizeText(in: view, to: restored)
+        }
+        documentUndoController?.insertTextIntoActiveEditor = { [weak coordinator = context.coordinator, weak view] text in
+            guard let coordinator, let view else { return false }
+            let insertion = inlineDictationInsertion(text, in: view.string, replacing: view.selectedRange())
+            guard !insertion.isEmpty else { return false }
+            view.insertText(insertion, replacementRange: view.selectedRange())
+            coordinator.commitLiveText(view)
+            return true
         }
         return view
     }
@@ -1233,6 +1263,14 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
             guard let coordinator, let tv,
                   let restored = document.find(blockID)?.text else { return }
             coordinator.synchronizeText(in: tv, to: restored)
+        }
+        documentUndoController?.insertTextIntoActiveEditor = { [weak coordinator = context.coordinator, weak tv] text in
+            guard let coordinator, let tv else { return false }
+            let insertion = inlineDictationInsertion(text, in: tv.text ?? "", replacing: tv.selectedRange)
+            guard !insertion.isEmpty else { return false }
+            tv.insertText(insertion)
+            coordinator.commitLiveText(tv)
+            return true
         }
         // Build the keyboard accessory bar and host it on the UITextView. UIKit
         // shows this above the keyboard. SwiftUI's `.toolbar(placement: .keyboard)`
