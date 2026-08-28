@@ -161,6 +161,16 @@ extension EditorView {
                 }
                 let roots = document.selectionSubtreeRoots(state.selection)
                 return !roots.isEmpty && roots.allSatisfy { document.canOutdent($0) }
+            case .canMoveBlockUp:
+                return canMoveBlocksInDocument(
+                    state.editingBlock.map { Set([$0]) } ?? state.selection,
+                    by: -1
+                )
+            case .canMoveBlockDown:
+                return canMoveBlocksInDocument(
+                    state.editingBlock.map { Set([$0]) } ?? state.selection,
+                    by: 1
+                )
             case .canFoldAllHeadings:
                 return canFoldAllHeadings
             case .canUnfoldAllHeadings:

@@ -204,6 +204,93 @@ struct EditorViewToggleExpansionTests {
         #expect(state.expandedToggles.isEmpty)
     }
 
+    @Test func optionArrowMoveSkipsClosedHeadingForNextOpenSection() {
+        let moving = Block.paragraph(text: AttributedString("moving"))
+        let first = Block.heading(level: .h2, text: AttributedString("First"), children: [moving])
+        let closedBody = Block.paragraph(text: AttributedString("closed body"))
+        let closed = Block.heading(level: .h2, text: AttributedString("Closed"), children: [closedBody])
+        let openBody = Block.paragraph(text: AttributedString("open body"))
+        let open = Block.heading(level: .h2, text: AttributedString("Open"), children: [openBody])
+        let doc = Document(id: DocumentID("test"), children: [first, closed, open])
+        let state = EditorState()
+        state.collapsedHeadings.insert(closed.id)
+        let editor = EditorView(document: doc, state: state, host: TestHost())
+        editor.installUndoApply()
+        state.setCursor(moving.id)
+        editor.wireEditorCommands()
+
+        #expect(editor.editorCommands.can(.canMoveBlockDown))
+        editor.moveBlocksInDocument([moving.id], by: 1)
+
+        #expect(doc.children[0].children.isEmpty)
+        #expect(doc.children[1].children.map(\.id) == [closedBody.id])
+        #expect(doc.children[2].children.map(\.id) == [moving.id, openBody.id])
+        #expect(!editor.hiddenBlockIDs(in: doc.children).contains(moving.id))
+        #expect(state.collapsedHeadings == [closed.id])
+    }
+
+    @Test func optionArrowMoveUpSkipsClosedHeadingForPreviousOpenSection() {
+        let firstBody = Block.paragraph(text: AttributedString("first body"))
+        let first = Block.heading(level: .h2, text: AttributedString("First"), children: [firstBody])
+        let closedBody = Block.paragraph(text: AttributedString("closed body"))
+        let closed = Block.heading(level: .h2, text: AttributedString("Closed"), children: [closedBody])
+        let moving = Block.paragraph(text: AttributedString("moving"))
+        let last = Block.heading(level: .h2, text: AttributedString("Last"), children: [moving])
+        let doc = Document(id: DocumentID("test"), children: [first, closed, last])
+        let state = EditorState()
+        state.collapsedHeadings.insert(closed.id)
+        let editor = EditorView(document: doc, state: state, host: TestHost())
+        editor.installUndoApply()
+
+        editor.moveBlocksInDocument([moving.id], by: -1)
+
+        #expect(doc.children[0].children.map(\.id) == [firstBody.id, moving.id])
+        #expect(doc.children[1].children.map(\.id) == [closedBody.id])
+        #expect(doc.children[2].children.isEmpty)
+        #expect(!editor.hiddenBlockIDs(in: doc.children).contains(moving.id))
+    }
+
+    @Test func optionArrowHeadingMoveTreatsClosedHeadingAsOneSection() {
+        let first = Block.heading(level: .h2, text: AttributedString("First"))
+        let closedBody = Block.paragraph(text: AttributedString("closed body"))
+        let closed = Block.heading(level: .h2, text: AttributedString("Closed"), children: [closedBody])
+        let last = Block.heading(level: .h2, text: AttributedString("Last"))
+        let doc = Document(id: DocumentID("test"), children: [first, closed, last])
+        let state = EditorState()
+        state.collapsedHeadings.insert(closed.id)
+        let editor = EditorView(document: doc, state: state, host: TestHost())
+        editor.installUndoApply()
+
+        editor.moveBlocksInDocument([first.id], by: 1)
+
+        #expect(doc.children.map(\.id) == [closed.id, first.id, last.id])
+        #expect(doc.children[0].children.map(\.id) == [closedBody.id])
+        #expect(state.collapsedHeadings == [closed.id])
+    }
+
+    @Test func optionArrowMoveDoesNothingWhenClosedHeadingHasNoVisibleDestination() {
+        let moving = Block.paragraph(text: AttributedString("moving"))
+        let first = Block.heading(level: .h2, text: AttributedString("First"), children: [moving])
+        let closed = Block.heading(
+            level: .h2,
+            text: AttributedString("Closed"),
+            children: [.paragraph(text: AttributedString("closed body"))]
+        )
+        let doc = Document(id: DocumentID("test"), children: [first, closed])
+        let state = EditorState()
+        state.collapsedHeadings.insert(closed.id)
+        let editor = EditorView(document: doc, state: state, host: TestHost())
+        editor.installUndoApply()
+        editor.wireEditorCommands()
+        let before = doc.children
+
+        #expect(!editor.editorCommands.can(.canMoveBlockDown))
+        editor.moveBlocksInDocument([moving.id], by: 1)
+
+        #expect(doc.children == before)
+        #expect(!doc.undoManager!.canUndo)
+    }
+
     @Test func dropIntoToggleDoesNotExpandDestination() {
         let moving = Block.paragraph(text: AttributedString("moving"))
         let toggle = Block.toggle(title: AttributedString("Closed"))

@@ -183,6 +183,8 @@ needed. Cross-app drag falls through to the pasteboard codecs.
   defined by Markdown heading containment.
 - Click a chevron, or use Left/Right on a selected collapsible section in nav
   mode. Heading Return still enters edit mode.
+- Move Block Up/Down treats closed headings as opaque sections, skipping their
+  hidden bodies while preserving the existing enter-open-section behavior.
 - Hosts can expose `foldAllHeadings` / `unfoldAllHeadings` through
   `EditorCommands`, with matching availability predicates.
 - Expansion is page-local session state and is never persisted to the model.

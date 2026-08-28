@@ -66,6 +66,8 @@ public enum EditorAction: Sendable, Equatable {
 public enum EditorPredicate: Sendable {
     case canIndent
     case canOutdent
+    case canMoveBlockUp
+    case canMoveBlockDown
     case canFoldAllHeadings
     case canUnfoldAllHeadings
 }

@@ -788,8 +788,12 @@ public final class Document: @MainActor Identifiable {
     }
 
     /// Can the given contiguous sibling slab slide by one outline step?
-    public func canSlideSiblings(_ ids: Set<BlockID>, by delta: Int) -> Bool {
-        slidePlan(for: ids, by: delta) != nil
+    public func canSlideSiblings(
+        _ ids: Set<BlockID>,
+        by delta: Int,
+        skippingHeadingIDs: Set<BlockID> = []
+    ) -> Bool {
+        slidePlan(for: ids, by: delta, skippingHeadingIDs: skippingHeadingIDs) != nil
     }
 
     private struct SlidePlan {
@@ -806,7 +810,11 @@ public final class Document: @MainActor Identifiable {
     /// enter the heading body. Structural containers (toggles, templates, list
     /// items) are skipped as whole subtrees; Tab/Shift-Tab are the explicit
     /// hierarchy-changing commands for those.
-    private func slidePlan(for ids: Set<BlockID>, by delta: Int) -> SlidePlan? {
+    private func slidePlan(
+        for ids: Set<BlockID>,
+        by delta: Int,
+        skippingHeadingIDs: Set<BlockID>
+    ) -> SlidePlan? {
         guard delta == -1 || delta == 1, !ids.isEmpty else { return nil }
         let parentID = parent(of: ids.first!)
         for id in ids where parent(of: id) != parentID { return nil }
@@ -820,7 +828,68 @@ public final class Document: @MainActor Identifiable {
         let last = positions.last!
         let orderedIDs = positions.map { siblings[$0].id }
         let movedBlocks = positions.map { siblings[$0] }
+        let movedBlocksAreHeadings = movedBlocks.allSatisfy(\.isHeading)
         let target: DropPath
+
+        // Open headings are outline envelopes: moving across one enters its
+        // visible body. A closed heading is opaque, so keep walking past a
+        // consecutive closed run. Heading slabs can remain at the surrounding
+        // scope; non-heading slabs need the first later/earlier open heading
+        // body (or a pre-heading slot) to remain visible after heading
+        // containment is re-applied.
+        func targetMovingDownPastClosedHeadings(
+            in targetSiblings: [Block],
+            startingAt start: Int,
+            parent targetParent: BlockID?,
+            sourceSharesTargetSiblings: Bool
+        ) -> DropPath? {
+            var end = start
+            while end < targetSiblings.count,
+                  targetSiblings[end].isHeading,
+                  skippingHeadingIDs.contains(targetSiblings[end].id) {
+                end += 1
+            }
+            guard end > start else { return nil }
+
+            if movedBlocksAreHeadings {
+                // When the source is in this same sibling array it is removed
+                // before insertion, so the skipped run shifts left by the
+                // width of the selected slab.
+                let position = sourceSharesTargetSiblings
+                    ? first + (end - start)
+                    : end
+                return DropPath(parent: targetParent, position: position)
+            }
+
+            guard end < targetSiblings.count,
+                  targetSiblings[end].isHeading,
+                  !skippingHeadingIDs.contains(targetSiblings[end].id)
+            else { return nil }
+            return DropPath(parent: targetSiblings[end].id, position: 0)
+        }
+
+        func targetMovingUpPastClosedHeadings(
+            in targetSiblings: [Block],
+            startingAt start: Int,
+            parent targetParent: BlockID?
+        ) -> DropPath? {
+            var before = start
+            while before >= 0,
+                  targetSiblings[before].isHeading,
+                  skippingHeadingIDs.contains(targetSiblings[before].id) {
+                before -= 1
+            }
+            guard before < start else { return nil }
+
+            if movedBlocksAreHeadings {
+                return DropPath(parent: targetParent, position: before + 1)
+            }
+            if before >= 0, targetSiblings[before].isHeading {
+                let heading = targetSiblings[before]
+                return DropPath(parent: heading.id, position: heading.children.count)
+            }
+            return DropPath(parent: targetParent, position: before + 1)
+        }
 
         if delta < 0 {
             if first == 0 {
@@ -828,11 +897,31 @@ public final class Document: @MainActor Identifiable {
                 let grandparentID = parent(of: parentID)
                 let outerSiblings: [Block] = grandparentID.flatMap(find)?.children ?? children
                 guard let parentIndex = outerSiblings.firstIndex(where: { $0.id == parentBlock.id }) else { return nil }
-                target = DropPath(parent: grandparentID, position: parentIndex)
+                if parentIndex > 0,
+                   outerSiblings[parentIndex - 1].isHeading,
+                   skippingHeadingIDs.contains(outerSiblings[parentIndex - 1].id) {
+                    guard let skippedTarget = targetMovingUpPastClosedHeadings(
+                        in: outerSiblings,
+                        startingAt: parentIndex - 1,
+                        parent: grandparentID
+                    ) else { return nil }
+                    target = skippedTarget
+                } else {
+                    target = DropPath(parent: grandparentID, position: parentIndex)
+                }
             } else {
                 let previousSibling = siblings[first - 1]
                 if previousSibling.isHeading {
-                    target = DropPath(parent: previousSibling.id, position: previousSibling.children.count)
+                    if skippingHeadingIDs.contains(previousSibling.id) {
+                        guard let skippedTarget = targetMovingUpPastClosedHeadings(
+                            in: siblings,
+                            startingAt: first - 1,
+                            parent: parentID
+                        ) else { return nil }
+                        target = skippedTarget
+                    } else {
+                        target = DropPath(parent: previousSibling.id, position: previousSibling.children.count)
+                    }
                 } else {
                     target = DropPath(parent: parentID, position: first - 1)
                 }
@@ -847,14 +936,35 @@ public final class Document: @MainActor Identifiable {
                 let nextOuterPosition = parentIndex + 1
                 if nextOuterPosition < outerSiblings.count,
                    outerSiblings[nextOuterPosition].isHeading {
-                    target = DropPath(parent: outerSiblings[nextOuterPosition].id, position: 0)
+                    let nextHeading = outerSiblings[nextOuterPosition]
+                    if skippingHeadingIDs.contains(nextHeading.id) {
+                        guard let skippedTarget = targetMovingDownPastClosedHeadings(
+                            in: outerSiblings,
+                            startingAt: nextOuterPosition,
+                            parent: grandparentID,
+                            sourceSharesTargetSiblings: false
+                        ) else { return nil }
+                        target = skippedTarget
+                    } else {
+                        target = DropPath(parent: nextHeading.id, position: 0)
+                    }
                 } else {
                     target = DropPath(parent: grandparentID, position: nextOuterPosition)
                 }
             } else {
                 let nextSibling = siblings[nextPosition]
                 if nextSibling.isHeading {
-                    target = DropPath(parent: nextSibling.id, position: 0)
+                    if skippingHeadingIDs.contains(nextSibling.id) {
+                        guard let skippedTarget = targetMovingDownPastClosedHeadings(
+                            in: siblings,
+                            startingAt: nextPosition,
+                            parent: parentID,
+                            sourceSharesTargetSiblings: true
+                        ) else { return nil }
+                        target = skippedTarget
+                    } else {
+                        target = DropPath(parent: nextSibling.id, position: 0)
+                    }
                 } else {
                     // After removal, the old next sibling occupies `first`.
                     // Inserting at `first + 1` places the slab just after it,
@@ -873,8 +983,16 @@ public final class Document: @MainActor Identifiable {
     /// as section envelopes; toggles/templates/list items are skipped as whole
     /// structural subtrees unless the slab is explicitly inside them.
     @discardableResult
-    public func slideSiblings(_ ids: Set<BlockID>, by delta: Int) -> Bool {
-        guard let plan = slidePlan(for: ids, by: delta) else { return false }
+    public func slideSiblings(
+        _ ids: Set<BlockID>,
+        by delta: Int,
+        skippingHeadingIDs: Set<BlockID> = []
+    ) -> Bool {
+        guard let plan = slidePlan(
+            for: ids,
+            by: delta,
+            skippingHeadingIDs: skippingHeadingIDs
+        ) else { return false }
         for id in plan.orderedIDs { removeSubtree(id) }
         return insertSubtrees(plan.movedBlocks, at: plan.target)
     }

@@ -1859,12 +1859,30 @@ public struct EditorView: View {
     /// reflect the editing block.
     func moveBlocksInDocument(_ ids: Set<BlockID>, by delta: Int) {
         let roots = document.selectionSubtreeRoots(ids)
-        guard !roots.isEmpty else { return }
-        guard document.canSlideSiblings(Set(roots), by: delta) else { return }
+        guard !roots.isEmpty,
+              document.canSlideSiblings(
+            Set(roots),
+            by: delta,
+            skippingHeadingIDs: state.collapsedHeadings
+        )
+        else { return }
         mutate("Move Block") {
-            _ = document.slideSiblings(Set(roots), by: delta)
+            _ = document.slideSiblings(
+                Set(roots),
+                by: delta,
+                skippingHeadingIDs: state.collapsedHeadings
+            )
         }
         configuration.diagnostics.navkey.debug("slideSiblings ids=\(ids.count, privacy: .public) roots=\(roots.count, privacy: .public) delta=\(delta, privacy: .public) moved=true")
+    }
+
+    func canMoveBlocksInDocument(_ ids: Set<BlockID>, by delta: Int) -> Bool {
+        let roots = document.selectionSubtreeRoots(ids)
+        return !roots.isEmpty && document.canSlideSiblings(
+            Set(roots),
+            by: delta,
+            skippingHeadingIDs: state.collapsedHeadings
+        )
     }
 
     /// Delete every block in the current selection. No-op if the selection
