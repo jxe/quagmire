@@ -117,6 +117,14 @@ struct PublicAPIConsumerTests {
             finish: { .transcript("captured") },
             cancel: {}
         )
+        let liveDictation = EditorPinchDictation(
+            beginWithDrafts: { onDraft in
+                onDraft("draft")
+                return true
+            },
+            finish: { .transcript("final") },
+            cancel: {}
+        )
 
         let view = EditorView(
             document: document,
@@ -127,5 +135,6 @@ struct PublicAPIConsumerTests {
 
         #expect(document.title == "Untitled")
         _ = view
+        _ = liveDictation
     }
 }

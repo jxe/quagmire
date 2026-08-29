@@ -55,6 +55,26 @@ struct EditorViewPinchDictationTests {
         #expect(state.editingBlock == nil)
     }
 
+    @Test func volatileDraftChangesOnlyTheProvisionalRow() {
+        let existing = Block.paragraph(text: AttributedString("existing"))
+        let provisional = Block.bullet(text: AttributedString())
+        let document = Document(id: DocumentID("test"), children: [existing])
+
+        let draft = PinchDictationDraft(block: provisional, slot: 1)
+            .replacingText(with: "  changing draft  ")
+
+        #expect(String(draft.block.text.characters) == "changing draft")
+        #expect(document.children == [existing])
+    }
+
+    @Test func provisionalChildrenUseTheSameRenderedDepthAsCommittedRows() {
+        #expect(
+            VisibleRowKind(.heading(level: .h2, text: AttributedString()))
+                .childDepth(from: 2) == 2
+        )
+        #expect(VisibleRowKind(.bullet(text: AttributedString())).childDepth(from: 2) == 3)
+    }
+
     @Test func delayedExternalTextTargetsTheOriginallyEditingBlock() {
         let editing = Block.paragraph(text: AttributedString("Before"))
         let voiceHeading = Block.heading(level: .h2, text: AttributedString("🎙 Recordings"))

@@ -18,6 +18,7 @@ struct BlockRowModel: Equatable {
     let isActionMenuTarget: Bool
     let isActionMenuPresented: Bool
     let isPinching: Bool
+    let isProvisionalText: Bool
     let reorderSourceOpacity: Double
     let isReorderingThisBlock: Bool
     let isSelectionHandleRow: Bool
@@ -619,6 +620,7 @@ struct BlockRow: View, Equatable {
 
     @ViewBuilder
     private func editableText(font: Font, fontSize: CGFloat, bold: Bool, lineSpacing: CGFloat, strikethrough: Bool = false, muted: Bool = false) -> some View {
+        let usesMutedForeground = muted || model.isProvisionalText
         if let editor {
             BlockTextEditor(
                 text: textBinding,
@@ -637,7 +639,7 @@ struct BlockRow: View, Equatable {
                 completionActive: editor.completionActive,
                 consumeInitialCursor: editor.consumeInitialCursor
             )
-            .foregroundStyle(muted ? theme.mutedForeground : theme.foreground)
+            .foregroundStyle(usesMutedForeground ? theme.mutedForeground : theme.foreground)
             .strikethrough(strikethrough)
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
@@ -662,7 +664,7 @@ struct BlockRow: View, Equatable {
                     theme: theme
                 )
                     .font(font)
-                    .foregroundStyle(muted ? theme.mutedForeground : theme.foreground)
+                    .foregroundStyle(usesMutedForeground ? theme.mutedForeground : theme.foreground)
                     .lineSpacing(lineSpacing)
                     .textRenderer(InlineCodeChipRenderer(theme: theme))
                     .strikethrough(strikethrough)

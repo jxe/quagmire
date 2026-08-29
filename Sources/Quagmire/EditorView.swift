@@ -112,6 +112,11 @@ public struct EditorView: View {
     /// While transcription is finishing, further pinch inserts are gated so
     /// one shared host recorder cannot be asked to serve two inline drafts.
     @State var pinchDictationCompletionTask: Task<Void, Never>?
+    /// A host's volatile speech results render through the ordinary block row
+    /// without entering the authored document. This gives the preview the
+    /// eventual row's exact typography and wrapping while keeping partial
+    /// recognition out of persistence and undo.
+    @State var pinchDictationDraft: PinchDictationDraft?
     @State var scrollMetrics = PageScrollMetrics()
     @State var scrollPosition = ScrollPosition()
     /// Drives the compact block action popover. On iOS this is opened by a
@@ -221,6 +226,13 @@ public struct EditorView: View {
                 )
             }
             let trailingPinchGap = pinchExtraGap(forIndex: trailingSlot)
+            let insertedPinchDraftID = pinchDictationDraft.flatMap { draft in
+                document.find(draft.block.id) == nil ? nil : draft.block.id
+            }
+            let uncommittedPinchDraft = insertedPinchDraftID == nil ? pinchDictationDraft : nil
+            let renderedTrailingPinchGap = uncommittedPinchDraft?.slot == trailingSlot
+                ? 0
+                : trailingPinchGap
             let trailingReorderGap = reorderDriftGap(at: trailingSlot, hoverSlot: dropHoverSlot, liftFootprint: liftFootprint)
             let surfaceActions = RowSurfaceActions<BlockID>(
                 onHover: { id in state.setHoveredBlock(id) },
@@ -297,18 +309,39 @@ public struct EditorView: View {
                 maxContentWidth: theme.maxContentWidth,
                 horizontalPadding: horizontalPadding,
                 gutterWidth: DragHandle.gutterWidth,
-                trailingDropHeight: 32 + trailingPinchGap + trailingReorderGap,
+                trailingDropHeight: 32 + renderedTrailingPinchGap + trailingReorderGap,
                 activeLift: rowSurfaceLift(),
                 scrollMetrics: scrollMetrics,
                 scrollPosition: $scrollPosition,
                 isIOSReorderEnabled: !pinchGestureActive,
                 isMacReorderEnabled: state.editingBlock == nil,
                 isPinchEnabled: state.editingBlock == nil && pinchDictationCompletionTask == nil,
+                pinchPreviewSlot: uncommittedPinchDraft?.slot,
+                pinchPreviewMinimumHeight: state.pinchPreview?.gapHeight ?? 0,
+                pinchPreview: uncommittedPinchDraft.map { draft in
+                    AnyView(pinchDictationDraftRow(draft, visibleRows: visibleRows))
+                },
                 footer: pageFooter,
                 actions: surfaceActions
             ) { id in
                 if let row = visibleRowByID[id] {
-                    rowView(for: bindingForBlock(id: id), depth: row.depth, numberingIndex: numbering[id], selectedIDs: selectedIDs)
+                    if insertedPinchDraftID == id,
+                       let draftBinding = pinchDictationDraftBinding(for: id) {
+                        rowView(
+                            for: draftBinding,
+                            depth: row.depth,
+                            numberingIndex: numbering[id],
+                            selectedIDs: selectedIDs,
+                            isProvisionalText: true
+                        )
+                    } else {
+                        rowView(
+                            for: bindingForBlock(id: id),
+                            depth: row.depth,
+                            numberingIndex: numbering[id],
+                            selectedIDs: selectedIDs
+                        )
+                    }
                 }
             } liftContent: { id, size in
                 reorderLiftContent(for: id, size: size)
@@ -549,7 +582,13 @@ public struct EditorView: View {
     }
 
     @ViewBuilder
-    private func rowView(for binding: Binding<Block>, depth: Int, numberingIndex: Int?, selectedIDs: Set<BlockID>) -> some View {
+    func rowView(
+        for binding: Binding<Block>,
+        depth: Int,
+        numberingIndex: Int?,
+        selectedIDs: Set<BlockID>,
+        isProvisionalText: Bool = false
+    ) -> some View {
         let block = binding.wrappedValue
         // iOS has no nav-mode multi-select — there's no hardware keyboard arrow nav and the
         // blue tint after dismissing the keyboard is just visual noise. Hardcode false to
@@ -630,6 +669,7 @@ public struct EditorView: View {
             isActionMenuTarget: isActionMenuTarget,
             isActionMenuPresented: actionSheet?.id == block.id,
             isPinching: pinchGestureActive,
+            isProvisionalText: isProvisionalText,
             reorderSourceOpacity: reorderSourceOpacity(for: block.id),
             isReorderingThisBlock: state.reorderLift?.ids.contains(block.id) == true,
             isSelectionHandleRow: isSelectionHandleRow(for: block.id),

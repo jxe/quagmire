@@ -149,11 +149,14 @@ trashes the source file (`inlineAndRetireDocument(_:parent:)`).
 Spread fingers between two rows to open a gap. The smaller threshold inserts
 a neighbour-shaped paragraph/list row; the larger threshold inserts a heading.
 Hosts may supply `EditorPinchDictation`: recording begins when the smaller
-threshold is crossed and finishes on release. A transcript fills the inserted
-row and leaves it selected in nav mode; silence or an unavailable recorder
-focuses the empty row for keyboard entry. Cancelled and heading-sized pinches
-discard gesture audio. Microphone permission, transcription, recovery, and
-error presentation remain host-owned.
+threshold is crossed and finishes on release. A host can publish volatile live
+drafts while the pinch remains open; Quagmire renders them through a provisional
+ordinary block row, so typography, wrapping, and spacing match the eventual
+block without creating a document change or undo entry. Only the completion
+transcript fills the inserted row and leaves it selected in nav mode; silence or
+an unavailable recorder focuses the empty row for keyboard entry. Cancelled and
+heading-sized pinches discard gesture audio. Microphone permission,
+transcription, durability policy, and error presentation remain host-owned.
 
 **Copy / paste**
 The editor reads/writes the system pasteboard. The host owns the wire

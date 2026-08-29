@@ -8,6 +8,7 @@ struct BlockRowModelTests {
     private func model(
         block: Block = .paragraph(text: AttributedString("body")),
         isSelected: Bool = false,
+        isProvisionalText: Bool = false,
         documentLookups: [String: DocumentLookup] = [:],
         linkPreviews: [URL: LinkPreview] = [:]
     ) -> BlockRowModel {
@@ -26,6 +27,7 @@ struct BlockRowModelTests {
             isActionMenuTarget: false,
             isActionMenuPresented: false,
             isPinching: false,
+            isProvisionalText: isProvisionalText,
             reorderSourceOpacity: 1,
             isReorderingThisBlock: false,
             isSelectionHandleRow: false,
@@ -39,6 +41,7 @@ struct BlockRowModelTests {
     @Test func renderStateChangesAffectEquality() {
         let base = model()
         #expect(base != model(isSelected: true))
+        #expect(base != model(isProvisionalText: true))
 
         let pageBlock = Block.documentLink(label: AttributedString("Old"), reference: DocumentReference("child.md"))
         #expect(model(block: pageBlock, documentLookups: ["child.md": .present(title: "Child")])

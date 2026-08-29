@@ -111,6 +111,28 @@ struct VoiceRecordingTests {
         #expect(session.errorMessage == nil)
     }
 
+    @MainActor
+    @Test func liveTranscriptionPublishesDraftWithoutCreatingRecovery() async throws {
+        let directory = temporaryDirectory("voice-live")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PendingVoiceRecordingStore<String>(directoryURL: directory)
+        let session = VoiceRecordingSession(
+            recorder: StubVoiceRecorder(transcript: "final words"),
+            recoveryStore: store,
+            recoveryDelivery: { _, _ in }
+        )
+        var drafts: [String] = []
+
+        let began = await session.startLiveTranscription { drafts.append($0) }
+        let result = await session.stopAndReturnTranscript()
+
+        #expect(began)
+        #expect(drafts == ["draft words"])
+        #expect(result == .transcript("final words"))
+        #expect(try store.pendingRecordings().isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+    }
+
     private func temporaryDirectory(_ name: String) -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("quagmire-\(name)-\(UUID().uuidString)", isDirectory: true)
@@ -136,6 +158,13 @@ private final class StubVoiceRecorder: VoiceRecording {
     func start(recordingAt url: URL) async throws {
         try Data([1]).write(to: url)
         recordingURL = url
+        state = .recording
+    }
+
+    func startLiveTranscription(
+        onDraft: @escaping @MainActor @Sendable (String) -> Void
+    ) async throws {
+        onDraft("draft words")
         state = .recording
     }
 

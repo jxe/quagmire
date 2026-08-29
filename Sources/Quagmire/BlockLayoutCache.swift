@@ -56,6 +56,10 @@ enum VisibleRowKind: Equatable {
         return false
     }
 
+    func childDepth(from depth: Int) -> Int {
+        isHeading ? depth : depth + 1
+    }
+
     var isCollapsedContainer: Bool {
         switch self {
         case .toggle, .templateButton:
@@ -128,7 +132,7 @@ private func appendVisible(
         if !isCollapsed(block) {
             // Heading containers don't bump depth — their children render
             // flush with the heading itself (Notion-style).
-            let childDepth = block.isHeading ? depth : depth + 1
+            let childDepth = kind.childDepth(from: depth)
             appendVisible(
                 in: block.children, depth: childDepth, parentID: block.id,
                 hidden: hidden, isCollapsed: isCollapsed,

@@ -2,6 +2,18 @@ import SwiftUI
 
 // MARK: - Pinch-open-to-insert (iOS)
 
+struct PinchDictationDraft {
+    var block: Block
+    var slot: Int
+
+    func replacingText(with rawText: String) -> PinchDictationDraft {
+        var copy = self
+        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.block = block.withText(AttributedString(text))
+        return copy
+    }
+}
+
 extension EditorView {
     static var pinchInsertCommitGap: CGFloat { 40 }
     static var pinchInsertFocusGap: CGFloat { 110 }
@@ -74,6 +86,7 @@ extension EditorView {
                 pinchCrossedInsertThreshold = true
                 Haptics.medium(enabled: configuration.isHapticFeedbackEnabled)
                 SoundFX.play(.pinchOpen, enabled: configuration.isAudioFeedbackEnabled)
+                preparePinchDictationDraft(at: insertIndex)
                 beginPinchDictationIfAvailable()
             } else if gapHeight < Self.pinchInsertCommitGap {
                 pinchCrossedInsertThreshold = false
@@ -128,9 +141,14 @@ extension EditorView {
             // optional host dictation decide whether the empty row stays in
             // nav mode with transcribed text or enters edit mode. Tier 2
             // (larger pinch) always inserts and focuses an H1.
-            let newBlock: Block = insertsHeading
-                ? .heading(level: 1, text: AttributedString())
-                : smartInsertBlock(above: above, below: below)
+            let newBlock: Block
+            if insertsHeading {
+                newBlock = .heading(level: 1, text: AttributedString())
+            } else if let draft = pinchDictationDraft {
+                newBlock = draft.block.withText(AttributedString())
+            } else {
+                newBlock = smartInsertBlock(above: above, below: below)
+            }
             // Bundle the structural insert and the gap collapse into the same
             // spring transaction so the new row appears inside the opened gap
             // and the surrounding rows close in around it. Without the shared
@@ -146,11 +164,13 @@ extension EditorView {
             }
             if insertsHeading {
                 cancelPinchDictationIfNeeded()
+                pinchDictationDraft = nil
             } else if pinchDictation != nil {
                 finishPinchDictation(for: newBlock.id)
             }
         } else {
             cancelPinchDictationIfNeeded()
+            pinchDictationDraft = nil
             withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
                 state.setPinchPreview(nil)
             }
@@ -164,8 +184,85 @@ extension EditorView {
               pinchDictationCompletionTask == nil,
               let pinchDictation else { return }
         pinchDictationBeginTask = Task { @MainActor in
-            await pinchDictation.begin()
+            await pinchDictation.begin { draft in
+                updatePinchDictationDraft(draft)
+            }
         }
+    }
+
+    private func preparePinchDictationDraft(at slot: Int) {
+        guard pinchDictation != nil else { return }
+        if var draft = pinchDictationDraft {
+            draft.slot = slot
+            pinchDictationDraft = draft
+            return
+        }
+        let (rows, _) = layoutCache.currentVisibleRows(
+            snapshot: document.children, isCollapsed: isCollapsedSection
+        )
+        let above = (slot > 0 && slot <= rows.count) ? rows[slot - 1].kind : nil
+        let below = (slot >= 0 && slot < rows.count) ? rows[slot].kind : nil
+        pinchDictationDraft = PinchDictationDraft(
+            block: smartInsertBlock(above: above, below: below),
+            slot: slot
+        )
+    }
+
+    func updatePinchDictationDraft(_ rawText: String) {
+        guard let draft = pinchDictationDraft else { return }
+        pinchDictationDraft = draft.replacingText(with: rawText)
+    }
+
+    func pinchDictationDraftBinding(for blockID: BlockID) -> Binding<Block>? {
+        guard let draft = pinchDictationDraft,
+              draft.block.id == blockID,
+              document.find(blockID) != nil else { return nil }
+        return Binding(
+            get: { pinchDictationDraft?.block ?? draft.block },
+            set: { updated in
+                guard var current = pinchDictationDraft,
+                      current.block.id == blockID else { return }
+                current.block = updated
+                pinchDictationDraft = current
+            }
+        )
+    }
+
+    @ViewBuilder
+    func pinchDictationDraftRow(
+        _ draft: PinchDictationDraft,
+        visibleRows: [VisibleRow]
+    ) -> some View {
+        let path = dropPath(forVisibleSlot: draft.slot, rows: visibleRows)
+        let depth = path.parent.flatMap { parent in
+            visibleRows.first(where: { $0.id == parent })
+        }.map { $0.kind.childDepth(from: $0.depth) } ?? 0
+        let previous = draft.slot > 0 && draft.slot <= visibleRows.count
+            ? visibleRows[draft.slot - 1]
+            : nil
+        let spacing = BlockSpacing.gap(
+            before: VisibleRowKind(draft.block.kind),
+            depth: depth,
+            after: previous?.kind,
+            prevDepth: previous?.depth ?? 0
+        )
+
+        rowView(
+            for: Binding(
+                get: { pinchDictationDraft?.block ?? draft.block },
+                set: { updated in
+                    guard var current = pinchDictationDraft else { return }
+                    current.block = updated
+                    pinchDictationDraft = current
+                }
+            ),
+            depth: depth,
+            numberingIndex: nil,
+            selectedIDs: [],
+            isProvisionalText: true
+        )
+        .padding(.top, spacing)
+        .accessibilityHidden(true)
     }
 
     private func cancelPinchDictationIfNeeded() {
@@ -194,6 +291,7 @@ extension EditorView {
                 return
             }
             guard began else {
+                pinchDictationDraft = nil
                 applyPinchDictationCompletion(.failed, to: blockID)
                 pinchDictationCompletionTask = nil
                 return
@@ -201,6 +299,7 @@ extension EditorView {
             let completion = await pinchDictation.finish()
             guard !Task.isCancelled else { return }
             applyPinchDictationCompletion(completion, to: blockID)
+            pinchDictationDraft = nil
             pinchDictationCompletionTask = nil
         }
     }

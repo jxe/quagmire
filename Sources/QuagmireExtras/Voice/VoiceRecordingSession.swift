@@ -74,6 +74,32 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
         }
     }
 
+    /// Starts the pinch-only live transcription path. Unlike ordinary toolbar
+    /// recording, this creates no recovery record and has no destination: the
+    /// caller owns the provisional UI and final insertion target.
+    @discardableResult
+    public func startLiveTranscription(
+        onDraft: @escaping @MainActor @Sendable (String) -> Void
+    ) async -> Bool {
+        guard !isTransitioning, state == .idle else { return false }
+        isTransitioning = true
+        defer { isTransitioning = false }
+
+        do {
+            activeRecording = nil
+            activeDelivery = nil
+            try await recorder.startLiveTranscription(onDraft: onDraft)
+            errorMessage = nil
+            return state == .recording
+        } catch {
+            recorder.cancel(discardingAudio: true)
+            activeRecording = nil
+            activeDelivery = nil
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     public func stopAndDeliver() async {
         guard !isTransitioning, state == .recording else { return }
         isTransitioning = true
@@ -115,11 +141,10 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
         defer { isTransitioning = false }
 
         do {
-            guard let recording else { throw VoiceRecordingSessionError.missingDestination }
             let rawTranscript = try await recorder.stopAndTranscribe()
             let transcript = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !transcript.isEmpty else { throw VoiceRecordingSessionError.emptyTranscript }
-            try recoveryStore.remove(recording)
+            if let recording { try recoveryStore.remove(recording) }
             activeRecording = nil
             errorMessage = nil
             return .transcript(transcript)
@@ -135,7 +160,9 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
                 errorMessage = nil
                 return .noSpeech
             }
-            errorMessage = recoveryFailureMessage(for: error)
+            errorMessage = recording == nil
+                ? error.localizedDescription
+                : recoveryFailureMessage(for: error)
             return .failed
         }
     }

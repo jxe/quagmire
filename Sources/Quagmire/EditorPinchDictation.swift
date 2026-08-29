@@ -8,13 +8,15 @@ import Foundation
 /// return `false` from `begin()` when another recording is already active.
 @MainActor
 public final class EditorPinchDictation {
+    public typealias DraftHandler = @MainActor @Sendable (_ text: String) -> Void
+
     public enum Completion: Equatable, Sendable {
         case transcript(String)
         case noSpeech
         case failed
     }
 
-    private let beginAction: @MainActor () async -> Bool
+    private let beginAction: @MainActor (_ onDraft: @escaping DraftHandler) async -> Bool
     private let finishAction: @MainActor () async -> Completion
     private let cancelAction: @MainActor () -> Void
 
@@ -23,12 +25,27 @@ public final class EditorPinchDictation {
         finish: @escaping @MainActor () async -> Completion,
         cancel: @escaping @MainActor () -> Void
     ) {
-        self.beginAction = begin
+        self.beginAction = { _ in await begin() }
         self.finishAction = finish
         self.cancelAction = cancel
     }
 
-    func begin() async -> Bool { await beginAction() }
+    /// Creates pinch dictation that can publish a changing, non-authoritative
+    /// transcript while the gesture remains active. Drafts are display-only;
+    /// Quagmire commits only the value returned by `finish`.
+    public init(
+        beginWithDrafts: @escaping @MainActor (_ onDraft: @escaping DraftHandler) async -> Bool,
+        finish: @escaping @MainActor () async -> Completion,
+        cancel: @escaping @MainActor () -> Void
+    ) {
+        self.beginAction = beginWithDrafts
+        self.finishAction = finish
+        self.cancelAction = cancel
+    }
+
+    func begin(onDraft: @escaping DraftHandler) async -> Bool {
+        await beginAction(onDraft)
+    }
     func finish() async -> Completion { await finishAction() }
     func cancel() { cancelAction() }
 }

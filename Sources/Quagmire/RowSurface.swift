@@ -83,6 +83,9 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     let isIOSReorderEnabled: Bool
     let isMacReorderEnabled: Bool
     let isPinchEnabled: Bool
+    let pinchPreviewSlot: Int?
+    let pinchPreviewMinimumHeight: CGFloat
+    let pinchPreview: AnyView?
     let footer: AnyView?
     let actions: RowSurfaceActions<ID>
     let rowContent: (ID) -> RowContent
@@ -109,6 +112,9 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         isIOSReorderEnabled: Bool,
         isMacReorderEnabled: Bool,
         isPinchEnabled: Bool,
+        pinchPreviewSlot: Int? = nil,
+        pinchPreviewMinimumHeight: CGFloat = 0,
+        pinchPreview: AnyView? = nil,
         footer: AnyView? = nil,
         actions: RowSurfaceActions<ID>,
         @ViewBuilder rowContent: @escaping (ID) -> RowContent,
@@ -127,6 +133,9 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         self.isIOSReorderEnabled = isIOSReorderEnabled
         self.isMacReorderEnabled = isMacReorderEnabled
         self.isPinchEnabled = isPinchEnabled
+        self.pinchPreviewSlot = pinchPreviewSlot
+        self.pinchPreviewMinimumHeight = pinchPreviewMinimumHeight
+        self.pinchPreview = pinchPreview
         self.footer = footer
         self.actions = actions
         self.rowContent = rowContent
@@ -139,6 +148,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(rows, id: \.id) { row in
+                    pinchPreviewView(at: row.slot)
                     rowContent(row.id)
                         .onGeometryChange(for: CGFloat.self) { proxy in
                             proxy.size.height
@@ -150,13 +160,19 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
                         } action: { frame in
                             layoutCache.setRealizedInternalFrame(frame, for: row.id)
                         }
-                        .padding(.top, row.spacingBefore + row.pinchGap + row.reorderGap)
+                        .padding(
+                            .top,
+                            row.spacingBefore
+                                + (pinchPreviewSlot == row.slot ? 0 : row.pinchGap)
+                                + row.reorderGap
+                        )
                         .opacity(row.isSourceDimmed ? 0.12 : 1)
                         .animation(.spring(response: 0.26, dampingFraction: 0.76), value: row.reorderGap)
                         .onDisappear {
                             layoutCache.removeRealizedInternalFrame(for: row.id)
                         }
                 }
+                pinchPreviewView(at: rows.count)
                 trailingDropTarget
                 if let footer {
                     footer
@@ -276,6 +292,16 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         }
         .onChange(of: rowOrder) { _, newValue in
             applyRowOrder(newValue)
+        }
+    }
+
+    @ViewBuilder
+    private func pinchPreviewView(at slot: Int) -> some View {
+        if pinchPreviewSlot == slot, let pinchPreview {
+            pinchPreview
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minHeight: pinchPreviewMinimumHeight, alignment: .center)
+                .allowsHitTesting(false)
         }
     }
 
