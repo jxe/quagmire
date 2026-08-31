@@ -397,7 +397,7 @@ struct BlockRow: View, Equatable {
                             onToggleExpansion()
                         }
                     }
-                    .onLongPressGesture(minimumDuration: 0.5) {
+                    .onLongPressGesture(minimumDuration: 0.35) {
                         onHeadingChevronLongPress()
                     }
             }
