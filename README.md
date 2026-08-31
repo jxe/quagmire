@@ -195,6 +195,8 @@ needed. Cross-app drag falls through to the pasteboard codecs.
 - On iOS, a host can use the heading chevron's long press directly: long-press
   an expanded heading to fold all headings, or a collapsed heading to unfold
   all. The chevron's trailing touch target is excluded from row reordering.
+- On macOS, chevrons appear in the leading gutter. Option-click an expanded
+  heading to fold all headings, or a collapsed heading to unfold all.
 - Move Block Up/Down treats closed headings as opaque sections, skipping their
   hidden bodies while preserving the existing enter-open-section behavior.
 - Hosts can expose `foldAllHeadings` / `unfoldAllHeadings` through

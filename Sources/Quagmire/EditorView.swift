@@ -252,7 +252,11 @@ public struct EditorView: View {
                     if let block = document.find(id),
                        block.isHeading,
                        isCollapsibleSection(block) {
+                        #if os(macOS)
+                        handleMacHeadingChevronClick(block, modifiers: NSEvent.modifierFlags)
+                        #else
                         toggleSectionExpansion(block)
+                        #endif
                     } else {
                         handleHandleClick(blockID: id)
                     }
@@ -754,6 +758,19 @@ public struct EditorView: View {
         }
         Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
     }
+
+    #if os(macOS)
+    func handleMacHeadingChevronClick(_ block: Block, modifiers: NSEvent.ModifierFlags) {
+        let deviceModifiers = modifiers.intersection(.deviceIndependentFlagsMask)
+        let isOptionClick = deviceModifiers.contains(.option)
+            && deviceModifiers.subtracting([.option, .capsLock]).isEmpty
+        if isOptionClick {
+            handleHeadingChevronLongPress(block)
+        } else {
+            toggleSectionExpansion(block)
+        }
+    }
+    #endif
 
     func shouldBeginIOSReorder(on blockID: BlockID, at location: CGPoint) -> Bool {
         guard let block = document.find(blockID),

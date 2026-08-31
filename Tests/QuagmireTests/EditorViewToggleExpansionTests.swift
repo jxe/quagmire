@@ -93,6 +93,36 @@ struct EditorViewToggleExpansionTests {
         #expect(!doc.undoManager!.canUndo)
     }
 
+    #if os(macOS)
+    @Test func optionClickingMacHeadingChevronFoldsOrUnfoldsAll() {
+        let inner = Block.heading(level: .h3, text: AttributedString("Inner"))
+        let outer = Block.heading(level: .h2, text: AttributedString("Outer"), children: [inner])
+        let doc = Document(id: DocumentID("test"), children: [outer])
+        let state = EditorState()
+        let editor = EditorView(document: doc, state: state, host: TestHost())
+        editor.installUndoApply()
+
+        editor.handleMacHeadingChevronClick(outer, modifiers: .option)
+        #expect(state.collapsedHeadings == [outer.id, inner.id])
+
+        editor.handleMacHeadingChevronClick(outer, modifiers: [.option, .capsLock])
+        #expect(state.collapsedHeadings.isEmpty)
+        #expect(!doc.undoManager!.canUndo)
+    }
+
+    @Test func ordinaryMacHeadingChevronClickOnlyTogglesPressedSection() {
+        let inner = Block.heading(level: .h3, text: AttributedString("Inner"))
+        let outer = Block.heading(level: .h2, text: AttributedString("Outer"), children: [inner])
+        let doc = Document(id: DocumentID("test"), children: [outer])
+        let state = EditorState()
+        let editor = EditorView(document: doc, state: state, host: TestHost())
+        editor.installUndoApply()
+
+        editor.handleMacHeadingChevronClick(outer, modifiers: [])
+        #expect(state.collapsedHeadings == [outer.id])
+    }
+    #endif
+
     @Test func headingChevronTouchTargetDoesNotBeginReorder() {
         let section = Block.heading(level: .h2, text: AttributedString("Section"))
         let paragraph = Block.paragraph(text: AttributedString("Body"))

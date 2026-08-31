@@ -360,10 +360,7 @@ struct BlockRow: View, Equatable {
             editableText(font: font, fontSize: size, bold: true, lineSpacing: theme.headingLineSpacing)
                 .padding(.leading, textLeading)
                 .overlay(alignment: .leading) {
-                    Image(systemName: "arrowtriangle.right.fill")
-                        .font(.system(size: theme.chevronSize, weight: .medium))
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        .foregroundStyle(theme.foreground)
+                    headingChevron
                         .frame(
                             width: theme.bulletMarkerColumnWidth,
                             height: theme.listMarkerFrameHeight,
@@ -373,7 +370,7 @@ struct BlockRow: View, Equatable {
                             x: textLeading
                                 - theme.bulletMarkerColumnWidth
                                 - theme.listMarkerGap
-                                + theme.markerCenteringOffset(markerWidth: theme.chevronSize)
+                                + theme.markerCenteringOffset(markerWidth: headingChevronSize)
                         )
                         // The stable page-level gutter gesture owns clicks
                         // and drags here: click folds, drag reorders.
@@ -383,10 +380,7 @@ struct BlockRow: View, Equatable {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 editableText(font: font, fontSize: size, bold: true, lineSpacing: theme.headingLineSpacing)
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .foregroundStyle(isExpanded ? theme.mutedForeground.opacity(0.45) : theme.foreground)
+                headingChevron
                     .frame(width: 28, height: 28)
                     .alignmentGuide(.firstTextBaseline) { dimensions in
                         dimensions[VerticalAlignment.center] + theme.bulletMarkerBaselineOffset
@@ -405,6 +399,15 @@ struct BlockRow: View, Equatable {
             .padding(.leading, theme.nonListLeading(depth: depth))
 #endif
         }
+    }
+
+    private var headingChevronSize: CGFloat { 11 }
+
+    private var headingChevron: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: headingChevronSize, weight: .semibold))
+            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            .foregroundStyle(isExpanded ? theme.mutedForeground.opacity(0.45) : theme.foreground)
     }
 
     private func bulletRow() -> some View {
