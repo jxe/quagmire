@@ -751,12 +751,12 @@ public struct EditorView: View {
 
     func handleHeadingChevronLongPress(_ block: Block) {
         guard isCollapsibleSection(block) else { return }
+        Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
         if isSectionExpanded(block) {
             foldAllHeadings()
         } else {
             unfoldAllHeadings()
         }
-        Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
     }
 
     #if os(macOS)

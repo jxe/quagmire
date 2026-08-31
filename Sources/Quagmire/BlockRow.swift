@@ -56,6 +56,8 @@ struct BlockRow: View, Equatable {
     let actions: BlockRowActions
     let configuration: EditorConfiguration
     let theme: EditorTheme
+    @GestureState private var isHeadingChevronPressActive = false
+    @State private var didCompleteHeadingChevronLongPress = false
 
     nonisolated static func == (lhs: BlockRow, rhs: BlockRow) -> Bool {
         MainActor.assumeIsolated {
@@ -387,13 +389,32 @@ struct BlockRow: View, Equatable {
                     }
                     .contentShape(Rectangle())
                     .onTapGesture {
+                        // A successful long press can also complete the
+                        // simultaneous tap recognizer when the finger lifts.
+                        if didCompleteHeadingChevronLongPress {
+                            didCompleteHeadingChevronLongPress = false
+                            return
+                        }
                         withAnimation(.easeInOut(duration: 0.15)) {
                             onToggleExpansion()
                         }
                     }
-                    .onLongPressGesture(minimumDuration: 0.35) {
-                        onHeadingChevronLongPress()
-                    }
+                    // Keeping these simultaneous avoids the extra gesture-
+                    // arbitration delay caused by separate gesture modifiers.
+                    .simultaneousGesture(
+                        LongPressGesture(minimumDuration: 0.35)
+                            .updating($isHeadingChevronPressActive) { _, isActive, _ in
+                                if !isActive {
+                                    didCompleteHeadingChevronLongPress = false
+                                    Haptics.prepareLight(enabled: configuration.isHapticFeedbackEnabled)
+                                }
+                                isActive = true
+                            }
+                            .onEnded { _ in
+                                didCompleteHeadingChevronLongPress = true
+                                onHeadingChevronLongPress()
+                            }
+                    )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, theme.nonListLeading(depth: depth))

@@ -33,18 +33,34 @@ enum SoundFX {
     }
 }
 
-#if os(iOS)
-private typealias ImpactStyle = UIImpactFeedbackGenerator.FeedbackStyle
-#else
-private enum ImpactStyle {
+private enum ImpactStyle: Hashable {
     case light
     case medium
     case heavy
+}
+
+#if os(iOS)
+private extension ImpactStyle {
+    var feedbackStyle: UIImpactFeedbackGenerator.FeedbackStyle {
+        switch self {
+        case .light: .light
+        case .medium: .medium
+        case .heavy: .heavy
+        }
+    }
 }
 #endif
 
 @MainActor
 enum Haptics {
+    #if os(iOS)
+    private static var preparedImpactGenerators: [ImpactStyle: UIImpactFeedbackGenerator] = [:]
+    #endif
+
+    static func prepareLight(enabled: Bool) {
+        prepare(.light, enabled: enabled)
+    }
+
     static func light(enabled: Bool) {
         impact(.light, enabled: enabled)
     }
@@ -57,11 +73,24 @@ enum Haptics {
         impact(.heavy, enabled: enabled)
     }
 
+    private static func prepare(_ style: ImpactStyle, enabled: Bool) {
+        #if os(iOS)
+        guard enabled else {
+            preparedImpactGenerators[style] = nil
+            return
+        }
+        let generator = preparedImpactGenerators[style]
+            ?? UIImpactFeedbackGenerator(style: style.feedbackStyle)
+        preparedImpactGenerators[style] = generator
+        generator.prepare()
+        #endif
+    }
+
     private static func impact(_ style: ImpactStyle, enabled: Bool) {
         guard enabled else { return }
         #if os(iOS)
-        let generator = UIImpactFeedbackGenerator(style: style)
-        generator.prepare()
+        let generator = preparedImpactGenerators.removeValue(forKey: style)
+            ?? UIImpactFeedbackGenerator(style: style.feedbackStyle)
         generator.impactOccurred()
         #endif
     }
