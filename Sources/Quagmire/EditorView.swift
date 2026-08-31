@@ -182,22 +182,7 @@ public struct EditorView: View {
             // a fresh enumerated wrapper would defeat LazyVStack's identity
             // diff and force the whole visible list through `placeSubviews`
             // on every transaction).
-            // Compute visible rows AND sync the layout cache's ID order in
-            // a single let-binding: the cache mutation is a reference-type
-            // side effect (no body invalidation), but the SwiftUI ViewBuilder
-            // context only accepts let/var/View expressions, so we wrap the
-            // computation in an IIFE.
-            let visibleRows: [VisibleRow] = {
-                // Route body through the same cache the gestures hit, so
-                // a body re-evaluation warms the cache for the next drag /
-                // pinch tick (and conversely, an in-flight drag's cached
-                // rows are reused on the body re-eval that follows a
-                // non-structural change like hover).
-                let (rows, _) = layoutCache.currentVisibleRows(
-                    snapshot: snapshot, isCollapsed: isCollapsedSection
-                )
-                return rows
-            }()
+            let visibleRows = visibleRowsForRendering(snapshot: snapshot)
             // Translate the (tree-aware) drop hover and lift footprint into the
             // visible-row slot space the gap renderers operate in. Both gestures
             // render gaps against the body's `ForEach` enumeration index `k`, so
@@ -1568,6 +1553,18 @@ public struct EditorView: View {
     /// to `EditorState`.
     func hiddenBlockIDs(in blocks: [Block]) -> Set<BlockID> {
         Quagmire.hiddenBlockIDs(in: blocks, isCollapsed: isCollapsedSection)
+    }
+
+    /// Parent-body read path for the visible row projection. Route it through
+    /// the same cache the gestures hit, while retaining an explicit observable
+    /// dependency on expansion state: a cache hit doesn't invoke
+    /// `isCollapsedSection` and would otherwise let SwiftUI drop that dependency.
+    func visibleRowsForRendering(snapshot: [Block]) -> [VisibleRow] {
+        _ = state.structureRevision
+        return layoutCache.currentVisibleRows(
+            snapshot: snapshot,
+            isCollapsed: isCollapsedSection
+        ).rows
     }
 
     func isCollapsibleSection(_ block: Block) -> Bool {

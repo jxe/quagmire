@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import SwiftUI
 import Testing
 @testable import Quagmire
@@ -174,6 +175,41 @@ struct EditorViewToggleExpansionTests {
 
         #expect(!state.collapsedHeadings.contains(section.id))
         #expect(state.editingBlock == leaf.id)
+    }
+
+    @Test func firstUnfoldOfFarDownHeadingInvalidatesParentRowProjection() {
+        let sections = (0..<80).map { index in
+            Block.heading(
+                level: .h2,
+                text: AttributedString("Section \(index)"),
+                children: [.paragraph(text: AttributedString("Child \(index)"))]
+            )
+        }
+        let target = sections[60]
+        let targetChild = target.children[0]
+        let doc = Document(id: DocumentID("test"), children: sections)
+        let state = EditorState()
+        let editor = EditorView(document: doc, state: state, host: TestHost())
+        let cache = editor.layoutCache
+        state.onStructureChange = { cache.invalidateStructure() }
+
+        editor.foldAllHeadings()
+
+        var rows: [VisibleRow] = []
+        let invalidation = ExpansionInvalidationFlag()
+        withObservationTracking {
+            rows = editor.visibleRowsForRendering(snapshot: doc.children)
+        } onChange: {
+            invalidation.fired = true
+        }
+
+        #expect(!rows.contains(where: { $0.id == targetChild.id }))
+
+        editor.toggleSectionExpansion(target)
+
+        #expect(invalidation.fired)
+        rows = editor.visibleRowsForRendering(snapshot: doc.children)
+        #expect(rows.contains(where: { $0.id == targetChild.id }))
     }
 
     @Test func turnIntoToggleStartsClosedAndClearsTemplateExpansion() {
@@ -482,6 +518,10 @@ struct EditorViewToggleExpansionTests {
         #expect(doc.children == [block])
         #expect(state.actionToast == nil)
     }
+}
+
+private final class ExpansionInvalidationFlag: @unchecked Sendable {
+    var fired = false
 }
 
 @MainActor

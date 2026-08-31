@@ -78,20 +78,27 @@ public final class EditorState {
     // Page-local view state. Toggles/templates default closed; ordinary
     // headings default expanded. None of this is persisted to the document.
     //
-    // The `didSet` observers fire `onStructureChange` so the editor's
-    // layout cache can drop its cached `[VisibleRow]` — expand/collapse
-    // changes which blocks are visible and thus which slots a drag/pinch
-    // can land in. Set/Set mutations like `.insert(_:)` route through
-    // Swift's `_modify` accessor, which runs `didSet` after each call.
+    // The `didSet` observers call `structureDidChange()` so the editor's
+    // layout cache can drop its cached `[VisibleRow]` and `EditorView.body`
+    // retains an observable dependency on the visible tree. Expand/collapse
+    // changes which blocks are visible and thus which slots a drag/pinch can
+    // land in. Set mutations like `.insert(_:)` route through Swift's
+    // `_modify` accessor, which runs `didSet` after each call.
     var expandedToggles: Set<BlockID> = [] {
-        didSet { onStructureChange?() }
+        didSet { structureDidChange() }
     }
     var expandedTemplates: Set<BlockID> = [] {
-        didSet { onStructureChange?() }
+        didSet { structureDidChange() }
     }
     var collapsedHeadings: Set<BlockID> = [] {
-        didSet { onStructureChange?() }
+        didSet { structureDidChange() }
     }
+
+    /// Observed by the parent editor row projection. The expansion sets can
+    /// otherwise disappear from SwiftUI's dependency graph when a body pass
+    /// gets all of its visible rows from `BlockLayoutCache` without invoking
+    /// the collapse predicate.
+    private(set) var structureRevision: UInt64 = 0
 
     /// Fired when state that affects the visible-row layout changes
     /// (heading/toggle/templateButton expand/collapse). Wired by `EditorView`
@@ -99,6 +106,11 @@ public final class EditorState {
     /// structural-row cache from here.
     @ObservationIgnored
     internal var onStructureChange: (() -> Void)? = nil
+
+    private func structureDidChange() {
+        onStructureChange?()
+        structureRevision &+= 1
+    }
 
     // Image persistence is asynchronous, but paste ordering is user-visible.
     // Serialize imports per editor session and remember the last durable block
