@@ -305,7 +305,16 @@ struct ReorderLift: Equatable, Sendable {
     /// All ids in the lifted subtrees (roots + every descendant). Drop validator
     /// rejects targets whose `parent` is in this set (cycle prevention).
     var draggedSubtreeIDs: Set<BlockID>
+    /// A single-heading drag temporarily projects the document as an outline
+    /// through this level and restricts destinations to section boundaries.
+    /// Nil for ordinary rows and heterogeneous multi-row selections.
+    var outlineHeadingLevel: HeadingLevel?
     var sourceFrame: CGRect
+    /// Stable lift-time scroll geometry. Scroll preservation compares these
+    /// document-local values with the compact projection rather than mixing
+    /// pre- and post-layout viewport coordinates.
+    var sourceEffectiveOffsetY: CGFloat
+    var sourceInternalMinY: CGFloat
     var touchOffset: CGSize
     var location: CGPoint
     /// True while the lift is mounted but `touchOffset` is a placeholder
@@ -322,7 +331,10 @@ struct ReorderLift: Equatable, Sendable {
         sourceParentID: BlockID?,
         sourcePositions: ClosedRange<Int>,
         draggedSubtreeIDs: Set<BlockID>,
+        outlineHeadingLevel: HeadingLevel? = nil,
         sourceFrame: CGRect,
+        sourceEffectiveOffsetY: CGFloat = 0,
+        sourceInternalMinY: CGFloat? = nil,
         touchOffset: CGSize,
         location: CGPoint,
         pendingAnchor: Bool,
@@ -333,7 +345,10 @@ struct ReorderLift: Equatable, Sendable {
         self.sourceParentID = sourceParentID
         self.sourcePositions = sourcePositions
         self.draggedSubtreeIDs = draggedSubtreeIDs
+        self.outlineHeadingLevel = outlineHeadingLevel
         self.sourceFrame = sourceFrame
+        self.sourceEffectiveOffsetY = sourceEffectiveOffsetY
+        self.sourceInternalMinY = sourceInternalMinY ?? sourceFrame.minY
         self.touchOffset = touchOffset
         self.location = location
         self.pendingAnchor = pendingAnchor

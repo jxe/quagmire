@@ -165,6 +165,64 @@ struct ReorderDropResolverTests {
         #expect(cache.reorderFrame(of: "c")?.minY == 142)
     }
 
+    @MainActor
+    @Test func headingOutlineRebasesSnapshotOnceThenIgnoresItsAnimatedGap() {
+        let cache = RowSurfaceLayoutCache<String>()
+        cache.updateOrder(["h1", "body", "h2"])
+        cache.setHeight(20, for: "h1")
+        cache.setHeight(30, for: "body")
+        cache.setHeight(20, for: "h2")
+        cache.beginReorderFrameSnapshot(rebaseOnNextOrderChange: true)
+
+        cache.updateOrder(
+            ["h1", "h2"],
+            topGaps: ["h2": 42],
+            reorderGaps: ["h2": 42]
+        )
+        #expect(cache.reorderFrame(of: "h2")?.minY == 20)
+
+        cache.updateOrder(["h1", "h2"], topGaps: ["h2": 50], reorderGaps: ["h2": 42])
+        #expect(cache.reorderFrame(of: "h2")?.minY == 20)
+    }
+
+    @Test func headingOutlineOffsetKeepsTheLiftVisibleAfterRowsCompress() {
+        #expect(reorderAnchorPreservingOffset(
+            sourceEffectiveOffset: 900,
+            sourceInternalMinY: 1080,
+            projectedInternalMinY: 280
+        ) == 100)
+        #expect(reorderAnchorPreservingOffset(
+            sourceEffectiveOffset: 300,
+            sourceInternalMinY: 480,
+            projectedInternalMinY: 80
+        ) == 0)
+        #expect(reorderContentOriginAfterOffsetChange(
+            currentOrigin: -900,
+            oldOffset: 900,
+            newOffset: 100
+        ) == -100)
+    }
+
+    @Test func reorderScrollOffsetPreservesIOSInsetAtTop() {
+        #expect(reorderEffectiveScrollOffset(rawOffset: -100, topInset: 100) == 0)
+        #expect(reorderRawScrollOffset(effectiveOffset: 0, topInset: 100) == -100)
+        #expect(reorderRawScrollOffset(effectiveOffset: 75, topInset: 100) == -25)
+        #expect(reorderRawScrollOffset(effectiveOffset: 75, topInset: 0) == 75)
+    }
+
+    @MainActor
+    @Test func projectedSourceTopUsesStableInternalCoordinates() {
+        let cache = RowSurfaceLayoutCache<String>()
+        cache.updateOrder(["before", "after"], topGaps: ["after": 10])
+        cache.setHeight(30, for: "before")
+        cache.setHeight(40, for: "after")
+        cache.contentOriginY = 100
+
+        #expect(cache.projectedInternalRowTop(at: 1, topGap: 7) == 37)
+        cache.contentOriginY = -500
+        #expect(cache.projectedInternalRowTop(at: 1, topGap: 7) == 37)
+    }
+
     @Test func acceptsLargeJumpsWithoutStickyIntermediateSlots() {
         let frames = makeFrames(count: 5)
 

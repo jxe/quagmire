@@ -182,13 +182,17 @@ public struct EditorView: View {
             // a fresh enumerated wrapper would defeat LazyVStack's identity
             // diff and force the whole visible list through `placeSubviews`
             // on every transaction).
-            let visibleRows = visibleRowsForRendering(snapshot: snapshot)
+            let unprojectedRows = rowsBeforeReorderSourceRemoval(snapshot: snapshot)
+            let visibleRows = projectedRowsForActiveReorder(unprojectedRows)
             // Translate the (tree-aware) drop hover and lift footprint into the
             // visible-row slot space the gap renderers operate in. Both gestures
             // render gaps against the body's `ForEach` enumeration index `k`, so
             // anything they need to compare against has to live in slot space.
             let dropHoverSlot = visibleSlotForCurrentDropPath(in: visibleRows)
             let liftFootprint = currentLiftFootprint(in: visibleRows)
+            let reorderSourceRow = state.reorderLift.flatMap { lift in
+                unprojectedRows.first(where: { $0.id == lift.block.id })
+            }
             let trailingSlot = visibleRows.count
             #if os(iOS)
             let selectedIDs: Set<BlockID> = []
@@ -206,7 +210,13 @@ public struct EditorView: View {
                     depth: row.depth,
                     spacingBefore: gap,
                     pinchGap: pinchExtraGap(forIndex: row.slot),
-                    reorderGap: reorderDriftGap(at: row.slot, hoverSlot: dropHoverSlot, liftFootprint: liftFootprint),
+                    reorderGap: reorderDriftGap(
+                        at: row.slot,
+                        hoverSlot: dropHoverSlot,
+                        liftFootprint: liftFootprint,
+                        rows: visibleRows,
+                        sourceRow: reorderSourceRow
+                    ),
                     isSourceDimmed: reorderSourceOpacity(for: row.id) < 1
                 )
             }
@@ -218,7 +228,13 @@ public struct EditorView: View {
             let renderedTrailingPinchGap = uncommittedPinchDraft?.slot == trailingSlot
                 ? 0
                 : trailingPinchGap
-            let trailingReorderGap = reorderDriftGap(at: trailingSlot, hoverSlot: dropHoverSlot, liftFootprint: liftFootprint)
+            let trailingReorderGap = reorderDriftGap(
+                at: trailingSlot,
+                hoverSlot: dropHoverSlot,
+                liftFootprint: liftFootprint,
+                rows: visibleRows,
+                sourceRow: reorderSourceRow
+            )
             let surfaceActions = RowSurfaceActions<BlockID>(
                 onHover: { id in state.setHoveredBlock(id) },
                 onTapRow: { id, point in
@@ -299,7 +315,7 @@ public struct EditorView: View {
                 horizontalPadding: horizontalPadding,
                 gutterWidth: DragHandle.gutterWidth,
                 trailingDropHeight: 32 + renderedTrailingPinchGap + trailingReorderGap,
-                activeLift: rowSurfaceLift(),
+                activeLift: rowSurfaceLift(in: unprojectedRows),
                 scrollMetrics: scrollMetrics,
                 scrollPosition: $scrollPosition,
                 isIOSReorderEnabled: !pinchGestureActive,
@@ -758,6 +774,9 @@ public struct EditorView: View {
     #endif
 
     func shouldBeginIOSReorder(on blockID: BlockID, at location: CGPoint) -> Bool {
+        if dragIDs(for: blockID).contains(where: isPageTitleID) {
+            return false
+        }
         guard let block = document.find(blockID),
               block.isHeading,
               isCollapsibleSection(block),
@@ -1049,8 +1068,9 @@ public struct EditorView: View {
         return isPageTitleID(block.id)
     }
 
-    private func isPageTitleID(_ id: BlockID) -> Bool {
-        document.children.first?.id == id
+    func isPageTitleID(_ id: BlockID) -> Bool {
+        guard document.children.first?.id == id else { return false }
+        return document.find(id)?.headingLevel == .h1
     }
 
     // MARK: - Undo
@@ -1559,12 +1579,33 @@ public struct EditorView: View {
     /// the same cache the gestures hit, while retaining an explicit observable
     /// dependency on expansion state: a cache hit doesn't invoke
     /// `isCollapsedSection` and would otherwise let SwiftUI drop that dependency.
-    func visibleRowsForRendering(snapshot: [Block]) -> [VisibleRow] {
+    /// Active row projection before a move removes its source subtree. Shared
+    /// by rendering, source-slot seeding, and per-tick destination resolution
+    /// so all three operate on the identical outline/ordinary row sequence.
+    func rowsBeforeReorderSourceRemoval(snapshot: [Block]) -> [VisibleRow] {
         _ = state.structureRevision
+        if let level = state.reorderLift?.outlineHeadingLevel {
+            return layoutCache.currentHeadingOutlineRows(
+                snapshot: snapshot,
+                through: level,
+                isCollapsed: isCollapsedSection
+            )
+        }
         return layoutCache.currentVisibleRows(
             snapshot: snapshot,
             isCollapsed: isCollapsedSection
         ).rows
+    }
+
+    /// Moving rows are absent from the live stack, so the source closes as
+    /// soon as the lift appears. Option-copy keeps originals in place.
+    func projectedRowsForActiveReorder(_ rows: [VisibleRow]) -> [VisibleRow] {
+        guard let lift = state.reorderLift, !lift.isCopy else { return rows }
+        return visibleRowsRemoving(lift.draggedSubtreeIDs, from: rows)
+    }
+
+    func visibleRowsForRendering(snapshot: [Block]) -> [VisibleRow] {
+        projectedRowsForActiveReorder(rowsBeforeReorderSourceRemoval(snapshot: snapshot))
     }
 
     func isCollapsibleSection(_ block: Block) -> Bool {

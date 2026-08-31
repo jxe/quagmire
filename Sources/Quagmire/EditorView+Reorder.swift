@@ -13,10 +13,46 @@ extension EditorView {
     /// contiguous range of visible-row slots occupied by the lifted subtree.
     /// The footprint suppression covers "drop where you already are":
     /// anywhere inside the lifted rows, or the slot directly after them.
-    func reorderDriftGap(at slot: Int, hoverSlot: Int?, liftFootprint: ClosedRange<Int>?) -> CGFloat {
+    func reorderDriftGap(
+        at slot: Int,
+        hoverSlot: Int?,
+        liftFootprint: ClosedRange<Int>?,
+        rows: [VisibleRow],
+        sourceRow: VisibleRow?
+    ) -> CGFloat {
         guard hoverSlot == slot else { return 0 }
         if let f = liftFootprint, f.contains(slot) || slot == f.upperBound + 1 { return 0 }
-        return 42
+        guard let lift = state.reorderLift, let sourceRow else { return 42 }
+
+        let previous = slot > 0 ? rows[slot - 1] : nil
+        let next = slot < rows.count ? rows[slot] : nil
+        let existingNeighborGap = next.map { next in
+            BlockSpacing.gap(
+                before: next.kind,
+                depth: next.depth,
+                after: previous?.kind,
+                prevDepth: previous?.depth ?? 0
+            )
+        } ?? 0
+        let gapBeforeSource = BlockSpacing.gap(
+            before: sourceRow.kind,
+            depth: sourceRow.depth,
+            after: previous?.kind,
+            prevDepth: previous?.depth ?? 0
+        )
+        let gapAfterSource = next.map { next in
+            BlockSpacing.gap(
+                before: next.kind,
+                depth: next.depth,
+                after: sourceRow.kind,
+                prevDepth: sourceRow.depth
+            )
+        } ?? 0
+        let insertedFootprint = gapBeforeSource
+            + lift.sourceFrame.height
+            + gapAfterSource
+            - existingNeighborGap
+        return max(42, insertedFootprint)
     }
 
     /// Visible-slot range covered by the active reorder lift's blocks (and
@@ -39,13 +75,36 @@ extension EditorView {
         return lift.isCopy ? 1 : 0.12
     }
 
-    func rowSurfaceLift() -> RowSurfaceLift<BlockID>? {
+    func rowSurfaceLift(in unprojectedRows: [VisibleRow]) -> RowSurfaceLift<BlockID>? {
         guard let lift = state.reorderLift else { return nil }
+        var projectionAnchor: (slot: Int, topGap: CGFloat)?
+        if !lift.isCopy,
+           let sourceIndex = unprojectedRows.firstIndex(where: { $0.id == lift.block.id }) {
+            let retainedBefore = unprojectedRows[..<sourceIndex].filter {
+                !lift.draggedSubtreeIDs.contains($0.id)
+            }
+            let previous = retainedBefore.last
+            let source = unprojectedRows[sourceIndex]
+            projectionAnchor = (
+                retainedBefore.count,
+                BlockSpacing.gap(
+                    before: source.kind,
+                    depth: source.depth,
+                    after: previous?.kind,
+                    prevDepth: previous?.depth ?? 0
+                )
+            )
+        }
         return RowSurfaceLift(
             id: lift.block.id,
             sourceFrame: lift.sourceFrame,
+            sourceEffectiveOffsetY: lift.sourceEffectiveOffsetY,
+            sourceInternalMinY: lift.sourceInternalMinY,
             touchOffset: lift.touchOffset,
-            location: lift.location
+            location: lift.location,
+            projectedSourceSlot: projectionAnchor?.slot,
+            projectedSourceTopGap: projectionAnchor?.topGap ?? 0,
+            hasSeededDropTarget: state.currentDropTarget != nil
         )
     }
 
@@ -81,7 +140,7 @@ extension EditorView {
     /// Pre-mounts the lift in a `pendingAnchor` state at the source row's
     /// center. iOS calls this on long-press completion (where the gesture
     /// value carries no cursor location) so the user gets immediate visual
-    /// feedback — source row dims and lift overlay appears — instead of
+    /// feedback — source closes and lift overlay appears — instead of
     /// waiting for the first drag event. The next `tickReorderLift(at:)` call
     /// re-anchors `touchOffset` to the actual cursor location.
     func preliftReorder(blockID: BlockID) {
@@ -92,8 +151,9 @@ extension EditorView {
             pendingAnchor: true,
             isCopy: false
         ) else { return }
-        layoutCache.beginReorderFrameSnapshot()
+        layoutCache.beginReorderFrameSnapshot(rebaseOnNextOrderChange: true)
         state.setReorderLift(lift)
+        seedSourceDropTarget(for: lift, snapshot: document.children)
     }
 
     /// Build a `ReorderLift` for `blockID`. Returns nil if the block, its row
@@ -111,6 +171,11 @@ extension EditorView {
               let sourceFrame = reorderSourceFrame(for: blockID)
         else { return nil }
         let ids = dragIDs(for: blockID)
+        // The leading H1 is the page title, not a movable section. Moving it
+        // would silently transfer title identity to a different H1.
+        if ids.contains(where: isPageTitleID) {
+            return nil
+        }
         let parentID = document.parent(of: blockID)
         // Compute the (parent, positions) pair: positions are the indices of
         // each lifted root within its parent's children list. Single-row
@@ -123,18 +188,53 @@ extension EditorView {
         for id in ids {
             allDescendants.formUnion(document.subtreeIDs(of: id))
         }
+        let roots = document.selectionSubtreeRoots(Set(ids))
+        let outlineHeadingLevel: HeadingLevel? = roots == [blockID]
+            ? block.headingLevel
+            : nil
         return ReorderLift(
             block: block,
             ids: ids,
             sourceParentID: parentID,
             sourcePositions: positionRange,
             draggedSubtreeIDs: allDescendants,
+            outlineHeadingLevel: outlineHeadingLevel,
             sourceFrame: sourceFrame,
+            sourceEffectiveOffsetY: reorderEffectiveScrollOffset(
+                rawOffset: scrollMetrics.contentOffsetY,
+                topInset: scrollMetrics.topInset
+            ),
+            sourceInternalMinY: sourceFrame.minY - layoutCache.contentOriginY,
             touchOffset: touchOffset ?? CGSize(width: sourceFrame.width / 2, height: sourceFrame.height / 2),
             location: location ?? CGPoint(x: sourceFrame.midX, y: sourceFrame.midY),
             pendingAnchor: pendingAnchor,
             isCopy: isCopy
         )
+    }
+
+    /// Install the source's own insertion slot before SwiftUI removes the
+    /// moving rows. This makes source removal and destination-gap opening one
+    /// projection instead of briefly collapsing the next row under the still
+    /// stationary finger and then resolving one slot too low.
+    func seedSourceDropTarget(for lift: ReorderLift, snapshot: [Block]) {
+        guard !lift.isCopy else { return }
+        let unprojectedRows = rowsBeforeReorderSourceRemoval(snapshot: snapshot)
+        guard let sourceIndex = unprojectedRows.firstIndex(where: { $0.id == lift.block.id }) else {
+            return
+        }
+        let sourceSlot = unprojectedRows[..<sourceIndex].filter {
+            !lift.draggedSubtreeIDs.contains($0.id)
+        }.count
+        let rows = visibleRowsRemoving(lift.draggedSubtreeIDs, from: unprojectedRows)
+        let path: DropPath?
+        if let level = lift.outlineHeadingLevel {
+            path = headingDropPath(forOutlineSlot: sourceSlot, rows: rows, level: level)
+        } else {
+            path = dropPath(forVisibleSlot: sourceSlot, rows: rows)
+        }
+        if let path, document.canDrop(ids: lift.ids, to: path) {
+            state.currentDropTarget = .insertAt(path)
+        }
     }
 
     /// Prefer the live frame used by iOS source hit-testing. The cumulative
@@ -163,6 +263,7 @@ extension EditorView {
     /// the cursor.
     func tickReorderLift(blockID: BlockID, at location: CGPoint, anchorAt anchorPoint: CGPoint, snapshot: [Block]) {
         let isCopy = currentReorderCopyIntent()
+        var waitingForReorderProjection = false
         if state.reorderLift == nil {
             guard let sourceFrame = reorderSourceFrame(for: blockID),
                   let lift = makeReorderLift(
@@ -176,10 +277,22 @@ extension EditorView {
                       isCopy: isCopy
                   )
             else { return }
-            layoutCache.beginReorderFrameSnapshot()
+            layoutCache.beginReorderFrameSnapshot(
+                rebaseOnNextOrderChange: lift.outlineHeadingLevel != nil || !lift.isCopy
+            )
             state.setReorderLift(lift)
+            seedSourceDropTarget(for: lift, snapshot: snapshot)
+            waitingForReorderProjection = lift.outlineHeadingLevel != nil || !lift.isCopy
         } else if var lift = state.reorderLift {
+            if lift.isCopy != isCopy {
+                // Toggling Option adds/removes the source rows from the live
+                // projection, so the frozen destination geometry must follow
+                // that structural transition before freezing again.
+                layoutCache.rebaseReorderFrameSnapshotOnNextOrderChange()
+                waitingForReorderProjection = true
+            }
             if lift.pendingAnchor {
+                waitingForReorderProjection = lift.outlineHeadingLevel != nil || !lift.isCopy
                 lift.touchOffset = CGSize(
                     width: anchorPoint.x - lift.sourceFrame.minX,
                     height: anchorPoint.y - lift.sourceFrame.minY
@@ -190,7 +303,13 @@ extension EditorView {
             lift.isCopy = isCopy
             state.setReorderLift(lift)
         }
-        applyDropTarget(at: location.y, snapshot: snapshot)
+        // A move removes its source rows from the projection; a heading drag
+        // also replaces the ordinary stack with a compact outline. Let
+        // RowSurface install and snapshot that projection before resolving a
+        // destination against its frames.
+        if !waitingForReorderProjection {
+            applyDropTarget(at: location.y, snapshot: snapshot)
+        }
     }
 
     /// Option held → drop performs a duplicate. macOS-only; iOS has no
@@ -268,7 +387,8 @@ extension EditorView {
     }
 
     fileprivate func resolveDropTarget(atY y: CGFloat, snapshot: [Block]) -> DropTarget {
-        let liftIDs = state.reorderLift?.ids ?? []
+        let lift = state.reorderLift
+        let liftIDs = lift?.ids ?? []
         // Build the visible-flat layout once and use it for BOTH the hit-test
         // (drop on documentLink / closed parent) and the between-rows slot
         // resolver. Iterating the top-level snapshot directly would miss
@@ -280,7 +400,12 @@ extension EditorView {
         // auto-scroll inner tick (16ms). The cache returns the same
         // `[VisibleRow]` for as long as the document is structurally
         // stable, so a sustained drag does zero tree walks here.
-        let (rows, _) = layoutCache.currentVisibleRows(snapshot: snapshot, isCollapsed: isCollapsedSection)
+        let unprojectedRows = rowsBeforeReorderSourceRemoval(snapshot: snapshot)
+        let rows = projectedRowsForActiveReorder(unprojectedRows)
+
+        if let lift, let level = lift.outlineHeadingLevel {
+            return resolveHeadingDropTarget(atY: y, rows: rows, level: level, lift: lift)
+        }
 
         // Hit-test for "drop on closed parent" / "drop onto documentLink". Edge
         // band keeps the gap above/below the row reachable for between-rows
@@ -312,6 +437,128 @@ extension EditorView {
             liftFootprint: currentLiftFootprint(in: rows)
         )
         return .insertAt(dropPath(forVisibleSlot: slot, rows: rows))
+    }
+
+    /// Heading drags are outline restructuring, not arbitrary block drops.
+    /// Resolve the pointer against the compact outline and select the nearest
+    /// legal section boundary. The candidate paths allow crossing between
+    /// lower-level heading parents while never dropping into body content.
+    func resolveHeadingDropTarget(
+        atY y: CGFloat,
+        rows: [VisibleRow],
+        level: HeadingLevel,
+        lift: ReorderLift
+    ) -> DropTarget {
+        let candidates = headingDropCandidates(rows: rows, level: level, lift: lift)
+        guard !candidates.isEmpty else {
+            return .insertAt(DropPath(
+                parent: lift.sourceParentID,
+                position: lift.sourcePositions.lowerBound
+            ))
+        }
+        let previousSlot = state.dropHoverPath.flatMap { path in
+            candidates.first(where: { $0.path == path })?.slot
+        }
+        let rawSlot = resolveDropSlot(
+            forY: y,
+            in: rows,
+            previousIndex: previousSlot,
+            liftFootprint: currentLiftFootprint(in: rows)
+        )
+        let nearest = candidates.min { lhs, rhs in
+            let leftDistance = abs(lhs.slot - rawSlot)
+            let rightDistance = abs(rhs.slot - rawSlot)
+            if leftDistance == rightDistance { return lhs.slot < rhs.slot }
+            return leftDistance < rightDistance
+        } ?? candidates[0]
+        return .insertAt(nearest.path)
+    }
+
+    struct HeadingDropCandidate: Equatable {
+        let slot: Int
+        let path: DropPath
+    }
+
+    /// Every gap in the outline maps either to "before this Hn", "after the
+    /// preceding Hn", or "at the end of the nearest lower-level section".
+    /// Filter those structural paths through the document's normal cycle and
+    /// containment validator. H1 slot zero is excluded because it precedes the
+    /// fixed page title.
+    func headingDropCandidates(
+        rows: [VisibleRow],
+        level: HeadingLevel,
+        lift: ReorderLift
+    ) -> [HeadingDropCandidate] {
+        var candidateByPath: [DropPath: HeadingDropCandidate] = [:]
+        let firstH1Slot: Int = {
+            guard level == .h1,
+                  let title = document.children.first,
+                  isPageTitleID(title.id)
+            else { return 0 }
+            let titleSubtreeIDs = document.subtreeIDs(of: title.id)
+            return rows.lastIndex(where: { titleSubtreeIDs.contains($0.id) }).map { $0 + 1 } ?? 0
+        }()
+        for slot in 0...rows.count {
+            // The page title and its visible body are fixed together. A root
+            // H1 cannot be inserted into the middle of that retained subtree.
+            guard slot >= firstH1Slot else { continue }
+            guard let path = headingDropPath(forOutlineSlot: slot, rows: rows, level: level),
+                  document.canDrop(ids: lift.ids, to: path)
+            else { continue }
+            // Retained page-title body rows can make several visual slots map
+            // to the same structural "end of section" path. The final slot is
+            // the real boundary after that body; earlier duplicates would put
+            // the gap inside the still-visible title content.
+            candidateByPath[path] = HeadingDropCandidate(slot: slot, path: path)
+        }
+        return candidateByPath.values.sorted { $0.slot < $1.slot }
+    }
+
+    func headingDropPath(
+        forOutlineSlot slot: Int,
+        rows: [VisibleRow],
+        level: HeadingLevel
+    ) -> DropPath? {
+        guard slot >= 0, slot <= rows.count else { return nil }
+
+        // A slot immediately before another Hn means before that section in
+        // its actual parent's child array (after any introductory body rows).
+        if slot < rows.count,
+           case .heading(let belowLevel) = rows[slot].kind,
+           belowLevel == level {
+            let below = rows[slot]
+            let siblings = below.parentID.flatMap(document.find)?.children ?? document.children
+            guard let position = siblings.firstIndex(where: { $0.id == below.id }) else { return nil }
+            // The leading H1 is fixed as the page title.
+            if level == .h1, below.parentID == nil, position == 0 { return nil }
+            return DropPath(parent: below.parentID, position: position)
+        }
+
+        // Otherwise the nearest preceding outline heading owns the boundary.
+        // An Hn contributes the slot after itself; a lower-level heading
+        // contributes the end of its section, enabling cross-parent moves.
+        if slot > 0 {
+            for index in stride(from: slot - 1, through: 0, by: -1) {
+                let row = rows[index]
+                guard case .heading(let rowLevel) = row.kind else { continue }
+                if rowLevel == level {
+                    let siblings = row.parentID.flatMap(document.find)?.children ?? document.children
+                    guard let position = siblings.firstIndex(where: { $0.id == row.id }) else { return nil }
+                    return DropPath(parent: row.parentID, position: position + 1)
+                }
+                if rowLevel < level,
+                   let parent = document.find(row.id) {
+                    return DropPath(parent: row.id, position: parent.children.count)
+                }
+            }
+        }
+
+        // H1s live only at the document root. Slot zero was rejected above
+        // when it was before the fixed title; the trailing root slot is valid.
+        if level == .h1, slot == rows.count {
+            return DropPath(parent: nil, position: document.children.count)
+        }
+        return nil
     }
 
     /// Converts a Y-position into a slot index in `rows` (the full
@@ -406,6 +653,12 @@ extension EditorView {
     /// slot doesn't oscillate near gap boundaries.
     func visibleSlotForCurrentDropPath(in rows: [VisibleRow]) -> Int? {
         guard let path = state.dropHoverPath else { return nil }
+        if let lift = state.reorderLift,
+           let level = lift.outlineHeadingLevel {
+            return headingDropCandidates(rows: rows, level: level, lift: lift)
+                .first(where: { $0.path == path })?
+                .slot
+        }
         // Find the row whose (parent, position) matches — i.e. the row whose
         // insertion would land at this DropPath. The slot is "the index of the
         // row that would sit AT or AFTER this drop path's effective position."

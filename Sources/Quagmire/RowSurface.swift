@@ -24,13 +24,24 @@ struct RowSurfaceRow<ID: Hashable>: Equatable {
 struct RowSurfaceLift<ID: Hashable>: Equatable {
     let id: ID
     let sourceFrame: CGRect
+    let sourceEffectiveOffsetY: CGFloat
+    let sourceInternalMinY: CGFloat
     let touchOffset: CGSize
     let location: CGPoint
+    /// Where the source row would begin in the source-removed projection.
+    /// Nil when the source remains rendered (for example Option-copy).
+    let projectedSourceSlot: Int?
+    let projectedSourceTopGap: CGFloat
+    /// The source slot was installed as the initial destination before the
+    /// source-removing layout pass, so that pass must not resolve it again
+    /// against already-collapsed rows.
+    let hasSeededDropTarget: Bool
 }
 
 private struct RowSurfaceOrder<ID: Hashable>: Equatable {
     let ids: [ID]
     let topGaps: [ID: CGFloat]
+    let reorderGaps: [ID: CGFloat]
 
     init(rows: [RowSurfaceRow<ID>]) {
         self.ids = rows.map(\.id)
@@ -38,7 +49,35 @@ private struct RowSurfaceOrder<ID: Hashable>: Equatable {
             (row.id, row.spacingBefore + row.pinchGap + row.reorderGap)
         })
             .compactMapValues { $0 > 0 ? $0 : nil }
+        self.reorderGaps = Dictionary(uniqueKeysWithValues: rows.map { row in
+            (row.id, row.reorderGap)
+        })
+            .compactMapValues { $0 > 0 ? $0 : nil }
     }
+}
+
+func reorderAnchorPreservingOffset(
+    sourceEffectiveOffset: CGFloat,
+    sourceInternalMinY: CGFloat,
+    projectedInternalMinY: CGFloat
+) -> CGFloat {
+    max(0, sourceEffectiveOffset + projectedInternalMinY - sourceInternalMinY)
+}
+
+func reorderEffectiveScrollOffset(rawOffset: CGFloat, topInset: CGFloat) -> CGFloat {
+    max(0, rawOffset + topInset)
+}
+
+func reorderRawScrollOffset(effectiveOffset: CGFloat, topInset: CGFloat) -> CGFloat {
+    max(0, effectiveOffset) - topInset
+}
+
+func reorderContentOriginAfterOffsetChange(
+    currentOrigin: CGFloat,
+    oldOffset: CGFloat,
+    newOffset: CGFloat
+) -> CGFloat {
+    currentOrigin - (newOffset - oldOffset)
 }
 
 /// One stable action boundary for `RowSurface`. Rows store no callbacks; the
@@ -290,8 +329,11 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         .onAppear {
             applyRowOrder(rowOrder)
         }
-        .onChange(of: rowOrder) { _, newValue in
+        .onChange(of: rowOrder) { oldValue, newValue in
             applyRowOrder(newValue)
+            if oldValue.ids != newValue.ids {
+                finishReorderProjectionChange()
+            }
         }
     }
 
@@ -348,7 +390,68 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     }
 
     private func applyRowOrder(_ order: RowSurfaceOrder<ID>) {
-        layoutCache.updateOrder(order.ids, topGaps: order.topGaps)
+        layoutCache.updateOrder(
+            order.ids,
+            topGaps: order.topGaps,
+            reorderGaps: order.reorderGaps
+        )
+    }
+
+    /// A move projection removes the source rows, and a heading move may also
+    /// remove hundreds of expanded body rows. Move the scroll offset by the
+    /// same amount the source anchor moved in the projected stack. This keeps
+    /// the lift near the finger and immediately materializes destinations.
+    private func finishReorderProjectionChange() {
+        guard let lift = activeLift else { return }
+        let projectedInternalMinY: CGFloat?
+        if let projectedFrame = layoutCache.frame(of: lift.id) {
+            projectedInternalMinY = projectedFrame.minY - layoutCache.contentOriginY
+        } else if let slot = lift.projectedSourceSlot {
+            projectedInternalMinY = layoutCache.projectedInternalRowTop(
+                at: slot,
+                topGap: lift.projectedSourceTopGap
+            )
+        } else {
+            projectedInternalMinY = nil
+        }
+        guard let projectedInternalMinY else { return }
+        let oldOffset = scrollMetrics.contentOffsetY
+        let nextEffectiveOffset = reorderAnchorPreservingOffset(
+            sourceEffectiveOffset: lift.sourceEffectiveOffsetY,
+            sourceInternalMinY: lift.sourceInternalMinY,
+            projectedInternalMinY: projectedInternalMinY
+        )
+        let nextOffset = reorderRawScrollOffset(
+            effectiveOffset: nextEffectiveOffset,
+            topInset: scrollMetrics.topInset
+        )
+        if abs(nextOffset - oldOffset) > 0.5 {
+            // `reorderFrame` projects frozen document-local destinations
+            // through this origin. Keep it in lockstep with the synchronous
+            // scroll write instead of waiting for the next geometry callback;
+            // otherwise the lift and target use different coordinate frames
+            // for one or more gesture events.
+            layoutCache.contentOriginY = reorderContentOriginAfterOffsetChange(
+                currentOrigin: layoutCache.contentOriginY,
+                oldOffset: oldOffset,
+                newOffset: nextOffset
+            )
+            scrollMetrics.contentOffsetY = nextOffset
+            #if os(iOS)
+            PageScrollController.shared.scroll(toY: nextOffset)
+            #elseif os(macOS)
+            if !MacPageScrollController.shared.scroll(toY: nextOffset) {
+                scrollPosition.scrollTo(point: CGPoint(x: 0, y: nextOffset))
+            }
+            #endif
+        }
+
+        // The gesture's first tick deliberately did not resolve a destination
+        // against the expanded-row snapshot. Now both the outline order and
+        // its scroll origin are current, so resolve the hole at the live finger.
+        if !lift.hasSeededDropTarget, let location = activeReorderLocation {
+            actions.onReorderAutoscroll(location)
+        }
     }
 
     private func updateHover(_ id: ID?) {

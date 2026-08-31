@@ -247,13 +247,16 @@ class RowSurfaceLayoutCache<ID: Hashable> {
     private(set) var realizedInternalFrames: [ID: CGRect] = [:]
 
     /// Document-local destination frames captured when a reorder begins.
-    /// The visual 42pt insertion gap changes live `rowTops`; resolving the
-    /// next drag event against those shifted frames makes the gap chase the
-    /// pointer and can leave a drop one row early. Keeping internal frames
-    /// frozen avoids that feedback while applying the live `contentOrigin`
-    /// below still lets the snapshot track viewport movement during
-    /// autoscroll.
+    /// The visual insertion gap changes live `rowTops`; resolving the next
+    /// drag event against those shifted frames makes the gap chase the pointer
+    /// and can leave a drop one row early. Keeping internal frames frozen
+    /// avoids that feedback while applying the live `contentOrigin` below
+    /// still lets the snapshot track viewport movement during autoscroll.
     private var reorderInternalFrameSnapshot: [ID: CGRect]?
+    /// Heading drags replace the ordinary row stack with a compact outline.
+    /// Rebase the frozen destination geometry once that new order arrives,
+    /// then freeze it normally for the remainder of the drag.
+    private var rebaseReorderSnapshotOnNextOrderChange = false
 
     /// Y-position of the LazyVStack's top in PageHoverCoordinateSpace.
     /// Updated from a single anchor view at the top of the content area.
@@ -298,15 +301,22 @@ class RowSurfaceLayoutCache<ID: Hashable> {
         realizedInternalFrames.removeValue(forKey: id)
     }
 
-    func beginReorderFrameSnapshot() {
+    func beginReorderFrameSnapshot(rebaseOnNextOrderChange: Bool = false) {
         guard reorderInternalFrameSnapshot == nil else { return }
         reorderInternalFrameSnapshot = Dictionary(uniqueKeysWithValues: orderedIDs.compactMap { id in
             internalFrame(of: id).map { (id, $0) }
         })
+        rebaseReorderSnapshotOnNextOrderChange = rebaseOnNextOrderChange
+    }
+
+    func rebaseReorderFrameSnapshotOnNextOrderChange() {
+        guard reorderInternalFrameSnapshot != nil else { return }
+        rebaseReorderSnapshotOnNextOrderChange = true
     }
 
     func endReorderFrameSnapshot() {
         reorderInternalFrameSnapshot = nil
+        rebaseReorderSnapshotOnNextOrderChange = false
     }
 
     /// Destination frame for reorder hit-testing. Frozen in document-local
@@ -323,17 +333,35 @@ class RowSurfaceLayoutCache<ID: Hashable> {
     /// Called once per body render with the same `[ID]` the `ForEach`
     /// iterates over. `topGaps` carries layout space before each row that is
     /// not part of that row's hit-testable frame.
-    func updateOrder(_ ids: [ID], topGaps newTopGaps: [ID: CGFloat] = [:]) {
+    func updateOrder(
+        _ ids: [ID],
+        topGaps newTopGaps: [ID: CGFloat] = [:],
+        reorderGaps newReorderGaps: [ID: CGFloat] = [:]
+    ) {
         let sanitizedTopGaps = newTopGaps.compactMapValues { gap in
             gap > 0 ? gap : nil
         }
+        let sanitizedReorderGaps = newReorderGaps.compactMapValues { gap in
+            gap > 0 ? gap : nil
+        }
         if ids == orderedIDs, sanitizedTopGaps == topGaps { return }
+        let orderChanged = ids != orderedIDs
         orderedIDs = ids
         topGaps = sanitizedTopGaps
         indexByID.removeAll(keepingCapacity: true)
         for (i, id) in ids.enumerated() { indexByID[id] = i }
         realizedInternalFrames = realizedInternalFrames.filter { indexByID[$0.key] != nil }
         recomputeOffsets()
+        if orderChanged, rebaseReorderSnapshotOnNextOrderChange {
+            // The source row and its initial destination gap enter in the
+            // same body pass. Freeze destinations against the projected row
+            // order but without that animated gap, or the first subsequent
+            // pointer tick sees targets displaced by the preview itself.
+            reorderInternalFrameSnapshot = internalFrameSnapshot(
+                excludingTopGaps: sanitizedReorderGaps
+            )
+            rebaseReorderSnapshotOnNextOrderChange = false
+        }
     }
 
     /// Rebuild the prefix-sum table from `heights` + `orderedIDs`. Call this
@@ -357,6 +385,19 @@ class RowSurfaceLayoutCache<ID: Hashable> {
             sum = bottom
         }
         offsets.append(sum)
+    }
+
+    private func internalFrameSnapshot(excludingTopGaps excludedTopGaps: [ID: CGFloat]) -> [ID: CGRect] {
+        var result: [ID: CGRect] = [:]
+        var y: CGFloat = 0
+        for id in orderedIDs {
+            y += max(0, (topGaps[id] ?? 0) - (excludedTopGaps[id] ?? 0))
+            if let height = heights[id] {
+                result[id] = CGRect(x: 0, y: y, width: contentWidth, height: height)
+                y += height
+            }
+        }
+        return result
     }
 
     /// Total content height (sum of all row heights). Excludes
@@ -507,6 +548,15 @@ class RowSurfaceLayoutCache<ID: Hashable> {
         return CGRect(x: 0, y: rowTops[i], width: contentWidth, height: h)
     }
 
+    /// Document-local top of a row inserted at `slot`, after applying the
+    /// spacing that row would have above it. This stays stable while SwiftUI
+    /// updates or clamps the scroll view around a compact move projection.
+    func projectedInternalRowTop(at slot: Int, topGap: CGFloat) -> CGFloat {
+        let clampedSlot = max(0, min(slot, orderedIDs.count))
+        let previousBottom = clampedSlot == 0 ? 0 : rowBottoms[clampedSlot - 1]
+        return previousBottom + max(0, topGap)
+    }
+
     // MARK: - Internals
 
     /// Binary search for the row whose [rowTops[i], rowBottoms[i]) range
@@ -548,6 +598,8 @@ final class BlockLayoutCache: RowSurfaceLayoutCache<BlockID> {
     private var cachedVisibleRows: [VisibleRow]?
     private var cachedHidden: Set<BlockID>?
     private var cachedKey: StructuralCacheKey?
+    private var cachedOutlineRows: [VisibleRow]?
+    private var cachedOutlineKey: HeadingOutlineCacheKey?
 
     /// Bumped on every invalidation. Useful for diagnostics + asserting
     /// cache-hit behavior during smoke tests.
@@ -560,6 +612,8 @@ final class BlockLayoutCache: RowSurfaceLayoutCache<BlockID> {
         cachedVisibleRows = nil
         cachedHidden = nil
         cachedKey = nil
+        cachedOutlineRows = nil
+        cachedOutlineKey = nil
         structuralVersion &+= 1
     }
 
@@ -585,6 +639,110 @@ final class BlockLayoutCache: RowSurfaceLayoutCache<BlockID> {
         cachedKey = key
         return (rows, hidden)
     }
+
+    /// Temporary row projection used while dragging a heading section. It
+    /// traverses through folded headings so every relevant destination remains
+    /// available, preserves closure of non-heading containers, and then keeps
+    /// only headings at or above the dragged heading's outline level.
+    func currentHeadingOutlineRows(
+        snapshot: [Block],
+        through level: HeadingLevel,
+        isCollapsed: (Block) -> Bool
+    ) -> [VisibleRow] {
+        var pageTitleSubtreeIDs: Set<BlockID> = []
+        var visiblePageTitleSubtreeIDs: Set<BlockID> = []
+        if let pageTitle = snapshot.first, pageTitle.headingLevel == .h1 {
+            insertSubtree(pageTitle, into: &pageTitleSubtreeIDs)
+            let ordinaryRows = currentVisibleRows(
+                snapshot: snapshot,
+                isCollapsed: isCollapsed
+            ).rows
+            visiblePageTitleSubtreeIDs = Set(
+                ordinaryRows.lazy
+                    .map(\.id)
+                    .filter(pageTitleSubtreeIDs.contains)
+            )
+        }
+
+        let collapseForOutline: (Block) -> Bool = { block in
+            block.isHeading ? false : isCollapsed(block)
+        }
+        let structuralKey = StructuralCacheKey(snapshot: snapshot, isCollapsed: collapseForOutline)
+        let key = HeadingOutlineCacheKey(
+            level: level,
+            structure: structuralKey,
+            visiblePageTitleSubtreeIDs: visiblePageTitleSubtreeIDs
+        )
+        if let rows = cachedOutlineRows, cachedOutlineKey == key { return rows }
+
+        let hidden = hiddenBlockIDs(in: snapshot, isCollapsed: collapseForOutline)
+        let visible = computeVisibleLayout(
+            snapshot: snapshot,
+            hidden: hidden,
+            isCollapsed: collapseForOutline
+        )
+        let rows = headingOutlineRows(
+            from: visible,
+            through: level,
+            pageTitleSubtreeIDs: pageTitleSubtreeIDs,
+            visiblePageTitleSubtreeIDs: visiblePageTitleSubtreeIDs
+        )
+        cachedOutlineRows = rows
+        cachedOutlineKey = key
+        return rows
+    }
+}
+
+/// Remove body rows and headings deeper than the active drag level, then
+/// rebuild slot/previous-row metadata for the compact outline stack.
+func headingOutlineRows(
+    from rows: [VisibleRow],
+    through level: HeadingLevel,
+    pageTitleSubtreeIDs: Set<BlockID> = [],
+    visiblePageTitleSubtreeIDs: Set<BlockID> = []
+) -> [VisibleRow] {
+    rebuildVisibleRows(rows.filter { row in
+        if pageTitleSubtreeIDs.contains(row.id) {
+            return visiblePageTitleSubtreeIDs.contains(row.id)
+        }
+        guard case .heading(let rowLevel) = row.kind else { return false }
+        return rowLevel <= level
+    })
+}
+
+/// Remove rows hidden by an active move and rebuild the flattened layout
+/// metadata. The moving subtrees no longer occupy an invisible placeholder in
+/// the stack; the only open space during a drag is the live destination gap.
+func visibleRowsRemoving(_ excludedIDs: Set<BlockID>, from rows: [VisibleRow]) -> [VisibleRow] {
+    guard !excludedIDs.isEmpty else { return rows }
+    return rebuildVisibleRows(rows.filter { !excludedIDs.contains($0.id) })
+}
+
+private func rebuildVisibleRows(_ rows: [VisibleRow]) -> [VisibleRow] {
+    var result: [VisibleRow] = []
+    result.reserveCapacity(rows.count)
+    var previousKind: VisibleRowKind?
+    var previousDepth = 0
+    for row in rows {
+        result.append(VisibleRow(
+            id: row.id,
+            kind: row.kind,
+            depth: row.depth,
+            parentID: row.parentID,
+            slot: result.count,
+            prevKind: previousKind,
+            prevDepth: previousDepth
+        ))
+        previousKind = row.kind
+        previousDepth = row.depth
+    }
+    return result
+}
+
+private struct HeadingOutlineCacheKey: Equatable {
+    let level: HeadingLevel
+    let structure: StructuralCacheKey
+    let visiblePageTitleSubtreeIDs: Set<BlockID>
 }
 
 private struct StructuralCacheKey: Equatable {
