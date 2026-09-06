@@ -99,6 +99,7 @@ struct RowSurfaceActions<ID: Hashable> {
     /// Return true when the pinch has crossed the editor's semantic threshold
     /// and should drive edge autoscroll.
     var onPinchUpdate: (PagePinchValue) -> Bool = { _ in false }
+    var onPinchThirdFingerTap: () -> Void = {}
     var onPinchCommit: (PagePinchValue) -> Void = { _ in }
 
     var onExternalDropUpdate: (CGFloat) -> Void = { _ in }
@@ -270,6 +271,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
                         stopPinchAutoScroll()
                     }
                 },
+                onThirdFingerTap: actions.onPinchThirdFingerTap,
                 onCommit: { value in
                     stopPinchAutoScroll()
                     actions.onPinchCommit(value)

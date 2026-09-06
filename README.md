@@ -146,16 +146,20 @@ trashes the source file (`inlineAndRetireDocument(_:parent:)`).
   same action through `EditorCommands.performBlockAction` using its id.
 
 **Pinch-to-insert** (trackpad / touchscreen)
-Spread fingers between two rows to open a gap. The smaller threshold inserts
-a neighbour-shaped paragraph/list row; the larger threshold inserts a heading.
-Hosts may supply `EditorPinchDictation`: recording begins when the smaller
-threshold is crossed and finishes on release. A host can publish volatile live
-drafts while the pinch remains open; Quagmire renders them through a provisional
+Spread fingers between two rows to open a gap. The pinch begins in contextual
+mode: it inserts a neighbour-shaped paragraph/list row and checks for speech.
+While holding the pinch open, tap a third finger in the space between the two
+pinching fingers to cycle through explicit Empty Paragraph, Divider, and Heading
+modes. Empty Paragraph deliberately ignores speech; Heading uses speech as its
+text. Hosts may supply `EditorPinchDictation`: recording begins when the opening
+threshold is crossed and finishes on release for contextual and Heading modes.
+A host can publish volatile live drafts while the pinch remains open; Quagmire
+renders them through a provisional
 ordinary block row, so typography, wrapping, and spacing match the eventual
 block without creating a document change or undo entry. Only the completion
 transcript fills the inserted row and leaves it selected in nav mode; silence or
 an unavailable recorder focuses the empty row for keyboard entry. Cancelled and
-heading-sized pinches discard gesture audio. Microphone permission,
+non-dictating explicit modes discard gesture audio. Microphone permission,
 transcription, durability policy, and error presentation remain host-owned.
 
 **Copy / paste**

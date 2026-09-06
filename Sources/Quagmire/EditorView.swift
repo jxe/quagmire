@@ -99,7 +99,7 @@ public struct EditorView: View {
     #endif
     @State var pinchGestureActive = false
     @State var pinchCrossedInsertThreshold = false
-    @State var pinchCrossedFocusThreshold = false
+    @State var pinchInsertionMode: PinchInsertionMode = .contextual
     /// Index of the slot the gap will open at, captured once at gesture start.
     /// Recomputing each update is wrong: as the gap grows it shifts the rows
     /// below it, mutating their `midY`, which can flip the calculation to an
@@ -289,6 +289,9 @@ public struct EditorView: View {
                 },
                 onPinchUpdate: { value in
                     handlePinchUpdate(value)
+                },
+                onPinchThirdFingerTap: {
+                    handlePinchThirdFingerTap()
                 },
                 onPinchCommit: { value in
                     handlePinchCommit(value)

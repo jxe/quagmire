@@ -2,21 +2,83 @@ import SwiftUI
 
 // MARK: - Pinch-open-to-insert (iOS)
 
+enum PinchInsertionMode: Equatable, Sendable {
+    case contextual
+    case emptyParagraph
+    case divider
+    case heading
+
+    var nextExplicitMode: PinchInsertionMode {
+        switch self {
+        case .contextual: .emptyParagraph
+        case .emptyParagraph: .divider
+        case .divider: .heading
+        case .heading: .emptyParagraph
+        }
+    }
+
+    var acceptsDictation: Bool {
+        self == .contextual || self == .heading
+    }
+}
+
 struct PinchDictationDraft {
     var block: Block
     var slot: Int
+    private var contextualBlock: Block
+    private var latestTranscript = ""
+    private(set) var insertionMode: PinchInsertionMode = .contextual
+
+    init(block: Block, slot: Int) {
+        self.block = block
+        self.slot = slot
+        self.contextualBlock = block.withText(AttributedString())
+    }
 
     func replacingText(with rawText: String) -> PinchDictationDraft {
         var copy = self
-        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        copy.block = block.withText(AttributedString(text))
+        copy.latestTranscript = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.refreshPreviewBlock()
         return copy
+    }
+
+    func cyclingInsertionMode() -> PinchDictationDraft {
+        var copy = self
+        copy.insertionMode = insertionMode.nextExplicitMode
+        copy.refreshPreviewBlock()
+        return copy
+    }
+
+    var committedBlock: Block {
+        switch insertionMode {
+        case .contextual:
+            contextualBlock
+        case .emptyParagraph:
+            .paragraph(text: AttributedString(), id: block.id)
+        case .divider:
+            .divider(id: block.id)
+        case .heading:
+            .heading(level: .h1, text: AttributedString(), id: block.id)
+        }
+    }
+
+    private mutating func refreshPreviewBlock() {
+        switch insertionMode {
+        case .contextual:
+            block = contextualBlock.withText(AttributedString(latestTranscript))
+        case .emptyParagraph:
+            block = .paragraph(text: AttributedString("Paragraph"), id: block.id)
+        case .divider:
+            block = .divider(id: block.id)
+        case .heading:
+            let text = latestTranscript.isEmpty ? "Heading" : latestTranscript
+            block = .heading(level: .h1, text: AttributedString(text), id: block.id)
+        }
     }
 }
 
 extension EditorView {
     static var pinchInsertCommitGap: CGFloat { 40 }
-    static var pinchInsertFocusGap: CGFloat { 110 }
     /// Spread distance the user must cross before any gap or insertion-anchor
     /// commitment happens. Two reasons: (1) UIPinchGestureRecognizer.began
     /// fires only after its internal threshold is crossed, so the first
@@ -91,13 +153,6 @@ extension EditorView {
             } else if gapHeight < Self.pinchInsertCommitGap {
                 pinchCrossedInsertThreshold = false
             }
-            if gapHeight >= Self.pinchInsertFocusGap, !pinchCrossedFocusThreshold {
-                pinchCrossedFocusThreshold = true
-                Haptics.medium(enabled: configuration.isHapticFeedbackEnabled)
-                SoundFX.play(.pinchOpen, enabled: configuration.isAudioFeedbackEnabled)
-            } else if gapHeight < Self.pinchInsertFocusGap {
-                pinchCrossedFocusThreshold = false
-            }
             return true
         } else if state.pinchPreview != nil {
             // Pinched back below deadzone after opening — close the preview
@@ -112,12 +167,21 @@ extension EditorView {
     }
 
     /// Reset the pinch's per-gesture bookkeeping (insert-slot anchor + the
-    /// two threshold-crossed latches). The preview state itself is owned by
+    /// threshold-crossed latch). The preview state itself is owned by
     /// `EditorState.pinchPreview` and cleared separately.
     private func clearPinchThresholds() {
         pinchPendingInsertIndex = nil
         pinchCrossedInsertThreshold = false
-        pinchCrossedFocusThreshold = false
+    }
+
+    func handlePinchThirdFingerTap() {
+        guard pinchCrossedInsertThreshold,
+              state.pinchPreview?.gapHeight ?? 0 >= Self.pinchInsertCommitGap,
+              let draft = pinchDictationDraft else { return }
+        let cycled = draft.cyclingInsertionMode()
+        pinchDictationDraft = cycled
+        pinchInsertionMode = cycled.insertionMode
+        Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
     }
 
     func handlePinchCommit(_ value: PagePinchValue) {
@@ -136,19 +200,14 @@ extension EditorView {
             let path = dropPath(forVisibleSlot: slot, rows: rows)
             let above: VisibleRowKind? = (slot - 1 >= 0 && slot - 1 < rows.count) ? rows[slot - 1].kind : nil
             let below: VisibleRowKind? = (slot >= 0 && slot < rows.count) ? rows[slot].kind : nil
-            let insertsHeading = gap >= Self.pinchInsertFocusGap
-            // Tier 1 (smaller pinch): pick a kind based on neighbours and let
-            // optional host dictation decide whether the empty row stays in
-            // nav mode with transcribed text or enters edit mode. Tier 2
-            // (larger pinch) always inserts and focuses an H1.
-            let newBlock: Block
-            if insertsHeading {
-                newBlock = .heading(level: 1, text: AttributedString())
-            } else if let draft = pinchDictationDraft {
-                newBlock = draft.block.withText(AttributedString())
-            } else {
-                newBlock = smartInsertBlock(above: above, below: below)
-            }
+            // The open distance has one semantic threshold. Contextual mode
+            // keeps the established neighbour-shaped insertion and optional
+            // dictation behavior. A third-finger tap enters the explicit mode
+            // cycle; only Heading also consumes the already-running audio.
+            let newBlock = pinchDictationDraft?.committedBlock
+                ?? smartInsertBlock(above: above, below: below)
+            let usesDictation = pinchInsertionMode.acceptsDictation && pinchDictation != nil
+            let focusesTextBlock = pinchInsertionMode != .divider && !usesDictation
             // Bundle the structural insert and the gap collapse into the same
             // spring transaction so the new row appears inside the opened gap
             // and the surrounding rows close in around it. Without the shared
@@ -156,17 +215,17 @@ extension EditorView {
             // pops in afterwards — visually disjoint.
             Haptics.heavy(enabled: configuration.isHapticFeedbackEnabled)
             withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
-                insertBlock(newBlock, at: path, focus: insertsHeading || pinchDictation == nil)
-                if !insertsHeading, pinchDictation != nil {
+                insertBlock(newBlock, at: path, focus: focusesTextBlock)
+                if usesDictation {
                     transferFocus(to: .nav(cursor: newBlock.id))
                 }
                 state.setPinchPreview(nil)
             }
-            if insertsHeading {
+            if usesDictation {
+                finishPinchDictation(for: newBlock.id)
+            } else {
                 cancelPinchDictationIfNeeded()
                 pinchDictationDraft = nil
-            } else if pinchDictation != nil {
-                finishPinchDictation(for: newBlock.id)
             }
         } else {
             cancelPinchDictationIfNeeded()
@@ -176,6 +235,7 @@ extension EditorView {
             }
         }
         clearPinchThresholds()
+        pinchInsertionMode = .contextual
         pinchGestureActive = false
     }
 
@@ -191,7 +251,6 @@ extension EditorView {
     }
 
     private func preparePinchDictationDraft(at slot: Int) {
-        guard pinchDictation != nil else { return }
         if var draft = pinchDictationDraft {
             draft.slot = slot
             pinchDictationDraft = draft

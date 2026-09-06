@@ -67,6 +67,48 @@ struct EditorViewPinchDictationTests {
         #expect(document.children == [existing])
     }
 
+    @Test func thirdFingerTapCyclesOnlyTheExplicitInsertionModes() {
+        let contextual = Block.bullet(text: AttributedString())
+        var draft = PinchDictationDraft(block: contextual, slot: 1)
+            .replacingText(with: "spoken contextual text")
+
+        #expect(draft.insertionMode == .contextual)
+        #expect(draft.insertionMode.acceptsDictation)
+        #expect(String(draft.block.text.characters) == "spoken contextual text")
+
+        draft = draft.cyclingInsertionMode()
+        #expect(draft.insertionMode == .emptyParagraph)
+        #expect(!draft.insertionMode.acceptsDictation)
+        #expect(String(draft.block.text.characters) == "Paragraph")
+        #expect(draft.committedBlock.kind == .paragraph(text: AttributedString()))
+
+        draft = draft.replacingText(with: "spoken heading text")
+        #expect(String(draft.block.text.characters) == "Paragraph")
+
+        draft = draft.cyclingInsertionMode()
+        #expect(draft.insertionMode == .divider)
+        #expect(!draft.insertionMode.acceptsDictation)
+        #expect(draft.block.kind == .divider)
+
+        draft = draft.cyclingInsertionMode()
+        #expect(draft.insertionMode == .heading)
+        #expect(draft.insertionMode.acceptsDictation)
+        #expect(String(draft.block.text.characters) == "spoken heading text")
+        #expect(draft.committedBlock.kind == .heading(level: .h1, text: AttributedString()))
+
+        draft = draft.cyclingInsertionMode()
+        #expect(draft.insertionMode == .emptyParagraph)
+    }
+
+    @Test func thirdTapMustLandInTheOpenSpaceBetweenPinchFingers() {
+        let first = CGPoint(x: 20, y: 100)
+        let second = CGPoint(x: 220, y: 100)
+
+        #expect(PagePinchThirdTapGeometry.contains(CGPoint(x: 120, y: 110), between: first, and: second))
+        #expect(!PagePinchThirdTapGeometry.contains(CGPoint(x: 25, y: 100), between: first, and: second))
+        #expect(!PagePinchThirdTapGeometry.contains(CGPoint(x: 120, y: 190), between: first, and: second))
+    }
+
     @Test func provisionalChildrenUseTheSameRenderedDepthAsCommittedRows() {
         #expect(
             VisibleRowKind(.heading(level: .h2, text: AttributedString()))
