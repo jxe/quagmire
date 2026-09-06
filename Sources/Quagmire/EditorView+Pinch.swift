@@ -175,12 +175,21 @@ extension EditorView {
     }
 
     func handlePinchThirdFingerTap() {
+        let gapHeight = state.pinchPreview?.gapHeight ?? 0
         guard pinchCrossedInsertThreshold,
-              state.pinchPreview?.gapHeight ?? 0 >= Self.pinchInsertCommitGap,
-              let draft = pinchDictationDraft else { return }
+              gapHeight >= Self.pinchInsertCommitGap,
+              let draft = pinchDictationDraft else {
+            configuration.diagnostics.pinch.debug(
+                "third-finger callback ignored threshold=\(self.pinchCrossedInsertThreshold, privacy: .public) gap=\(gapHeight, privacy: .public) draft=\(self.pinchDictationDraft != nil, privacy: .public)"
+            )
+            return
+        }
         let cycled = draft.cyclingInsertionMode()
         pinchDictationDraft = cycled
         pinchInsertionMode = cycled.insertionMode
+        configuration.diagnostics.pinch.debug(
+            "third-finger tap selected \(String(describing: cycled.insertionMode), privacy: .public)"
+        )
         Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
     }
 
@@ -208,6 +217,9 @@ extension EditorView {
                 ?? smartInsertBlock(above: above, below: below)
             let usesDictation = pinchInsertionMode.acceptsDictation && pinchDictation != nil
             let focusesTextBlock = pinchInsertionMode != .divider && !usesDictation
+            configuration.diagnostics.pinch.debug(
+                "pinch committed mode=\(String(describing: pinchInsertionMode), privacy: .public) dictation=\(usesDictation, privacy: .public)"
+            )
             // Bundle the structural insert and the gap collapse into the same
             // spring transaction so the new row appears inside the opened gap
             // and the surrounding rows close in around it. Without the shared
