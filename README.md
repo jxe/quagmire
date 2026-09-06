@@ -149,10 +149,11 @@ trashes the source file (`inlineAndRetireDocument(_:parent:)`).
 Spread fingers between two rows to open a gap. The pinch begins in contextual
 mode: it inserts a neighbour-shaped paragraph/list row and checks for speech.
 While holding the pinch open, tap a third finger in the space between the two
-pinching fingers to cycle through explicit Empty Paragraph, Divider, and Heading
-modes. Empty Paragraph deliberately ignores speech; Heading uses speech as its
-text. Hosts may supply `EditorPinchDictation`: recording begins when the opening
-threshold is crossed and finishes on release for contextual and Heading modes.
+pinching fingers to cycle through Divider, Heading, Empty Paragraph, and back to
+the contextual neighbour style. Empty Paragraph previews as a blank row and
+deliberately ignores speech; Heading uses speech as its text. Hosts may supply
+`EditorPinchDictation`: recording begins when the opening threshold is crossed
+and finishes on release for contextual and Heading modes.
 A host can publish volatile live drafts while the pinch remains open; Quagmire
 renders them through a provisional
 ordinary block row, so typography, wrapping, and spacing match the eventual

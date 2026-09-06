@@ -8,10 +8,10 @@ enum PinchInsertionMode: Equatable, Sendable {
     case divider
     case heading
 
-    var nextExplicitMode: PinchInsertionMode {
+    var nextMode: PinchInsertionMode {
         switch self {
-        case .contextual: .emptyParagraph
-        case .emptyParagraph: .divider
+        case .contextual: .divider
+        case .emptyParagraph: .contextual
         case .divider: .heading
         case .heading: .emptyParagraph
         }
@@ -44,7 +44,7 @@ struct PinchDictationDraft {
 
     func cyclingInsertionMode() -> PinchDictationDraft {
         var copy = self
-        copy.insertionMode = insertionMode.nextExplicitMode
+        copy.insertionMode = insertionMode.nextMode
         copy.refreshPreviewBlock()
         return copy
     }
@@ -67,7 +67,7 @@ struct PinchDictationDraft {
         case .contextual:
             block = contextualBlock.withText(AttributedString(latestTranscript))
         case .emptyParagraph:
-            block = .paragraph(text: AttributedString("Paragraph"), id: block.id)
+            block = .paragraph(text: AttributedString(), id: block.id)
         case .divider:
             block = .divider(id: block.id)
         case .heading:
@@ -150,8 +150,6 @@ extension EditorView {
                 SoundFX.play(.pinchOpen, enabled: configuration.isAudioFeedbackEnabled)
                 preparePinchDictationDraft(at: insertIndex)
                 beginPinchDictationIfAvailable()
-            } else if gapHeight < Self.pinchInsertCommitGap {
-                pinchCrossedInsertThreshold = false
             }
             return true
         } else if state.pinchPreview != nil {
@@ -177,7 +175,6 @@ extension EditorView {
     func handlePinchThirdFingerTap() {
         let gapHeight = state.pinchPreview?.gapHeight ?? 0
         guard pinchCrossedInsertThreshold,
-              gapHeight >= Self.pinchInsertCommitGap,
               let draft = pinchDictationDraft else {
             configuration.diagnostics.pinch.debug(
                 "third-finger callback ignored threshold=\(self.pinchCrossedInsertThreshold, privacy: .public) gap=\(gapHeight, privacy: .public) draft=\(self.pinchDictationDraft != nil, privacy: .public)"

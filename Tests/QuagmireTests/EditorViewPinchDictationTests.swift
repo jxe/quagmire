@@ -67,7 +67,7 @@ struct EditorViewPinchDictationTests {
         #expect(document.children == [existing])
     }
 
-    @Test func thirdFingerTapCyclesOnlyTheExplicitInsertionModes() {
+    @Test func thirdFingerTapCyclesThroughAllFourInsertionModes() {
         let contextual = Block.bullet(text: AttributedString())
         var draft = PinchDictationDraft(block: contextual, slot: 1)
             .replacingText(with: "spoken contextual text")
@@ -77,17 +77,11 @@ struct EditorViewPinchDictationTests {
         #expect(String(draft.block.text.characters) == "spoken contextual text")
 
         draft = draft.cyclingInsertionMode()
-        #expect(draft.insertionMode == .emptyParagraph)
-        #expect(!draft.insertionMode.acceptsDictation)
-        #expect(String(draft.block.text.characters) == "Paragraph")
-        #expect(draft.committedBlock.kind == .paragraph(text: AttributedString()))
-
-        draft = draft.replacingText(with: "spoken heading text")
-        #expect(String(draft.block.text.characters) == "Paragraph")
-
-        draft = draft.cyclingInsertionMode()
         #expect(draft.insertionMode == .divider)
         #expect(!draft.insertionMode.acceptsDictation)
+        #expect(draft.block.kind == .divider)
+
+        draft = draft.replacingText(with: "spoken heading text")
         #expect(draft.block.kind == .divider)
 
         draft = draft.cyclingInsertionMode()
@@ -98,6 +92,14 @@ struct EditorViewPinchDictationTests {
 
         draft = draft.cyclingInsertionMode()
         #expect(draft.insertionMode == .emptyParagraph)
+        #expect(!draft.insertionMode.acceptsDictation)
+        #expect(draft.block.kind == .paragraph(text: AttributedString()))
+        #expect(draft.committedBlock.kind == .paragraph(text: AttributedString()))
+
+        draft = draft.cyclingInsertionMode()
+        #expect(draft.insertionMode == .contextual)
+        #expect(draft.insertionMode.acceptsDictation)
+        #expect(String(draft.block.text.characters) == "spoken heading text")
     }
 
     @Test func thirdTapMustLandInTheOpenSpaceBetweenPinchFingers() {

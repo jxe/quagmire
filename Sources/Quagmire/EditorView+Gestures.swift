@@ -720,6 +720,8 @@ final class ThirdFingerPinchTapRecognizer: UIGestureRecognizer {
     private var thirdTouchStart: CGPoint = .zero
     private var thirdTouchStartTime: TimeInterval = 0
     private var thirdTouchStayedInside = false
+    private static let maximumTapDuration: TimeInterval = 0.65
+    private static let maximumTapMovement: CGFloat = 36
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
         for touch in touches {
@@ -751,8 +753,7 @@ final class ThirdFingerPinchTapRecognizer: UIGestureRecognizer {
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
         if let thirdTouch, touches.contains(thirdTouch), let view {
             let point = thirdTouch.location(in: view)
-            if hypot(point.x - thirdTouchStart.x, point.y - thirdTouchStart.y) > 18
-                || !pointIsBetweenPrimaryTouches(point, in: view) {
+            if hypot(point.x - thirdTouchStart.x, point.y - thirdTouchStart.y) > Self.maximumTapMovement {
                 if thirdTouchStayedInside {
                     Self.logger.debug("third-finger candidate rejected after moving")
                 }
@@ -768,9 +769,8 @@ final class ThirdFingerPinchTapRecognizer: UIGestureRecognizer {
             let duration = thirdTouch.timestamp - thirdTouchStartTime
             let movement = hypot(point.x - thirdTouchStart.x, point.y - thirdTouchStart.y)
             completedTap = thirdTouchStayedInside
-                && duration <= 0.35
-                && movement <= 18
-                && pointIsBetweenPrimaryTouches(point, in: view)
+                && duration <= Self.maximumTapDuration
+                && movement <= Self.maximumTapMovement
             Self.logger.debug(
                 "third-finger candidate ended accepted=\(completedTap, privacy: .public) duration=\(duration, privacy: .public) movement=\(movement, privacy: .public)"
             )
