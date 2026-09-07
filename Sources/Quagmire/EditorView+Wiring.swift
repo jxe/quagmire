@@ -115,6 +115,8 @@ extension EditorView {
                 foldAllHeadings()
             case .unfoldAllHeadings:
                 unfoldAllHeadings()
+            case .findInPage:
+                presentFind()
 
             // Nav-mode keyboard actions. Fired from `handleNavKeyPress` via
             // the binding table below; not exposed in the menu bar (the

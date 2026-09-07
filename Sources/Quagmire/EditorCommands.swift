@@ -57,6 +57,7 @@ public enum EditorAction: Sendable, Equatable {
     case moveBlockDown
     case foldAllHeadings
     case unfoldAllHeadings
+    case findInPage
 
     // Nav-mode keyboard only (the menu bar uses the system equivalents directly).
     case copySelection

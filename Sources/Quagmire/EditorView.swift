@@ -119,6 +119,10 @@ public struct EditorView: View {
     @State var pinchDictationDraft: PinchDictationDraft?
     @State var scrollMetrics = PageScrollMetrics()
     @State var scrollPosition = ScrollPosition()
+    @State var findPresented = false
+    @State var findQuery = ""
+    @State var findSelectionIndex = 0
+    @State var findFocusRequest = 0
     /// Drives the compact block action menu. On iOS this is opened by a leading
     /// row swipe and further leading swipes add rows to its targets. On macOS
     /// the ordinary navigation selection remains the source of truth.
@@ -220,6 +224,13 @@ public struct EditorView: View {
             let theme = configuration.theme
             let horizontalPadding = theme.pageHorizontalPadding(for: geometry.size.width)
             let visibleRowByID = Dictionary(uniqueKeysWithValues: visibleRows.map { ($0.id, $0) })
+            let findMatches = findPresented
+                ? pageFindMatches(in: snapshot, query: findQuery)
+                : []
+            let selectedFindMatch = findMatches.isEmpty
+                ? nil
+                : findMatches[min(findSelectionIndex, findMatches.count - 1)]
+            let findMatchBlockIDs = Set(findMatches.map(\.blockID))
             let surfaceRows = visibleRows.map { row in
                 let gap = BlockSpacing.gap(before: row.kind, depth: row.depth, after: row.prevKind, prevDepth: row.prevDepth)
                 return RowSurfaceRow(
@@ -385,7 +396,9 @@ public struct EditorView: View {
                             for: bindingForBlock(id: id),
                             depth: row.depth,
                             numberingIndex: numbering[id],
-                            selectedIDs: selectedIDs
+                            selectedIDs: selectedIDs,
+                            isFindMatch: findMatchBlockIDs.contains(id),
+                            isCurrentFindMatch: selectedFindMatch?.blockID == id
                         )
                     }
                 }
@@ -400,6 +413,13 @@ public struct EditorView: View {
             }
             #endif
             .background(theme.background)
+            .overlay(alignment: .top) {
+                if findPresented {
+                    findBar(matches: findMatches)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(.easeOut(duration: 0.16), value: findPresented)
             .overlay(alignment: .bottom) {
                 if let runningBlockActionTitle {
                     HStack(spacing: 10) {
@@ -656,7 +676,9 @@ public struct EditorView: View {
         depth: Int,
         numberingIndex: Int?,
         selectedIDs: Set<BlockID>,
-        isProvisionalText: Bool = false
+        isProvisionalText: Bool = false,
+        isFindMatch: Bool = false,
+        isCurrentFindMatch: Bool = false
     ) -> some View {
         let block = binding.wrappedValue
         // iOS has no nav-mode multi-select — there's no hardware keyboard arrow nav and the
@@ -748,6 +770,8 @@ public struct EditorView: View {
             isActionMenuPresented: actionSheet?.id == block.id,
             isPinching: pinchGestureActive,
             isProvisionalText: isProvisionalText,
+            isFindMatch: isFindMatch,
+            isCurrentFindMatch: isCurrentFindMatch,
             reorderSourceOpacity: reorderSourceOpacity(for: block.id),
             isReorderingThisBlock: state.reorderLift?.ids.contains(block.id) == true,
             isSelectionHandleRow: isSelectionHandleRow(for: block.id),
@@ -1475,7 +1499,7 @@ public struct EditorView: View {
     /// flip on the next runloop tick happens there. Using a token instead
     /// of writing `pageFocused` directly means a same-value re-grab still
     /// fires (a same-value `@FocusState` write is a no-op).
-    private func forcePageFocusGrab() {
+    func forcePageFocusGrab() {
         pageFocusToken &+= 1
     }
 

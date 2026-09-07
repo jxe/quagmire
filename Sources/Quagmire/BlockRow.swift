@@ -19,6 +19,8 @@ struct BlockRowModel: Equatable {
     let isActionMenuPresented: Bool
     let isPinching: Bool
     let isProvisionalText: Bool
+    let isFindMatch: Bool
+    let isCurrentFindMatch: Bool
     let reorderSourceOpacity: Double
     let isReorderingThisBlock: Bool
     let isSelectionHandleRow: Bool
@@ -184,7 +186,17 @@ struct BlockRow: View, Equatable {
             .padding(.top, BlockSpacing.intrinsicTopPadding(block))
             .padding(.bottom, BlockSpacing.intrinsicBottomPadding(block))
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected && !isEditing ? theme.selectionBackground : Color.clear)
+            .background {
+                if model.isCurrentFindMatch {
+                    Color.yellow.opacity(0.34)
+                } else if model.isFindMatch {
+                    Color.yellow.opacity(0.14)
+                } else if isSelected && !isEditing {
+                    theme.selectionBackground
+                } else {
+                    Color.clear
+                }
+            }
             .task(id: externalURLs) {
                 for url in externalURLs where linkPreviews[url] == nil {
                     if let preview = await host.linkPreview(for: url) {

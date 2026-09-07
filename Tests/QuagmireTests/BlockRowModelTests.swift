@@ -9,6 +9,8 @@ struct BlockRowModelTests {
         block: Block = .paragraph(text: AttributedString("body")),
         isSelected: Bool = false,
         isProvisionalText: Bool = false,
+        isFindMatch: Bool = false,
+        isCurrentFindMatch: Bool = false,
         documentLookups: [String: DocumentLookup] = [:],
         linkPreviews: [URL: LinkPreview] = [:]
     ) -> BlockRowModel {
@@ -28,6 +30,8 @@ struct BlockRowModelTests {
             isActionMenuPresented: false,
             isPinching: false,
             isProvisionalText: isProvisionalText,
+            isFindMatch: isFindMatch,
+            isCurrentFindMatch: isCurrentFindMatch,
             reorderSourceOpacity: 1,
             isReorderingThisBlock: false,
             isSelectionHandleRow: false,
@@ -42,6 +46,8 @@ struct BlockRowModelTests {
         let base = model()
         #expect(base != model(isSelected: true))
         #expect(base != model(isProvisionalText: true))
+        #expect(base != model(isFindMatch: true))
+        #expect(base != model(isCurrentFindMatch: true))
 
         let pageBlock = Block.documentLink(label: AttributedString("Old"), reference: DocumentReference("child.md"))
         #expect(model(block: pageBlock, documentLookups: ["child.md": .present(title: "Child")])
