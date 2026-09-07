@@ -119,11 +119,29 @@ public struct EditorView: View {
     @State var pinchDictationDraft: PinchDictationDraft?
     @State var scrollMetrics = PageScrollMetrics()
     @State var scrollPosition = ScrollPosition()
-    /// Drives the compact block action popover. On iOS this is opened by a
-    /// leading row swipe; on macOS by clicking the drag handle or Cmd-/ in nav mode.
-    /// Wraps `BlockID` because the latter is Hashable but not Identifiable.
+    /// Drives the compact block action menu. On iOS this is opened by a leading
+    /// row swipe and further leading swipes add rows to its targets. On macOS
+    /// the ordinary navigation selection remains the source of truth.
     struct BlockActionSheet: Identifiable {
-        let id: BlockID
+        let anchorID: BlockID
+        var selectedIDs: Set<BlockID>
+
+        var id: BlockID { anchorID }
+
+        init(id: BlockID) {
+            anchorID = id
+            selectedIDs = [id]
+        }
+
+        mutating func selectFromBackgroundSwipe(_ blockID: BlockID) {
+            selectedIDs.insert(blockID)
+        }
+
+        @MainActor
+        func targetIDs(in document: Document) -> [BlockID] {
+            let roots = document.selectionSubtreeRoots(selectedIDs)
+            return roots.isEmpty ? [anchorID] : roots
+        }
     }
     @State var actionSheet: BlockActionSheet?
     /// DocumentLink row whose marker anchors the page-icon picker.
@@ -238,6 +256,12 @@ public struct EditorView: View {
             let surfaceActions = RowSurfaceActions<BlockID>(
                 onHover: { id in state.setHoveredBlock(id) },
                 onTapRow: { id, point in
+                    #if os(iOS)
+                    if actionSheet != nil {
+                        actionSheet = nil
+                        return
+                    }
+                    #endif
                     guard let row = visibleRowByID[id],
                           let frame = layoutCache.frame(of: id),
                           let block = document.find(id) else { return }
@@ -250,6 +274,12 @@ public struct EditorView: View {
                     }
                 },
                 onTapGutter: { id in
+                    #if os(iOS)
+                    if actionSheet != nil {
+                        actionSheet = nil
+                        return
+                    }
+                    #endif
                     if let block = document.find(id),
                        block.isHeading,
                        isCollapsibleSection(block) {
@@ -262,7 +292,15 @@ public struct EditorView: View {
                         handleHandleClick(blockID: id)
                     }
                 },
-                onTapBelowRows: { point in handleTapBelowRows(at: point) },
+                onTapBelowRows: { point in
+                    #if os(iOS)
+                    if actionSheet != nil {
+                        actionSheet = nil
+                        return
+                    }
+                    #endif
+                    handleTapBelowRows(at: point)
+                },
                 onReorderBegin: { blockID, location, anchor in
                     state.selectForReorderStart(on: blockID)
                     if anchor == location {
@@ -354,6 +392,13 @@ public struct EditorView: View {
             } liftContent: { id, size in
                 reorderLiftContent(for: id, size: size)
             }
+            #if os(iOS)
+            .onScrollPhaseChange { _, phase in
+                if phase.isScrolling, actionSheet != nil {
+                    actionSheet = nil
+                }
+            }
+            #endif
             .background(theme.background)
             .overlay(alignment: .bottom) {
                 if let runningBlockActionTitle {
@@ -382,6 +427,22 @@ public struct EditorView: View {
                     .padding(.bottom, 18)
                 }
             }
+            #if os(iOS)
+            .overlay(alignment: .bottom) {
+                if let actionSheet {
+                    blockActionMenuContent(for: actionSheet.id)
+                        .background(
+                            .regularMaterial,
+                            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        )
+                        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 12)
+                        .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)))
+                }
+            }
+            .animation(.easeOut(duration: 0.16), value: actionSheet?.id)
+            #endif
             // Hand the controller down through the environment. BlockTextEditor reads it
             // to register typing-burst checkpoints and the final blur flush.
             .environment(\.documentUndoController, undoController)
@@ -619,7 +680,7 @@ public struct EditorView: View {
         // the blue nav-selection tint — a second ring would just duplicate it. iOS has no
         // nav-mode multi-select (always one anchor block), so the ring is the only marker.
         #if os(iOS)
-        let isActionMenuTarget = (actionSheet?.id == block.id)
+        let isActionMenuTarget = actionSheet?.selectedIDs.contains(block.id) == true
         #else
         let isActionMenuTarget = false
         #endif
@@ -633,7 +694,16 @@ public struct EditorView: View {
         // (macOS reorder + handle tap are now driven page-level by
         // MacPageGestureHost; their per-row closures are gone.)
         let onShowActionSheet: () -> Void = {
+            #if os(iOS)
+            if var current = actionSheet {
+                current.selectFromBackgroundSwipe(block.id)
+                actionSheet = current
+            } else {
+                actionSheet = BlockActionSheet(id: block.id)
+            }
+            #else
             actionSheet = BlockActionSheet(id: block.id)
+            #endif
         }
 
         // Bundle of editor-only bindings/closures, present only on the row
@@ -711,6 +781,12 @@ public struct EditorView: View {
             onLinkPreviewLoaded: { url, preview in linkPreviews[url] = preview },
             host: host,
             onTapOutsideText: {
+                #if os(iOS)
+                if actionSheet != nil {
+                    actionSheet = nil
+                    return
+                }
+                #endif
                 if case .documentLink = block.kind {
                     _ = navigateIntoDocumentLink(block.id)
                     return
@@ -720,6 +796,12 @@ public struct EditorView: View {
                 transferFocus(to: .editor(block.id, initialCursor: nil))
             },
             onDocumentLinkIconTap: {
+                #if os(iOS)
+                if actionSheet != nil {
+                    actionSheet = nil
+                    return
+                }
+                #endif
                 openDocumentIconPicker(for: block.id)
             },
             onActionMenuDismiss: {

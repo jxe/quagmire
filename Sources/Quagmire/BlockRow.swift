@@ -219,7 +219,7 @@ struct BlockRow: View, Equatable {
                         .allowsHitTesting(false)
                 }
             }
-            .blockActionPopover(
+            .blockActionMenuPresentation(
                 isPresented: Binding(
                     get: { isActionMenuPresented },
                     set: { if !$0 { onActionMenuDismiss() } }

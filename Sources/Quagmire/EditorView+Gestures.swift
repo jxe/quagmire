@@ -16,6 +16,21 @@ import AppKit
 
 extension View {
     @ViewBuilder
+    func blockActionMenuPresentation<Content: View>(
+        isPresented: Binding<Bool>,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        #if os(iOS)
+        // iOS renders this menu once at the editor level so background row
+        // gestures can extend its selection without fighting UIKit popover
+        // dismissal. macOS retains the native anchored popover.
+        self
+        #else
+        self.blockActionPopover(isPresented: isPresented, content: content)
+        #endif
+    }
+
+    @ViewBuilder
     func iosPageBlockDropTarget(
         onUpdate: @escaping (CGFloat) -> Void,
         onDrop: @escaping (BlockDragPayload, CGFloat) -> Void,

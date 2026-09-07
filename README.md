@@ -134,6 +134,10 @@ keyboard shortcut while the menu is open. On a document-link row, "Turn Into
 anything-but-page" inlines the child page's content (`loadDocumentBlocks(_:)`) and
 trashes the source file (`inlineAndRetireDocument(_:parent:)`).
 
+On iOS, while the menu is open, swipe additional rows rightward to add them to
+the gold-rimmed selection. Turn Into and the other block actions then apply to
+that whole selection while the menu remains open.
+
 **Host-supplied block actions**
 - Hosts can return `EditorBlockAction` values with a stable id, title, system
   image, applicability predicate, and async replacement handler.

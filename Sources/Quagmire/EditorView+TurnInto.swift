@@ -366,7 +366,7 @@ extension EditorView {
                 .map { ($0.0, $0.1.filter { availableTargets.contains($0) || $0 == selectedTarget }) }
                 .filter { !$0.1.isEmpty }
             let indentTargets = indentActions(for: targetIDs)
-            let hostActions = applicableBlockActions(anchorID: blockID)
+            let hostActions = applicableBlockActions(anchorID: blockID, targetIDs: targetIDs)
             VStack(alignment: .leading, spacing: 8) {
                 Button("Close") {
                     actionSheet = nil
@@ -473,7 +473,7 @@ extension EditorView {
                                 title: action.title,
                                 systemImage: action.systemImage
                             ) {
-                                performBlockAction(id: action.id, anchorID: blockID)
+                                performBlockAction(id: action.id, anchorID: blockID, targetIDs: targetIDs)
                             }
                         }
                     }
@@ -537,6 +537,11 @@ extension EditorView {
     }
 
     func menuTargetIDs(anchorID: BlockID) -> [BlockID] {
+        #if os(iOS)
+        if let actionSheet, actionSheet.id == anchorID {
+            return actionSheet.targetIDs(in: document)
+        }
+        #endif
         #if os(macOS)
         if state.selection.contains(anchorID), state.selection.count > 1 {
             // Tree-aware analog of "blocks at the shallowest selected depth":
@@ -552,23 +557,39 @@ extension EditorView {
 
     /// Text-bearing rows in the explicit selection, captured in document
     /// order. Selected containers do not implicitly add their descendants.
-    func selectedBlockActionContext(anchorID: BlockID? = nil) -> BlockActionContext {
+    func selectedBlockActionContext(
+        anchorID: BlockID? = nil,
+        selection: Set<BlockID>? = nil
+    ) -> BlockActionContext {
         BlockActionExecution.context(
             in: document,
-            selection: state.selection,
+            selection: selection ?? state.selection,
             anchorID: anchorID
         )
     }
 
-    func applicableBlockActions(anchorID: BlockID? = nil) -> [EditorBlockAction] {
+    func applicableBlockActions(
+        anchorID: BlockID? = nil,
+        targetIDs: [BlockID]? = nil
+    ) -> [EditorBlockAction] {
         guard runningBlockActionID == nil else { return [] }
-        let context = selectedBlockActionContext(anchorID: anchorID)
+        let context = selectedBlockActionContext(
+            anchorID: anchorID,
+            selection: targetIDs.map(Set.init)
+        )
         return host.blockActions(in: document).filter { $0.isApplicable(to: context) }
     }
 
-    func performBlockAction(id: String, anchorID: BlockID? = nil) {
+    func performBlockAction(
+        id: String,
+        anchorID: BlockID? = nil,
+        targetIDs: [BlockID]? = nil
+    ) {
         guard runningBlockActionID == nil else { return }
-        let context = selectedBlockActionContext(anchorID: anchorID)
+        let context = selectedBlockActionContext(
+            anchorID: anchorID,
+            selection: targetIDs.map(Set.init)
+        )
         guard let action = host.blockActions(in: document).first(where: {
             $0.id == id && $0.isApplicable(to: context)
         }) else { return }
