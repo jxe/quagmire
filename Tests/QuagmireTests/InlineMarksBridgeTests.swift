@@ -137,6 +137,24 @@ struct InlineMarksBridgeSanitizeTests {
         #expect(roundTripped.runs.first?[InlineAttributes.BoldAttribute.self] == true)
     }
 
+    @Test func headingBoldNormalizesToPresentationOnlyAfterEditing() {
+        var explicitlyBold = AttributedString("Title")
+        explicitlyBold[InlineAttributes.BoldAttribute.self] = true
+        let rendered = InlineMarksBridge.toNS(
+            explicitlyBold,
+            baseFontSize: 32,
+            baseBold: true,
+            lineSpacing: 0
+        )
+
+        let editedHeading = InlineMarksBridge.toModel(rendered, baseBold: true)
+
+        #expect(String(editedHeading.characters) == "Title")
+        #expect(editedHeading.runs.allSatisfy {
+            $0[InlineAttributes.BoldAttribute.self] != true
+        })
+    }
+
     @Test func bareHTTPURLBecomesLinkAttribute() {
         let linked = autoLinkBareURLs(in: AttributedString("visit https://example.com/docs now"))
         let linkedRuns = linked.runs.filter { $0.link?.absoluteString == "https://example.com/docs" }

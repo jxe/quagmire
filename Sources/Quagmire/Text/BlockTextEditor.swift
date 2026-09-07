@@ -549,7 +549,10 @@ struct MacBlockTextEditor: NSViewRepresentable {
                 // Build the attributed snapshot from textStorage (not `tv.string`) so
                 // marks the user applied earlier in this edit — bold/italic/code etc. —
                 // survive the autotransform. Same fix shape as splitBlock.
-                let attrSnapshot = InlineMarksBridge.toModel(tv.textStorage ?? NSTextStorage())
+                let attrSnapshot = InlineMarksBridge.toModel(
+                    tv.textStorage ?? NSTextStorage(),
+                    baseBold: parent.bold
+                )
                 if let result = detectPrefixAutotransform(text: attrSnapshot, cursor: cursor) {
                     // Autotransform replaces the block via `mutate(...)`, which now
                     // commits the active editor first — so the pre-mutation snapshot
@@ -589,7 +592,7 @@ struct MacBlockTextEditor: NSViewRepresentable {
             // textStorage back over the freshly-mutated model.
             if !textStorageDirty { return }
             let nsAttr = tv.textStorage ?? NSTextStorage()
-            let newText = InlineMarksBridge.toModel(nsAttr)
+            let newText = InlineMarksBridge.toModel(nsAttr, baseBold: parent.bold)
             let oldText = parent.text
             let oldPlain = String(oldText.characters)
             // If the binding moved out from under us since our last sync, a structural
@@ -1421,7 +1424,10 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
                 let cursor = textView.selectedRange.location
                 // Snapshot the marked text from textStorage so any inline marks the
                 // user applied earlier in this edit survive the autotransform.
-                let attrSnapshot = InlineMarksBridge.toModel(textView.textStorage)
+                let attrSnapshot = InlineMarksBridge.toModel(
+                    textView.textStorage,
+                    baseBold: parent.bold
+                )
                 if let result = detectPrefixAutotransform(text: attrSnapshot, cursor: cursor) {
                     // Autotransform replaces the block via `mutate(...)`, which commits
                     // the active editor first — so the pre-mutation snapshot captures
@@ -1451,7 +1457,7 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
             cancelCheckpoint()
             // See macOS twin — early return when textStorage hasn't changed.
             if !textStorageDirty { return }
-            let newText = InlineMarksBridge.toModel(textView.textStorage)
+            let newText = InlineMarksBridge.toModel(textView.textStorage, baseBold: parent.bold)
             let oldText = parent.text
             let oldPlain = String(oldText.characters)
             // See MacBlockTextEditor.Coordinator.commitLiveText — same teardown race:

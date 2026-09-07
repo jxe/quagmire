@@ -130,7 +130,7 @@ enum InlineMarksBridge {
     /// Read NSAttributedString from textStorage and reconstruct the model AttributedString.
     /// Bold/italic/code are derived from the run's font traits; strikethrough from the
     /// strikethroughStyle attribute; link from .link.
-    static func toModel(_ source: NSAttributedString) -> AttributedString {
+    static func toModel(_ source: NSAttributedString, baseBold: Bool = false) -> AttributedString {
         var result = AttributedString()
         guard source.length > 0 else { return result }
 
@@ -151,7 +151,10 @@ enum InlineMarksBridge {
             if attrs[.linkPresentationSemibold] as? Bool == true {
                 bold = false
             }
-            if bold {
+            // Heading rows are already bold by typography. Treat that weight as
+            // presentation, not an inline Markdown mark; editing an old
+            // `# **Title**` therefore normalizes it back to `# Title`.
+            if bold, !baseBold {
                 piece[InlineAttributes.BoldAttribute.self] = true
             }
             if italic {
@@ -181,7 +184,7 @@ enum InlineMarksBridge {
     /// block. `toModel` already discards everything but the four custom mark keys and
     /// `.link`; `toNS` re-applies the configured editor typography and colors.
     static func sanitize(_ source: NSAttributedString, baseFontSize: CGFloat, baseBold: Bool, lineSpacing: CGFloat, theme: EditorTheme = .default) -> NSAttributedString {
-        let model = toModel(source)
+        let model = toModel(source, baseBold: baseBold)
         return toNS(model, baseFontSize: baseFontSize, baseBold: baseBold, lineSpacing: lineSpacing, theme: theme)
     }
 
