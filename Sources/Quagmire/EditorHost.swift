@@ -272,24 +272,23 @@ public protocol EditorHost: AnyObject {
     ///
     /// Called *synchronously* on the mutation-commit thread — the editor's
     /// typing path can't await mid-`Document.transaction`. The host
-    /// translates the changes into whatever storage primitive it owns; in
-    /// practice the host spawns a Task and awaits durability internally,
-    /// reaching that Task through `flush(_:)`. From the editor's side
-    /// this is fire-and-forget on the typing thread; the host's
-    /// `flush(_:)` is the only way to await durability.
+    /// translates the changes into whatever storage primitive it owns and may
+    /// coalesce a short burst before starting its asynchronous durable write.
+    /// From the editor's side this is fire-and-forget on the typing thread;
+    /// `flush(_:)` must force any coalesced change to start and then await all
+    /// durability work captured by that boundary.
     func persistCommit(changes: [DocumentChange], in document: Document)
 
     /// Await durability of any writes already in flight for `document`.
-    /// With the commit-time atomic save model, every `persistCommit`
-    /// schedules its own log + .md write — `flush` doesn't *trigger* a
-    /// save, it blocks until any in-flight one(s) for this doc complete.
-    /// Editor calls this on focus-loss (so the commit that just fired is
-    /// durable before the row unmounts) and the host calls it directly
-    /// from scene-phase / navigation-away / close paths. The doc is
-    /// passed explicitly (symmetric with `persistCommit(changes:in:)`) so
-    /// the host doesn't have to infer "current doc" from its own state.
-    /// Non-throwing: the host owns error surfacing (banner, retry) —
-    /// the editor has nothing useful to do with a flush failure.
+    /// A host that debounces or coalesces commits must start the latest pending
+    /// write before awaiting its durability. Editor calls this on focus-loss
+    /// (so the commit that just fired is durable before the row unmounts) and
+    /// the host calls it directly from scene-phase / navigation-away / close
+    /// paths. The doc is passed explicitly (symmetric with
+    /// `persistCommit(changes:in:)`) so the host doesn't have to infer "current
+    /// doc" from its own state. Non-throwing: the host owns error surfacing
+    /// (banner, retry) — the editor has nothing useful to do with a flush
+    /// failure.
     func flush(_ document: Document) async
 
     /// Serialize blocks into a string the editor will write to the system
