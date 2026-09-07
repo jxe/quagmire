@@ -102,13 +102,14 @@ struct EditorViewPinchDictationTests {
         #expect(String(draft.block.text.characters) == "spoken heading text")
     }
 
-    @Test func thirdTapMustLandInTheOpenSpaceBetweenPinchFingers() {
+    @Test func thirdTapMayLandAnywhereOutsideThePinchFingerExclusionZones() {
         let first = CGPoint(x: 20, y: 100)
         let second = CGPoint(x: 220, y: 100)
 
-        #expect(PagePinchThirdTapGeometry.contains(CGPoint(x: 120, y: 110), between: first, and: second))
-        #expect(!PagePinchThirdTapGeometry.contains(CGPoint(x: 25, y: 100), between: first, and: second))
-        #expect(!PagePinchThirdTapGeometry.contains(CGPoint(x: 120, y: 190), between: first, and: second))
+        #expect(PagePinchThirdTapGeometry.allows(CGPoint(x: 120, y: 110), awayFrom: first, and: second))
+        #expect(PagePinchThirdTapGeometry.allows(CGPoint(x: 120, y: 300), awayFrom: first, and: second))
+        #expect(!PagePinchThirdTapGeometry.allows(CGPoint(x: 55, y: 100), awayFrom: first, and: second))
+        #expect(PagePinchThirdTapGeometry.allows(CGPoint(x: 57, y: 100), awayFrom: first, and: second))
     }
 
     @Test func provisionalChildrenUseTheSameRenderedDepthAsCommittedRows() {
