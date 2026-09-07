@@ -407,20 +407,34 @@ extension EditorView {
             return resolveHeadingDropTarget(atY: y, rows: rows, level: level, lift: lift)
         }
 
-        // Hit-test for "drop on closed parent" / "drop onto documentLink". Edge
-        // band keeps the gap above/below the row reachable for between-rows
-        // drops.
+        // Resolve document-link rows before insertion slots. Their padded,
+        // sticky target prevents a nearby animated insertion gap from making
+        // a run of short link rows chase the pointer.
+        let linkRows: [(row: VisibleRow, frame: ReorderDropFrame)] = rows.compactMap { row in
+            guard !liftIDs.contains(row.id),
+                  case .documentLink(let reference) = row.kind,
+                  host.lookupDocument(reference).can(.receiveBlocks),
+                  let frame = layoutCache.reorderFrame(of: row.id)
+            else { return nil }
+            return (row, ReorderDropFrame(frame: frame))
+        }
+        let previousLinkIndex: Int? = {
+            guard case .intoDocument(let id, _)? = state.currentDropTarget else { return nil }
+            return linkRows.firstIndex { $0.row.id == id }
+        }()
+        if let index = ReorderDropResolver.rowTargetIndex(
+            forY: y,
+            rowFrames: linkRows.map(\.frame),
+            previousIndex: previousLinkIndex
+        ), case .documentLink(let reference) = linkRows[index].row.kind {
+            return .intoDocument(linkRows[index].row.id, reference)
+        }
+
+        // Hit-test for "drop on closed parent". Edge band keeps the gap
+        // above/below the row reachable for between-rows drops.
         let edgeBand: CGFloat = 6
         for row in rows where !liftIDs.contains(row.id) {
             guard let frame = layoutCache.reorderFrame(of: row.id) else { continue }
-            if case .documentLink(let reference) = row.kind,
-               y >= frame.minY && y <= frame.maxY {
-                // A target that can't take blocks isn't a drop target at all:
-                // fall through so the drop lands between rows instead of
-                // silently doing nothing on release.
-                guard host.lookupDocument(reference).can(.receiveBlocks) else { continue }
-                return .intoDocument(row.id, reference)
-            }
             guard y > frame.minY + edgeBand && y < frame.maxY - edgeBand else { continue }
             if isCollapsedSection(id: row.id, kind: row.kind) {
                 return .asLastChildOf(row.id)

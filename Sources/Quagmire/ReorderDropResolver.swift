@@ -5,6 +5,32 @@ struct ReorderDropFrame: Equatable {
 }
 
 enum ReorderDropResolver {
+    /// Picks a row-shaped drop target before the insertion-slot resolver opens
+    /// a drift gap. The acquisition padding makes thin rows approachable from
+    /// their surrounding whitespace; the larger retention padding keeps an
+    /// acquired target from escaping when nearby layout animates.
+    static func rowTargetIndex(
+        forY y: CGFloat,
+        rowFrames: [ReorderDropFrame],
+        previousIndex: Int? = nil,
+        acquisitionPadding: CGFloat = 6,
+        retentionPadding: CGFloat = 12
+    ) -> Int? {
+        if let previousIndex, rowFrames.indices.contains(previousIndex) {
+            let retained = rowFrames[previousIndex].frame.insetBy(dx: 0, dy: -retentionPadding)
+            if y >= retained.minY, y <= retained.maxY { return previousIndex }
+        }
+
+        return rowFrames.indices
+            .filter { index in
+                let acquired = rowFrames[index].frame.insetBy(dx: 0, dy: -acquisitionPadding)
+                return y >= acquired.minY && y <= acquired.maxY
+            }
+            .min { lhs, rhs in
+                abs(rowFrames[lhs].frame.midY - y) < abs(rowFrames[rhs].frame.midY - y)
+            }
+    }
+
     static func insertionIndex(
         forY y: CGFloat,
         rowFrames: [ReorderDropFrame],

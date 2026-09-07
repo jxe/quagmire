@@ -4,6 +4,26 @@ import Testing
 
 @Suite("Reorder drop resolver")
 struct ReorderDropResolverTests {
+    @Test func rowTargetsAcquireFromSpacingAndPreferTheNearestConsecutiveRow() {
+        let frames = [
+            ReorderDropFrame(frame: CGRect(x: 0, y: 20, width: 320, height: 24)),
+            ReorderDropFrame(frame: CGRect(x: 0, y: 48, width: 320, height: 24)),
+        ]
+
+        #expect(ReorderDropResolver.rowTargetIndex(forY: 16, rowFrames: frames) == 0)
+        #expect(ReorderDropResolver.rowTargetIndex(forY: 46, rowFrames: frames) == 0)
+        #expect(ReorderDropResolver.rowTargetIndex(forY: 47, rowFrames: frames) == 1)
+        #expect(ReorderDropResolver.rowTargetIndex(forY: 76, rowFrames: frames) == 1)
+    }
+
+    @Test func acquiredRowTargetRemainsStickyOutsideItsAcquisitionBand() {
+        let frames = [ReorderDropFrame(frame: CGRect(x: 0, y: 20, width: 320, height: 24))]
+
+        #expect(ReorderDropResolver.rowTargetIndex(forY: 10, rowFrames: frames) == nil)
+        #expect(ReorderDropResolver.rowTargetIndex(forY: 10, rowFrames: frames, previousIndex: 0) == 0)
+        #expect(ReorderDropResolver.rowTargetIndex(forY: 7, rowFrames: frames, previousIndex: 0) == nil)
+    }
+
     @Test func resolvesByRowMidlines() {
         let frames = makeFrames(count: 4)
 
