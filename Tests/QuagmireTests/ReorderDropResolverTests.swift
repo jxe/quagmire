@@ -349,4 +349,10 @@ struct IOSPageReorderGeometryTests {
             ) == CGPoint(x: 160, y: 220)
         )
     }
+
+    @Test func topOverscrollBeginsOnlyBeyondTheAdjustedInset() {
+        #expect(topOverscrollDistance(contentOffsetY: -100, adjustedTopInset: 100) == 0)
+        #expect(topOverscrollDistance(contentOffsetY: -164, adjustedTopInset: 100) == 64)
+        #expect(topOverscrollDistance(contentOffsetY: 20, adjustedTopInset: 100) == 0)
+    }
 }

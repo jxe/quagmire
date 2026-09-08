@@ -142,9 +142,15 @@ extension View {
     }
 
     @ViewBuilder
-    func iosScrollMetrics(_ metrics: PageScrollMetrics) -> some View {
+    func iosScrollMetrics(
+        _ metrics: PageScrollMetrics,
+        topOverscrollAction: EditorTopOverscrollAction? = nil
+    ) -> some View {
         #if os(iOS)
-        self.background(IOSScrollMetricsReader(metrics: metrics))
+        self.background(IOSScrollMetricsReader(
+            metrics: metrics,
+            topOverscrollAction: topOverscrollAction
+        ))
         #else
         self
         #endif
@@ -320,6 +326,10 @@ final class PageScrollMetrics {
 
 enum PageHoverCoordinateSpace {
     static let name = "EditorView.hover"
+}
+
+func topOverscrollDistance(contentOffsetY: CGFloat, adjustedTopInset: CGFloat) -> CGFloat {
+    max(0, -(contentOffsetY + adjustedTopInset))
 }
 
 struct IOSPageReorderGeometry {
@@ -903,9 +913,10 @@ final class PageScrollController {
 
 struct IOSScrollMetricsReader: UIViewRepresentable {
     let metrics: PageScrollMetrics
+    let topOverscrollAction: EditorTopOverscrollAction?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(metrics: metrics)
+        Coordinator(metrics: metrics, topOverscrollAction: topOverscrollAction)
     }
 
     func makeUIView(context: Context) -> ReaderView {
@@ -916,6 +927,7 @@ struct IOSScrollMetricsReader: UIViewRepresentable {
 
     func updateUIView(_ uiView: ReaderView, context: Context) {
         context.coordinator.metrics = metrics
+        context.coordinator.topOverscrollAction = topOverscrollAction
         uiView.coordinator = context.coordinator
         uiView.installIfNeeded()
     }
@@ -975,18 +987,28 @@ struct IOSScrollMetricsReader: UIViewRepresentable {
     @MainActor
     final class Coordinator {
         var metrics: PageScrollMetrics
+        var topOverscrollAction: EditorTopOverscrollAction?
         private weak var observedScrollView: UIScrollView?
         private var observation: NSKeyValueObservation?
         private var boundsObservation: NSKeyValueObservation?
         private var contentSizeObservation: NSKeyValueObservation?
 
-        init(metrics: PageScrollMetrics) {
+        init(metrics: PageScrollMetrics, topOverscrollAction: EditorTopOverscrollAction?) {
             self.metrics = metrics
+            self.topOverscrollAction = topOverscrollAction
         }
 
         func update(from scrollView: UIScrollView) {
             if observedScrollView !== scrollView {
+                observedScrollView?.panGestureRecognizer.removeTarget(
+                    self,
+                    action: #selector(panGestureChanged(_:))
+                )
                 observedScrollView = scrollView
+                scrollView.panGestureRecognizer.addTarget(
+                    self,
+                    action: #selector(panGestureChanged(_:))
+                )
                 observation = scrollView.observe(\.contentOffset, options: [.new]) { [weak self, weak scrollView] _, _ in
                     Task { @MainActor in
                         guard let self, let scrollView else { return }
@@ -1022,7 +1044,41 @@ struct IOSScrollMetricsReader: UIViewRepresentable {
             metrics.contentOffsetY = scrollView.contentOffset.y
             metrics.topInset = scrollView.adjustedContentInset.top
             metrics.bottomInset = scrollView.adjustedContentInset.bottom
+            publishTopOverscroll(from: scrollView)
             // NSLog("[REORDER-AS] metrics publish viewport=%f content=%f offsetY=%f topInset=%f bottomInset=%f", metrics.viewportHeight, metrics.contentHeight, metrics.contentOffsetY, metrics.topInset, metrics.bottomInset)
+        }
+
+        @objc private func panGestureChanged(_ gesture: UIPanGestureRecognizer) {
+            guard let scrollView = observedScrollView,
+                  let action = topOverscrollAction else { return }
+            switch gesture.state {
+            case .ended:
+                let distance = topOverscrollDistance(
+                    contentOffsetY: scrollView.contentOffset.y,
+                    adjustedTopInset: scrollView.adjustedContentInset.top
+                )
+                action.onRelease(distance >= action.threshold)
+                action.onProgress(0, false)
+            case .cancelled, .failed:
+                action.onRelease(false)
+                action.onProgress(0, false)
+            default:
+                break
+            }
+        }
+
+        private func publishTopOverscroll(from scrollView: UIScrollView) {
+            guard let action = topOverscrollAction else { return }
+            let state = scrollView.panGestureRecognizer.state
+            guard state == .began || state == .changed else { return }
+            let distance = topOverscrollDistance(
+                contentOffsetY: scrollView.contentOffset.y,
+                adjustedTopInset: scrollView.adjustedContentInset.top
+            )
+            action.onProgress(
+                min(1, distance / action.threshold),
+                distance >= action.threshold
+            )
         }
     }
 }
@@ -1327,6 +1383,14 @@ struct IOSRowSwipeGestureBridge: UIViewRepresentable {
             // Initial motion must be horizontal-dominant — otherwise fail and
             // let the scroll view's pan take the touch.
             let t = pan.translation(in: host)
+            // Preserve the system leading-edge gesture for navigation (or a
+            // host-provided drawer). Without this gate, the row swipe and the
+            // screen-edge action can both track the same rightward pan.
+            if t.x > 0,
+               let window = host.window,
+               pan.location(in: window).x <= 22 {
+                return false
+            }
             return abs(t.x) > abs(t.y) * 1.4
         }
 

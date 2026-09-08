@@ -30,6 +30,7 @@ public struct EditorView: View {
     public let host: any EditorHost
     public let configuration: EditorConfiguration
     public let pinchDictation: EditorPinchDictation?
+    public let topOverscrollAction: EditorTopOverscrollAction?
     public let pageFooter: AnyView?
 
     // View-shaped @State that doesn't move into EditorState because it's tied to
@@ -167,13 +168,15 @@ public struct EditorView: View {
         state: EditorState,
         host: any EditorHost,
         configuration: EditorConfiguration = EditorConfiguration(),
-        pinchDictation: EditorPinchDictation? = nil
+        pinchDictation: EditorPinchDictation? = nil,
+        topOverscrollAction: EditorTopOverscrollAction? = nil
     ) {
         self.document = document
         self.state = state
         self.host = host
         self.configuration = configuration
         self.pinchDictation = pinchDictation
+        self.topOverscrollAction = topOverscrollAction
         self.pageFooter = nil
     }
 
@@ -183,6 +186,7 @@ public struct EditorView: View {
         host: any EditorHost,
         configuration: EditorConfiguration = EditorConfiguration(),
         pinchDictation: EditorPinchDictation? = nil,
+        topOverscrollAction: EditorTopOverscrollAction? = nil,
         @ViewBuilder pageFooter: () -> Footer
     ) {
         self.document = document
@@ -190,6 +194,7 @@ public struct EditorView: View {
         self.host = host
         self.configuration = configuration
         self.pinchDictation = pinchDictation
+        self.topOverscrollAction = topOverscrollAction
         self.pageFooter = AnyView(pageFooter())
     }
 
@@ -369,6 +374,7 @@ public struct EditorView: View {
                 trailingDropHeight: 32 + renderedTrailingPinchGap + trailingReorderGap,
                 activeLift: rowSurfaceLift(in: unprojectedRows),
                 scrollMetrics: scrollMetrics,
+                topOverscrollAction: topOverscrollAction,
                 scrollPosition: $scrollPosition,
                 isIOSReorderEnabled: !pinchGestureActive,
                 isMacReorderEnabled: state.editingBlock == nil,

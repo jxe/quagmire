@@ -119,6 +119,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     let trailingDropHeight: CGFloat
     let activeLift: RowSurfaceLift<ID>?
     let scrollMetrics: PageScrollMetrics
+    let topOverscrollAction: EditorTopOverscrollAction?
     @Binding var scrollPosition: ScrollPosition
     let isIOSReorderEnabled: Bool
     let isMacReorderEnabled: Bool
@@ -148,6 +149,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         trailingDropHeight: CGFloat,
         activeLift: RowSurfaceLift<ID>?,
         scrollMetrics: PageScrollMetrics,
+        topOverscrollAction: EditorTopOverscrollAction? = nil,
         scrollPosition: Binding<ScrollPosition>,
         isIOSReorderEnabled: Bool,
         isMacReorderEnabled: Bool,
@@ -169,6 +171,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         self.trailingDropHeight = trailingDropHeight
         self.activeLift = activeLift
         self.scrollMetrics = scrollMetrics
+        self.topOverscrollAction = topOverscrollAction
         self._scrollPosition = scrollPosition
         self.isIOSReorderEnabled = isIOSReorderEnabled
         self.isMacReorderEnabled = isMacReorderEnabled
@@ -277,7 +280,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
                     actions.onPinchCommit(value)
                 }
             )
-            .iosScrollMetrics(scrollMetrics)
+            .iosScrollMetrics(scrollMetrics, topOverscrollAction: topOverscrollAction)
         }
         .coordinateSpace(name: PageHoverCoordinateSpace.name)
         .iosPageTextDropTarget(
