@@ -828,7 +828,7 @@ extension EditorView {
         let ordered = roots.sorted { (a, b) in
             (document.documentOrder(of: a) ?? .max) < (document.documentOrder(of: b) ?? .max)
         }
-        let movingBlocks = ordered.compactMap { document.find($0) }
+        let movingBlocks = ordered.compactMap { document.find($0)?.materialized() }
         guard !movingBlocks.isEmpty else { return }
 
         guard await host.appendToDocument(reference, movingBlocks) else { return }
@@ -857,7 +857,7 @@ extension EditorView {
         let ordered = roots.sorted { (a, b) in
             (document.documentOrder(of: a) ?? .max) < (document.documentOrder(of: b) ?? .max)
         }
-        let copies = ordered.compactMap { document.find($0)?.withFreshIDs() }
+        let copies = ordered.compactMap { document.find($0)?.withFreshIDs().materialized() }
         guard !copies.isEmpty else { return }
 
         guard await host.appendToDocument(reference, copies) else { return }

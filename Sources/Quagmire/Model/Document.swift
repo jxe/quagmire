@@ -994,7 +994,7 @@ public final class Document: @MainActor Identifiable {
             skippingHeadingIDs: skippingHeadingIDs
         ) else { return false }
         for id in plan.orderedIDs { removeSubtree(id) }
-        return insertSubtrees(plan.movedBlocks, at: plan.target)
+        return insertSubtrees(plan.movedBlocks.map { $0.materialized() }, at: plan.target)
     }
 
     // MARK: - Bulk move (drop)
@@ -1025,7 +1025,7 @@ public final class Document: @MainActor Identifiable {
         var collected: [Block] = []
         for id in ordered {
             if let removed = removeSubtree(id) {
-                collected.append(removed)
+                collected.append(removed.materialized())
             }
         }
 

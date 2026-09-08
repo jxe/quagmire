@@ -5,7 +5,7 @@ import GameController
 
 // MARK: - Turn Into menu / block action popover
 //
-// The 3-column grid that opens via Cmd-/ in nav mode (macOS), drag-handle tap
+// The 3-column grid that opens via Cmd-. in nav mode (macOS), drag-handle tap
 // (macOS), or leading row swipe (iOS). Houses Turn Into (block-type swap),
 // Copy, and Indent/Outdent. The conversion methods (`convert`, `convertSingle`,
 // `convertBlockToDocument`, `convertBlockToTemplate`, `convertDocumentLink`) live

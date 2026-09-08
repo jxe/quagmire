@@ -136,6 +136,25 @@ struct CrossDocumentDurabilityTests {
         #expect(doc.children.map(\.id) == [stay.id])
     }
 
+    @Test func movingAProjectedBlockAuthorsTheDestinationCopy() async {
+        let host = FailureHost()
+        let projected = Block(
+            kind: .documentLink(
+                label: AttributedString("Child"),
+                reference: DocumentReference("child.md")
+            ),
+            persistence: .projected
+        )
+        let doc = Document(id: DocumentID("d"), children: [projected])
+        let editor = EditorView(document: doc, state: EditorState(), host: host)
+        editor.installUndoApply()
+
+        await editor.moveBlocks(ids: [projected.id], intoDocument: DocumentReference("other.md"))
+
+        #expect(host.appendedBlocks.first?.persistence == .authored)
+        #expect(doc.children.isEmpty)
+    }
+
     @Test func copyingIntoAnotherDocumentSendsFreshIDsAndKeepsTheSource() async {
         let host = FailureHost()
         let source = Block.paragraph(text: AttributedString("copy me"))

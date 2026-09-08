@@ -40,8 +40,9 @@ struct NavKeyBindingTests {
         #expect(EditorView.navAction(for: "b", modifiers: [.command, .shift]) == nil)
     }
 
-    @Test func cmdSlashOpensActionMenu() {
-        #expect(EditorView.navAction(for: "/", modifiers: .command) == .openBlockActionMenu)
+    @Test func cmdPeriodOpensActionMenu() {
+        #expect(EditorView.navAction(for: ".", modifiers: .command) == .openBlockActionMenu)
+        #expect(EditorView.navAction(for: "/", modifiers: .command) == nil)
     }
 
     @Test func cmdKMapsToToggleLink() {

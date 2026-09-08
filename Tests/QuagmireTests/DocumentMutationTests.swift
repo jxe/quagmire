@@ -274,6 +274,26 @@ struct DocumentMutationTests {
         #expect(doc.children[0].id == cID)
     }
 
+    @Test func movingProjectedBlockMaterializesIt() {
+        let projectedID = BlockID()
+        let projected = Block(
+            id: projectedID,
+            kind: .documentLink(
+                label: AttributedString("Child"),
+                reference: DocumentReference("child")
+            ),
+            persistence: .projected
+        )
+        let doc = Document(
+            id: DocumentID("projected-move"),
+            children: [.paragraph(text: AttributedString("Body")), projected]
+        )
+
+        #expect(doc.moveSubtrees([projectedID], to: .root(at: 0)))
+        #expect(doc.children.first?.id == projectedID)
+        #expect(doc.children.first?.persistence == .authored)
+    }
+
     @Test func slideSiblingsRefusesAcrossParents() {
         let doc = makeDoc()
         let topID = doc.children[0].id
