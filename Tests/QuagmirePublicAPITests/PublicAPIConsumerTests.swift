@@ -1,4 +1,5 @@
 import Quagmire
+import Foundation
 import SwiftUI
 import Testing
 
@@ -67,6 +68,23 @@ private final class FullHost: EditorHost {
 
 @Suite("Public API consumer")
 struct PublicAPIConsumerTests {
+
+    @MainActor
+    @Test func hostSurfacesCanReceiveEditorBlockDrags() throws {
+        let id = BlockID()
+        let payload = BlockDragPayload(ids: [id])
+        let encoded = String(data: try JSONEncoder().encode(payload), encoding: .utf8)!
+        #expect(BlockDragPayload(jsonString: encoded)?.ids == [id])
+
+        let commands = EditorCommands()
+        var received: ([BlockID], DocumentReference)?
+        commands.moveDraggedBlocks = { ids, destination in
+            received = (ids, destination)
+        }
+        commands.moveDraggedBlocks(payload.ids, DocumentReference("destination"))
+        #expect(received?.0 == [id])
+        #expect(received?.1 == DocumentReference("destination"))
+    }
 
     /// These assertions catch a future blanket `EditorHost` default absorbing
     /// a mistyped `FullHost` implementation. With the current bare protocol

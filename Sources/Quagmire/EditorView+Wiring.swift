@@ -195,6 +195,11 @@ extension EditorView {
         editorCommands.insertText = { text, target in
             insertExternalText(text, into: target)
         }
+        editorCommands.moveDraggedBlocks = { ids, destination in
+            Task { @MainActor in
+                await moveBlocks(ids: ids, intoDocument: destination)
+            }
+        }
     }
 
     /// Deliver delayed external text to the block captured when the operation

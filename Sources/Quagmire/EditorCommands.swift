@@ -34,6 +34,11 @@ public final class EditorCommands {
     /// otherwise the text is appended to that same block.
     public var insertText: (_ text: String, _ target: BlockID) -> Bool = { _, _ in false }
 
+    /// Move editor-originated blocks into a host document drop target. This
+    /// keeps out-of-editor surfaces such as a consumer sidebar on the same
+    /// durable append-then-remove path as document-link rows in the editor.
+    public var moveDraggedBlocks: (_ ids: [BlockID], _ destination: DocumentReference) -> Void = { _, _ in }
+
     public init() {}
 }
 
