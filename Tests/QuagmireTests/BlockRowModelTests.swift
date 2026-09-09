@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import Quagmire
 
@@ -56,5 +57,27 @@ struct BlockRowModelTests {
         let url = URL(string: "https://example.com")!
         #expect(model(linkPreviews: [url: LinkPreview(url: url, title: "A", iconPNG: nil)])
             != model(linkPreviews: [url: LinkPreview(url: url, title: "B", iconPNG: nil)]))
+    }
+
+    @Test func liveTextBindingReadsPastAStaleRowSnapshot() {
+        let id = BlockID()
+        var live = Block(id: id, kind: .paragraph(text: AttributedString("first")))
+        let blockBinding = Binding<Block>(
+            get: { live },
+            set: { live = $0 }
+        )
+        let textBinding = liveBlockTextBinding(blockBinding)
+
+        textBinding.wrappedValue = AttributedString("checkpoint")
+        #expect(String(live.text.characters) == "checkpoint")
+
+        // This is the important sequence: the native editor commits a typing
+        // checkpoint, continues editing before BlockRow is rendered again,
+        // then Escape asks the same mounted binding for the current model text.
+        #expect(String(textBinding.wrappedValue.characters) == "checkpoint")
+        textBinding.wrappedValue = AttributedString("checkpoint plus escape")
+
+        #expect(String(live.text.characters) == "checkpoint plus escape")
+        #expect(live.id == id)
     }
 }

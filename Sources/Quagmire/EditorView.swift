@@ -741,6 +741,7 @@ public struct EditorView: View {
         // todo-row checkbox toggle.)
         let editing: BlockRow.TextEditing? = isEditing
             ? BlockRow.TextEditing(
+                block: binding,
                 editorFocused: $editorFocused,
                 isActive: state.editingBlock == block.id,
                 completionActive: state.completionMenuBlockID == block.id,

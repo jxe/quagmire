@@ -72,6 +72,10 @@ struct BlockRow: View, Equatable {
     /// plumbing for read-only rows (and so the lift's `BlockRowPreview`
     /// sibling doesn't even exist as a temptation to add it back).
     struct TextEditing {
+        /// Live block binding supplied by EditorView. Its getter resolves by
+        /// BlockID on every read so a typing checkpoint cannot leave the
+        /// mounted text editor comparing against a stale row snapshot.
+        let block: Binding<Block>
         /// Plain-typed focus binding (NOT `@FocusState.Binding`). Held by value
         /// so it doesn't defeat `BlockRow`'s `.equatable()` gating; only read
         /// inside `BlockTextEditor`.
@@ -100,6 +104,7 @@ struct BlockRow: View, Equatable {
         let consumeInitialCursor: () -> InitialCursorTarget?
 
         init(
+            block: Binding<Block>,
             editorFocused: FocusState<BlockID?>.Binding,
             isActive: Bool = true,
             completionActive: Bool,
@@ -109,6 +114,7 @@ struct BlockRow: View, Equatable {
             onCompletionTriggerChange: @escaping (InlineCompletionTrigger?) -> Void,
             consumeInitialCursor: @escaping () -> InitialCursorTarget?
         ) {
+            self.block = block
             self.editorFocused = editorFocused
             self.isActive = isActive
             self.completionActive = completionActive
@@ -290,25 +296,6 @@ struct BlockRow: View, Equatable {
                     .offset(x: -DragHandle.gutterWidth, y: BlockSpacing.dragHandleYOffset(block))
                     .allowsHitTesting(false)
             }
-    }
-
-    /// AttributedString projection of the block's text for editing. Marks (bold/italic/
-    /// code/strike/link) survive editing now — no more lossy String round-trip.
-    private var textBinding: Binding<AttributedString> {
-        Binding(
-            get: { block.text },
-            set: { newValue in
-                if String(newValue.characters) != String(block.text.characters) ||
-                   !attributedStringMarksEqual(newValue, block.text) {
-                    // Update the model. Persistence is driven by the live
-                    // editor's `commitLiveText`, which opens a
-                    // `controller.transaction(name:"Type")`;
-                    // the resulting diff flows through
-                    // `Document.didCommitTransaction` to the host.
-                    onBlockChange(block.withText(newValue))
-                }
-            }
-        )
     }
 
     @ViewBuilder
@@ -659,7 +646,7 @@ struct BlockRow: View, Equatable {
         let usesMutedForeground = muted || model.isProvisionalText
         if let editor {
             BlockTextEditor(
-                text: textBinding,
+                text: liveBlockTextBinding(editor.block),
                 font: font,
                 fontSize: fontSize,
                 bold: bold,
@@ -712,6 +699,23 @@ struct BlockRow: View, Equatable {
             }
         }
     }
+}
+
+/// AttributedString projection of a block binding for the mounted native text
+/// editor. Both reads and writes resolve the live block rather than the
+/// BlockRow render snapshot: a delayed typing checkpoint can update the model
+/// without SwiftUI rebuilding the row before the next keystroke or Escape.
+func liveBlockTextBinding(_ block: Binding<Block>) -> Binding<AttributedString> {
+    Binding(
+        get: { block.wrappedValue.text },
+        set: { newValue in
+            let current = block.wrappedValue
+            if String(newValue.characters) != String(current.text.characters) ||
+               !attributedStringMarksEqual(newValue, current.text) {
+                block.wrappedValue = current.withText(newValue)
+            }
+        }
+    )
 }
 
 /// Non-equatable row dependencies and callbacks. These are regenerated from
