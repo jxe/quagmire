@@ -752,7 +752,9 @@ extension EditorView {
     /// `Document.moveSubtrees(_:to:)`.
     fileprivate func moveBlocks(ids: [BlockID], to target: DropPath) {
         guard !ids.isEmpty, document.canDrop(ids: ids, to: target) else { return }
+        let prepared = preparedBlocksForTransfer(ids: ids)
         mutate("Move Block") {
+            applyPreparedBlocks(prepared)
             document.moveSubtrees(ids, to: target)
         }
     }
@@ -769,7 +771,9 @@ extension EditorView {
         // cursor stays where the user moved from instead of following the
         // blocks into the destination.
         let cursorTarget = nearestCursorAfterRemoval(of: ids)
+        let prepared = preparedBlocksForTransfer(ids: ids)
         mutate("Move Block") {
+            applyPreparedBlocks(prepared)
             document.moveSubtrees(ids, to: target)
         }
         if let id = cursorTarget {
@@ -786,7 +790,8 @@ extension EditorView {
         let ordered = ids.sorted { (a, b) in
             (document.documentOrder(of: a) ?? .max) < (document.documentOrder(of: b) ?? .max)
         }
-        let copies = ordered.compactMap { document.find($0)?.withFreshIDs() }
+        let prepared = preparedBlocksForTransfer(ids: ordered)
+        let copies = prepared.map { $0.withFreshIDs() }
         guard !copies.isEmpty else { return }
         mutate(copies.count > 1 ? "Duplicate Blocks" : "Duplicate Block") {
             document.insertSubtrees(copies, at: target)
@@ -804,7 +809,8 @@ extension EditorView {
         let ordered = ids.sorted { (a, b) in
             (document.documentOrder(of: a) ?? .max) < (document.documentOrder(of: b) ?? .max)
         }
-        let copies = ordered.compactMap { document.find($0)?.withFreshIDs() }
+        let prepared = preparedBlocksForTransfer(ids: ordered)
+        let copies = prepared.map { $0.withFreshIDs() }
         guard !copies.isEmpty else { return }
         mutate(copies.count > 1 ? "Duplicate Blocks" : "Duplicate Block") {
             document.insertSubtrees(copies, at: target)
@@ -828,7 +834,7 @@ extension EditorView {
         let ordered = roots.sorted { (a, b) in
             (document.documentOrder(of: a) ?? .max) < (document.documentOrder(of: b) ?? .max)
         }
-        let movingBlocks = ordered.compactMap { document.find($0)?.materialized() }
+        let movingBlocks = preparedBlocksForTransfer(ids: ordered)
         guard !movingBlocks.isEmpty else { return }
 
         guard await host.appendToDocument(reference, movingBlocks) else { return }
@@ -857,10 +863,37 @@ extension EditorView {
         let ordered = roots.sorted { (a, b) in
             (document.documentOrder(of: a) ?? .max) < (document.documentOrder(of: b) ?? .max)
         }
-        let copies = ordered.compactMap { document.find($0)?.withFreshIDs().materialized() }
+        let copies = preparedBlocksForTransfer(ids: ordered).map { $0.withFreshIDs() }
         guard !copies.isEmpty else { return }
 
         guard await host.appendToDocument(reference, copies) else { return }
         showActionToast("Copied")
+    }
+
+    /// Resolve a selection to document-ordered subtree roots, then validate the
+    /// host's transfer transform. Quagmire permits metadata changes but keeps
+    /// block identity, kind, and topology stable so move targeting remains valid.
+    func preparedBlocksForTransfer(ids: [BlockID]) -> [Block] {
+        let roots = document.selectionSubtreeRoots(Set(ids))
+        let source = roots.compactMap { document.find($0) }
+        let prepared = host.prepareBlocksForTransfer(source, in: document)
+        guard prepared.count == source.count,
+              zip(prepared, source).allSatisfy({ sameTransferShape($0, $1) }) else {
+            return source
+        }
+        return prepared
+    }
+
+    private func sameTransferShape(_ lhs: Block, _ rhs: Block) -> Bool {
+        lhs.id == rhs.id
+            && lhs.kind == rhs.kind
+            && lhs.children.count == rhs.children.count
+            && zip(lhs.children, rhs.children).allSatisfy(sameTransferShape)
+    }
+
+    func applyPreparedBlocks(_ blocks: [Block]) {
+        for block in blocks {
+            _ = document.replaceSubtree(block.id, with: [block])
+        }
     }
 }

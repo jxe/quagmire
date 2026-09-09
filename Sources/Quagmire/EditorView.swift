@@ -2120,7 +2120,9 @@ public struct EditorView: View {
             skippingHeadingIDs: state.collapsedHeadings
         )
         else { return }
+        let prepared = preparedBlocksForTransfer(ids: roots)
         mutate("Move Block") {
+            applyPreparedBlocks(prepared)
             _ = document.slideSiblings(
                 Set(roots),
                 by: delta,

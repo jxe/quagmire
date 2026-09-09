@@ -240,6 +240,18 @@ public protocol EditorHost: AnyObject {
     /// the editor's local-block-removal only fires on success.
     func appendToDocument(_ reference: DocumentReference, _ blocks: [Block]) async -> Bool
 
+    /// Give the host a synchronous chance to transform subtrees immediately
+    /// before a user move or copy inserts them. The editor applies the returned
+    /// values inside the same undoable transaction as an in-document transfer;
+    /// cross-document transfers send those values to `appendToDocument`.
+    ///
+    /// This is intentionally storage-neutral. A host can, for example, remove
+    /// one of its opaque `Block.metadata` tags when a projected row becomes
+    /// explicitly placed. Returned roots must preserve their IDs, kinds, and
+    /// tree shape; only metadata may change. Invalid results are ignored in
+    /// favor of the original blocks.
+    func prepareBlocksForTransfer(_ blocks: [Block], in document: Document) -> [Block]
+
     /// Present the host-owned structural destination flow for one eligible
     /// linked page. False means cancelled or failed; the editor never mutates
     /// the referring block as part of this operation.
@@ -366,6 +378,13 @@ public extension DocumentLinksUnsupported {
     func relocateDocument(_ reference: DocumentReference, from document: Document) async -> Bool { false }
 }
 
+/// Moving and copying blocks does not require host-side transformation.
+public protocol BlockTransfersUnmodified: EditorHost {}
+
+public extension BlockTransfersUnmodified {
+    func prepareBlocksForTransfer(_ blocks: [Block], in document: Document) -> [Block] { blocks }
+}
+
 /// No "Move to…" picker. The editor hides the action.
 public protocol MoveDestinationUnsupported: EditorHost {}
 
@@ -418,6 +437,7 @@ public extension BlockActionsUnsupported {
 /// typo in a method you did mean to provide.
 public typealias EditorHostDefaults = EditorHost
     & DocumentLinksUnsupported
+    & BlockTransfersUnmodified
     & MoveDestinationUnsupported
     & NavigationUnsupported
     & ImagesUnsupported

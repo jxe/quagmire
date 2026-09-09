@@ -136,14 +136,15 @@ struct CrossDocumentDurabilityTests {
         #expect(doc.children.map(\.id) == [stay.id])
     }
 
-    @Test func movingAProjectedBlockAuthorsTheDestinationCopy() async {
+    @Test func movingABlockUsesTheHostTransferTransform() async {
         let host = FailureHost()
+        host.transferMetadataKeyToRemove = "example.projected"
         let projected = Block(
             kind: .documentLink(
                 label: AttributedString("Child"),
                 reference: DocumentReference("child.md")
             ),
-            persistence: .projected
+            metadata: ["example.projected": "true", "example.kept": "yes"]
         )
         let doc = Document(id: DocumentID("d"), children: [projected])
         let editor = EditorView(document: doc, state: EditorState(), host: host)
@@ -151,8 +152,32 @@ struct CrossDocumentDurabilityTests {
 
         await editor.moveBlocks(ids: [projected.id], intoDocument: DocumentReference("other.md"))
 
-        #expect(host.appendedBlocks.first?.persistence == .authored)
+        #expect(host.appendedBlocks.first?.metadata["example.projected"] == nil)
+        #expect(host.appendedBlocks.first?.metadata["example.kept"] == "yes")
         #expect(doc.children.isEmpty)
+    }
+
+    @Test func inDocumentMoveTransformsInsideTheUndoableTransaction() {
+        let host = FailureHost()
+        host.transferMetadataKeyToRemove = "example.projected"
+        let projected = Block(
+            kind: .paragraph(text: AttributedString("Projected")),
+            metadata: ["example.projected": "true"]
+        )
+        let destination = Block.toggle(title: AttributedString("Destination"))
+        let doc = Document(id: DocumentID("d"), children: [projected, destination])
+        let editor = EditorView(document: doc, state: EditorState(), host: host)
+        editor.installUndoApply()
+
+        editor.moveBlocks(ids: [projected.id], asChildrenOf: destination.id, snapshot: [], hidden: [])
+
+        #expect(doc.find(projected.id)?.metadata["example.projected"] == nil)
+        #expect(doc.parent(of: projected.id) == destination.id)
+
+        doc.undoManager?.undo()
+
+        #expect(doc.find(projected.id)?.metadata["example.projected"] == "true")
+        #expect(doc.parent(of: projected.id) == nil)
     }
 
     @Test func copyingIntoAnotherDocumentSendsFreshIDsAndKeepsTheSource() async {
@@ -212,6 +237,7 @@ private final class FailureHost: EditorHostDefaults {
     var retireSucceeds = true
     var appendSucceeds = true
     var loadedBlocks: [Block]? = []
+    var transferMetadataKeyToRemove: String?
 
     private(set) var created: [String] = []
     private(set) var appendedBlocks: [Block] = []
@@ -231,6 +257,17 @@ private final class FailureHost: EditorHostDefaults {
     func linkURL(for reference: DocumentReference, in document: Document) -> URL? { URL(string: reference.rawValue) }
     func resolveReference(from url: URL, in document: Document) -> DocumentReference? {
         url.absoluteString.hasSuffix(".md") ? DocumentReference(url.absoluteString) : nil
+    }
+
+    func prepareBlocksForTransfer(_ blocks: [Block], in document: Document) -> [Block] {
+        guard let key = transferMetadataKeyToRemove else { return blocks }
+        func transform(_ block: Block) -> Block {
+            var value = block
+            value.metadata.removeValue(forKey: key)
+            value.children = block.children.map(transform)
+            return value
+        }
+        return blocks.map(transform)
     }
 
     func createDocument(

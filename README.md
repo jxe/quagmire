@@ -293,7 +293,7 @@ state via `@State`.
 ## The Block model
 
 A `Block` is a value-typed tree node: identity (`BlockID`), payload
-(`BlockKind`), and children (`[Block]`). Depth is structural — there's
+(`BlockKind`), children (`[Block]`), and opaque host metadata. Depth is structural — there's
 no per-block `indent` field; whether a block lives nested inside another
 is the same fact as "is in that block's `children` array".
 
@@ -302,6 +302,7 @@ public struct Block: Identifiable, Equatable, Sendable {
     public let id: BlockID
     public var kind: BlockKind
     public var children: [Block]
+    public var metadata: [String: String]
 }
 
 public enum BlockKind: Equatable, Sendable {
@@ -329,6 +330,10 @@ public enum HeadingLevel: Int, Comparable, Hashable, Sendable, CaseIterable {
 ```
 
 - **`BlockID`** is a `UUID` wrapper (`Hashable`, `Codable`, `Sendable`).
+- **`metadata` belongs to the host.** Quagmire snapshots and carries these
+  namespaced string annotations but never interprets them. Before a move or
+  copy inserts blocks, `prepareBlocksForTransfer` lets the host change metadata
+  while preserving block IDs, kinds, and tree shape.
 - **`unsupported` carries content this editor has no model for.** `payload` is
   opaque — Quagmire never parses, rewrites, or interprets it, and hands it back
   verbatim on serialization; `display` is a short neutral label for the row
@@ -493,13 +498,14 @@ The defaults live on opt-in marker protocols rather than on `EditorHost`:
 | Marker | Opts out of |
 |---|---|
 | `DocumentLinksUnsupported` | reference rows, `@`-mentions, lookup, create, inline, append, icons |
+| `BlockTransfersUnmodified` | metadata transformation before block moves and copies |
 | `MoveDestinationUnsupported` | the "Move to…" picker |
 | `NavigationUnsupported` | `navigateBack` |
 | `ImagesUnsupported` | pasted-image storage and image resolution |
 | `LinkPreviewsUnsupported` | favicon/title fetching for external links |
 | `BlockActionsUnsupported` | host-supplied block-menu actions |
 
-`EditorHostDefaults` composes all six, for a host that only persists.
+`EditorHostDefaults` composes all seven, for a host that only persists.
 
 This is deliberate, and the reason is worth stating plainly. If the defaults sat
 in `extension EditorHost`, conformance would always succeed and there would be
@@ -544,6 +550,7 @@ and there is nothing for a marker to protect.
 | `loadDocumentBlocks` | `DocumentLinksUnsupported` | `nil` |
 | `inlineAndRetireDocument` | `DocumentLinksUnsupported` | `false` |
 | `appendToDocument` | `DocumentLinksUnsupported` | `false` |
+| `prepareBlocksForTransfer` | `BlockTransfersUnmodified` | Identity; blocks are unchanged. |
 | `relocateDocument` | `DocumentLinksUnsupported` | `false` |
 | `moveDestination` | `MoveDestinationUnsupported` | `nil` |
 | `navigateBack` | `NavigationUnsupported` | No-op |
@@ -564,6 +571,7 @@ and there is nothing for a marker to protect.
 | `loadDocumentBlocks` | `(_ reference: DocumentReference) async -> [Block]?` | First step of Turn Into another block kind on a document-link row. Async so the host can read off MainActor. Paired with `inlineAndRetireDocument(_:)`. | Host returns the target document's blocks. nil makes the action a no-op. |
 | `inlineAndRetireDocument` | `(_ reference: DocumentReference, parent: Document) async -> Bool` | Second step of Turn Into another block kind on a document-link row: after the editor inlined the loaded blocks into the parent, ask the host to flush the parent and retire the source. Async so the parent's save lands before the source goes away. | true = source retired; false = abort (editor surfaces an orphan warning). |
 | `appendToDocument` | `(_ reference: DocumentReference, _ blocks: [Block]) async -> Bool` | User drops blocks onto a document-link row. Async so the host can sequence log-then-file durability before returning. | true = host wrote them (proceed with local removal). false = no-op. |
+| `prepareBlocksForTransfer` | `(_ blocks: [Block], in document: Document) -> [Block]` | Immediately before an in-document or cross-document move or copy inserts blocks. | Synchronously transform host metadata. IDs, kinds, and tree shape must remain unchanged; invalid results are ignored. In-document transformations share the move's undo transaction. |
 | `relocateDocument` | `(_ reference: DocumentReference, from document: Document) async -> Bool` | User chooses “Move Linked Page” on a single resolved document-link row whose lookup advertises `.relocate`. | Host presents and performs its structural destination flow. The referring block is never mutated; false means cancelled or failed. Hosts must advertise this only when the reference carries real hierarchy semantics. |
 | `moveDestination` | `(for blockIDs: [BlockID], candidates: [InDocMoveTarget]) async -> MoveDestination?` | "Move To" picker. Editor supplies pre-filtered legal in-doc candidates; host merges with its own document list, presents UI, returns the user's `MoveDestination` (`.document` or `.block`) or nil to cancel. | Async — editor `await`s the picker result at the call site. |
 | `navigateBack` | `() -> Void` | Cmd-[ in nav mode (or Cmd-[ in edit mode — that path commits live text first). | Host pops its navigation stack. |

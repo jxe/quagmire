@@ -77,16 +77,6 @@ public enum BlockKind: Equatable, Sendable {
     case unsupported(payload: String, display: String)
 }
 
-/// Whether a block belongs to the authored document or is a host-supplied
-/// projection of external structure. Projected blocks render and participate
-/// in ordinary editor interactions, but persistence adapters may omit them.
-/// Moving one is an explicit placement edit, so Document move operations
-/// materialize the moved subtree as authored content.
-public enum BlockPersistence: Equatable, Sendable {
-    case authored
-    case projected
-}
-
 /// A node in the document tree. Identity is the immutable `BlockID`; the kind
 /// and children are mutable so callers can patch in place. Value semantics —
 /// shallow Array copy on snapshot is the undo path.
@@ -94,18 +84,21 @@ public struct Block: Identifiable, Equatable, Sendable {
     public let id: BlockID
     public var kind: BlockKind
     public var children: [Block]
-    public var persistence: BlockPersistence
+    /// Opaque host-owned annotations that travel with this block. Quagmire
+    /// compares and snapshots them, but never interprets their keys or values.
+    /// Hosts should namespace keys they persist or project into a document.
+    public var metadata: [String: String]
 
     public init(
         id: BlockID = BlockID(),
         kind: BlockKind,
         children: [Block] = [],
-        persistence: BlockPersistence = .authored
+        metadata: [String: String] = [:]
     ) {
         self.id = id
         self.kind = kind
         self.children = children
-        self.persistence = persistence
+        self.metadata = metadata
     }
 
     // MARK: Convenience constructors (one per kind, no children)
@@ -247,18 +240,7 @@ public struct Block: Identifiable, Equatable, Sendable {
             id: BlockID(),
             kind: kind,
             children: children.map { $0.withFreshIDs() },
-            persistence: persistence
-        )
-    }
-
-    /// Return an authored copy of this subtree. Document movement uses this
-    /// to turn a host-projected row into durable content at its new position.
-    public func materialized() -> Block {
-        Block(
-            id: id,
-            kind: kind,
-            children: children.map { $0.materialized() },
-            persistence: .authored
+            metadata: metadata
         )
     }
 

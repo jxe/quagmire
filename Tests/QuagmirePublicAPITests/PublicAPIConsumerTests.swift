@@ -46,6 +46,7 @@ private final class FullHost: EditorHost {
     func loadDocumentBlocks(_ reference: DocumentReference) async -> [Block]? { [] }
     func inlineAndRetireDocument(_ reference: DocumentReference, parent: Document) async -> Bool { true }
     func appendToDocument(_ reference: DocumentReference, _ blocks: [Block]) async -> Bool { true }
+    func prepareBlocksForTransfer(_ blocks: [Block], in document: Document) -> [Block] { blocks }
     func relocateDocument(_ reference: DocumentReference, from document: Document) async -> Bool { true }
     func moveDestination(for blockIDs: [BlockID], candidates: [InDocMoveTarget]) async -> MoveDestination? {
         .document(DocumentReference("picked"))
@@ -107,6 +108,7 @@ struct PublicAPIConsumerTests {
         #expect(await host.loadDocumentBlocks(DocumentReference("d")) != nil)
         #expect(await host.inlineAndRetireDocument(DocumentReference("d"), parent: document))
         #expect(await host.appendToDocument(DocumentReference("d"), []))
+        #expect(host.prepareBlocksForTransfer([], in: document).isEmpty)
         #expect(await host.relocateDocument(DocumentReference("d"), from: document))
         #expect(await host.moveDestination(for: [], candidates: []) != nil)
         #expect(host.serializeBlocksForPasteboard([]) == "serialized")
