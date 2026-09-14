@@ -610,8 +610,11 @@ public struct EditorView: View {
             actionSheet = nil
             return
         }
-        guard let editingBlock = state.editingBlock else { return }
-        transferFocus(to: .nav(cursor: editingBlock))
+        if let editingBlock = state.editingBlock {
+            transferFocus(to: .nav(cursor: editingBlock))
+        }
+        // Host surfaces can return to an editor that is already navigating.
+        forcePageFocusGrab()
     }
 
     #if os(macOS)
