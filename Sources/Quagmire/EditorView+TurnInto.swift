@@ -5,7 +5,7 @@ import GameController
 
 // MARK: - Turn Into menu / block action popover
 //
-// The 3-column grid that opens via Cmd-. in nav mode (macOS), drag-handle tap
+// The 3-column grid that opens via Cmd-/ in nav mode (macOS), drag-handle tap
 // (macOS), or leading row swipe (iOS). Houses Turn Into (block-type swap),
 // Copy, and Indent/Outdent. The conversion methods (`convert`, `convertSingle`,
 // `convertBlockToDocument`, `convertBlockToTemplate`, `convertDocumentLink`) live
@@ -85,16 +85,16 @@ enum BlockTurnInto: CaseIterable {
 
     var keyboardShortcut: KeyEquivalent {
         switch self {
-        case .paragraph: return "p"
-        case .bullet: return "b"
-        case .numbered: return "n"
-        case .todo: return "t"
+        case .paragraph: return "t"
+        case .bullet: return "*"
+        case .numbered: return "1"
+        case .todo: return "["
         case .toggle: return ">"
         case .template: return "m"
-        case .heading1: return "1"
+        case .heading1: return "#"
         case .heading2: return "2"
         case .heading3: return "3"
-        case .page: return "s"
+        case .page: return "p"
         case .divider: return "-"
         }
     }
@@ -427,9 +427,9 @@ extension EditorView {
                             compactMenuButton(
                                 title: "Move to",
                                 systemImage: "arrow.right.doc.on.clipboard",
-                                keyboardShortcut: "m",
+                                keyboardShortcut: "p",
                                 keyboardShortcutModifiers: [.command, .shift],
-                                keyboardShortcutLabel: "⇧⌘M"
+                                keyboardShortcutLabel: "⇧⌘P"
                             ) {
                                 let inDoc = inDocMoveCandidates(excluding: targetIDs)
                                 Task { @MainActor in

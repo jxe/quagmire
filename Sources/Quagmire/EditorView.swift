@@ -1256,7 +1256,7 @@ public struct EditorView: View {
         .init(key: "b", modifiers: .command, action: .toggleInlineMark(.bold)),
         .init(key: "i", modifiers: .command, action: .toggleInlineMark(.italic)),
         .init(key: "s", modifiers: [.command, .shift], action: .toggleInlineMark(.strikethrough)),
-        .init(key: ".", modifiers: .command, action: .openBlockActionMenu),
+        .init(key: "/", modifiers: .command, action: .openBlockActionMenu),
         .init(key: "k", modifiers: .command, action: .toggleLinkOrDocument),
         .init(key: .return, modifiers: .command, action: .newBlockBelow),
 
