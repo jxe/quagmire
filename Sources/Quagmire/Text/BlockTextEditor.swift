@@ -542,6 +542,7 @@ struct MacBlockTextEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
+            parent.documentUndoController?.noteEditingActivity()
             textStorageDirty = true
             let isComposing = tv.hasMarkedText()
             if !isComposing {
@@ -1415,6 +1416,7 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            parent.documentUndoController?.noteEditingActivity()
             textStorageDirty = true
             // IME composition: skip autotransform. Live text remains in textStorage and
             // is committed on blur or centrally in `EditorView.mutate(...)`.

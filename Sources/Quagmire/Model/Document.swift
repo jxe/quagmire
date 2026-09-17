@@ -77,6 +77,10 @@ public final class Document: @MainActor Identifiable {
     @ObservationIgnored
     public var didCommitTransaction: (([DocumentChange]) -> Void)?
 
+    /// Fired for live text-view activity before the periodic typing checkpoint
+    /// mutates the document. This is not itself a persistence commit.
+    public var didReceiveEditingActivity: (() -> Void)?
+
     /// Editor-supplied hook fired after a system replacement swaps the tree.
     /// Set by `EditorView` on mount.
     ///
@@ -141,6 +145,12 @@ public final class Document: @MainActor Identifiable {
     @ObservationIgnored
     private var inTransaction: Bool = false
 
+    /// Non-nil only while the callbacks for the outer transaction are firing.
+    /// EditorView uses it to route autoexpand through the host's inactivity
+    /// coalescer without changing the long-standing transaction callback API.
+    @ObservationIgnored
+    var persistenceDelayForCurrentCommit: Duration?
+
     public init(id: DocumentID, children: [Block], fallbackTitle: String? = nil) {
         self.id = id
         self.children = children
@@ -168,6 +178,7 @@ public final class Document: @MainActor Identifiable {
     public func transaction(
         name: String,
         coalesceKey: AnyHashable? = nil,
+        persistenceDelay: Duration? = nil,
         _ change: () -> Void
     ) -> [DocumentChange] {
         // Nested call: absorb into the outer. The outer's snapshot already
@@ -232,6 +243,8 @@ public final class Document: @MainActor Identifiable {
             lastTransactionKey = coalesceKey
         }
         lastTransactionTime = now
+        persistenceDelayForCurrentCommit = persistenceDelay
+        defer { persistenceDelayForCurrentCommit = nil }
         didCommitTransaction?(changes)
         for hooks in editorHookSets.values {
             hooks.didCommitTransaction(changes)
@@ -243,13 +256,19 @@ public final class Document: @MainActor Identifiable {
     func transaction(
         name: String,
         coalesceKey: AnyHashable? = nil,
+        persistenceDelay: Duration? = nil,
         undoManager: UndoManager?,
         _ change: () -> Void
     ) -> [DocumentChange] {
         let prior = transactionUndoManagerOverride
         transactionUndoManagerOverride = undoManager
         defer { transactionUndoManagerOverride = prior }
-        return transaction(name: name, coalesceKey: coalesceKey, change)
+        return transaction(
+            name: name,
+            coalesceKey: coalesceKey,
+            persistenceDelay: persistenceDelay,
+            change
+        )
     }
 
     func installEditorHooks(_ hooks: EditorHooks) -> UUID {

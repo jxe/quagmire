@@ -291,6 +291,19 @@ public protocol EditorHost: AnyObject {
     /// durability work captured by that boundary.
     func persistCommit(changes: [DocumentChange], in document: Document)
 
+    /// Persist a commit after the editor has remained inactive for `delay`.
+    ///
+    /// Prefix autotransforms use this to keep their immediate visual/model
+    /// mutation inside the current typing burst. A later ordinary commit or
+    /// `flush(_:)` supersedes the delayed request. Hosts without a distinct
+    /// coalescing policy may use the default immediate implementation.
+    func persistCommit(changes: [DocumentChange], in document: Document, after delay: Duration)
+
+    /// The mounted text view changed, but its periodic model checkpoint has
+    /// not fired yet. Hosts use this only to cancel a pending autoexpand save;
+    /// the ordinary typing checkpoint will deliver the newer commit.
+    func noteEditingActivity(in document: Document)
+
     /// Await durability of any writes already in flight for `document`.
     /// A host that debounces or coalesces commits must start the latest pending
     /// write before awaiting its durability. Editor calls this on focus-loss
@@ -450,6 +463,12 @@ public typealias EditorHostDefaults = EditorHost
 // host that mistypes an override still gets working copy and paste, so there
 // is nothing here for an opt-out marker to protect.
 public extension EditorHost {
+    func persistCommit(changes: [DocumentChange], in document: Document, after _: Duration) {
+        persistCommit(changes: changes, in: document)
+    }
+
+    func noteEditingActivity(in _: Document) {}
+
     func serializeBlocksForPasteboard(_ blocks: [Block]) -> String {
         EditorPlainTextCodec.serialize(blocks)
     }

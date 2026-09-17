@@ -1305,8 +1305,8 @@ public struct EditorView: View {
     /// folded into the same diff as the structural change — one emission,
     /// one atomic undo step covering "the in-flight typing plus the
     /// structural op the user just invoked."
-    func mutate(_ name: String, _ change: () -> Void) {
-        undoController.transaction(name: name) { change() }
+    func mutate(_ name: String, persistenceDelay: Duration? = nil, _ change: () -> Void) {
+        undoController.transaction(name: name, persistenceDelay: persistenceDelay) { change() }
     }
 
     /// Consume a host-supplied append payload (via `EditorState.appendBlocks`).
@@ -2668,7 +2668,7 @@ public struct EditorView: View {
             // toggle case) — survive. A fresh ID would make the post-transaction
             // `revalidate` think the editing block vanished and snap the
             // selection (and the viewport) to the top of the document.
-            mutate("Format Block") {
+            mutate("Format Block", persistenceDelay: typingCheckpointDelay) {
                 document.mutate(blockID) { $0.kind = replacement.kind }
             }
             focusID = blockID
@@ -2676,7 +2676,7 @@ public struct EditorView: View {
         } else {
             // divider / codeFence produce two blocks (transform + fresh
             // paragraph for the cursor); splice the subtree as before.
-            mutate("Format Block") {
+            mutate("Format Block", persistenceDelay: typingCheckpointDelay) {
                 document.replaceSubtree(blockID, with: replacements)
             }
             let focusTarget = replacements[transform.focusReplacementIndex]

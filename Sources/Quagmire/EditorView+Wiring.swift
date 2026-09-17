@@ -258,7 +258,14 @@ extension EditorView {
         // cache — any forward/undo/redo can shift which blocks are visible.
         let layoutCache = self.layoutCache
         document.didCommitTransaction = { changes in
-            host.persistCommit(changes: changes, in: document)
+            if let delay = document.persistenceDelayForCurrentCommit {
+                host.persistCommit(changes: changes, in: document, after: delay)
+            } else {
+                host.persistCommit(changes: changes, in: document)
+            }
+        }
+        document.didReceiveEditingActivity = {
+            host.noteEditingActivity(in: document)
         }
         document.removeEditorHooks(documentHookToken)
         documentHookToken = document.installEditorHooks(Document.EditorHooks(

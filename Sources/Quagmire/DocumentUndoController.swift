@@ -72,6 +72,10 @@ public final class DocumentUndoController {
     /// SwiftUI update would both lag and lose useful caret placement context.
     var synchronizeActiveText: ((Document) -> Void)?
 
+    func noteEditingActivity() {
+        document?.didReceiveEditingActivity?()
+    }
+
     /// Inserts text through the mounted native editor so its caret, selection,
     /// typing attributes, and ordinary typing checkpoint behavior are retained.
     var insertTextIntoActiveEditor: ((String) -> Bool)?
@@ -117,7 +121,12 @@ public final class DocumentUndoController {
     /// document directly. Emission happens inside `Document.transaction`
     /// via `didCommitTransaction`.
     @discardableResult
-    func transaction(name: String, coalesceKey: AnyHashable? = nil, _ change: () -> Void) -> [DocumentChange] {
+    func transaction(
+        name: String,
+        coalesceKey: AnyHashable? = nil,
+        persistenceDelay: Duration? = nil,
+        _ change: () -> Void
+    ) -> [DocumentChange] {
         guard let document else { return [] }
         let opensGroup = undoManager.groupingLevel == 0
         if opensGroup { undoManager.beginUndoGrouping() }
@@ -125,6 +134,7 @@ public final class DocumentUndoController {
         return document.transaction(
             name: name,
             coalesceKey: coalesceKey,
+            persistenceDelay: persistenceDelay,
             undoManager: undoManager,
             change
         )
