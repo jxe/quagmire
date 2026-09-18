@@ -863,10 +863,10 @@ extension EditorView {
         let ordered = roots.sorted { (a, b) in
             (document.documentOrder(of: a) ?? .max) < (document.documentOrder(of: b) ?? .max)
         }
-        let copies = preparedBlocksForTransfer(ids: ordered).map { $0.withFreshIDs() }
+        let copies = preparedBlocksForTransfer(ids: ordered)
         guard !copies.isEmpty else { return }
 
-        guard await host.appendToDocument(reference, copies) else { return }
+        guard await host.copyToDocument(reference, blocks: copies, from: document) else { return }
         showActionToast("Copied")
     }
 

@@ -382,3 +382,41 @@ extension DocumentTransactionTests {
         #expect(evidence.isEmpty)
     }
 }
+
+extension DocumentTransactionTests {
+    @Test func causalUndoNamesEveryCoalescedTransactionAndRedoNamesUndo() {
+        let (doc,manager) = makeDocWithUndo()
+        var commits: [Document.TransactionEvidence] = []
+        doc.didCommitTransaction = { _ in if let evidence = doc.transactionForCurrentCommit { commits.append(evidence) } }
+        let id = doc.children[0].id
+        doc.transaction(name:"Type",coalesceKey:id) { _ = doc.setText(id,AttributedString("first")) }
+        doc.transaction(name:"Type",coalesceKey:id) { _ = doc.setText(id,AttributedString("second")) }
+        #expect(commits.count == 2)
+        #expect(commits[0].inverses.isEmpty && commits[1].inverses.isEmpty)
+        manager.undo()
+        #expect(commits[2].inverses == [commits[1].id,commits[0].id])
+        manager.redo()
+        #expect(commits[3].inverses == [commits[2].id])
+        manager.undo()
+        #expect(commits[4].inverses == [commits[3].id])
+        #expect(doc.transactionForCurrentCommit == nil)
+    }
+}
+
+extension DocumentTransactionTests {
+    @Test func undoHorizonTracksCoalescingRedoAndEviction() {
+        let (doc, manager) = makeDocWithUndo()
+        let block = doc.children[0].id
+        var ids: [UUID] = []
+        doc.didCommitTransaction = { _ in if let id = doc.transactionForCurrentCommit?.id { ids.append(id) } }
+        autoreleasepool { doc.transaction(name: "Type", coalesceKey: block) { _ = doc.setText(block, AttributedString("one")) } }
+        autoreleasepool { doc.transaction(name: "Type", coalesceKey: block) { _ = doc.setText(block, AttributedString("two")) } }
+        #expect(doc.retainedUndoTransactionIDs == Set(ids))
+        autoreleasepool { manager.undo() }
+        #expect(doc.retainedUndoTransactionIDs == [ids.last!])
+        autoreleasepool { manager.redo() }
+        #expect(doc.retainedUndoTransactionIDs == [ids.last!])
+        autoreleasepool { manager.removeAllActions() }
+        #expect(doc.retainedUndoTransactionIDs.isEmpty)
+    }
+}

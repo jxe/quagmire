@@ -77,6 +77,27 @@ public final class Document: @MainActor Identifiable {
     @ObservationIgnored
     public var didCommitTransaction: (([DocumentChange]) -> Void)?
 
+    /// Host-neutral identity for one committed transaction. An inverse names
+    /// every transaction in the undo entry, in reverse execution order. Redo is
+    /// the inverse of the preceding undo transaction, not a replay of old IDs.
+    public struct TransactionEvidence: Equatable, Sendable {
+        public let id: UUID
+        public let inverses: [UUID]
+    }
+
+    @ObservationIgnored
+    public private(set) var transactionForCurrentCommit: TransactionEvidence?
+    @ObservationIgnored private var suppliedTransactionID: UUID?
+    /// Join an asynchronous host action to the subsequent editor transaction.
+    public func withTransactionIdentity(_ id: UUID, _ action: () -> Void) {
+        let previous = suppliedTransactionID
+        suppliedTransactionID = id
+        defer { suppliedTransactionID = previous }
+        action()
+    }
+    @ObservationIgnored private var inverseTransactions: [UUID] = []
+    @ObservationIgnored private weak var coalescedSnapshot: UndoTreeSnapshot?
+
     /// Explicit same-document duplication evidence, visible only during commit
     /// callbacks. Maps each fresh block ID to the block it was copied from.
     /// This is editor identity evidence; hosts decide how to retain/source-map it.
@@ -142,8 +163,13 @@ public final class Document: @MainActor Identifiable {
         weak var box: UndoTreeSnapshot?
     }
 
-    /// Live snapshot boxes, for tests asserting the registry does not grow
-    /// past the undo entries that own its contents.
+    /// Transaction effects still reachable through this document's undo or redo stack.
+    /// Does not keep the snapshots alive; hosts may use this horizon for collection.
+    public var retainedUndoTransactionIDs: Set<UUID> {
+        Set(pendingUndoSnapshots.compactMap { $0.box }.flatMap(\.transactions))
+    }
+
+    /// Live snapshot boxes, for tests checking the weak registry.
     var outstandingUndoSnapshotCount: Int {
         pendingUndoSnapshots.reduce(0) { $0 + ($1.box == nil ? 0 : 1) }
     }
@@ -220,10 +246,13 @@ public final class Document: @MainActor Identifiable {
         }
         inTransaction = true
         blockCopiesForCurrentCommit = [:]
-        defer { inTransaction = false; blockCopiesForCurrentCommit = [:] }
+        let transactionID = suppliedTransactionID ?? UUID()
+        let inverses = inverseTransactions
+        defer { inTransaction = false; blockCopiesForCurrentCommit = [:]; transactionForCurrentCommit = nil }
 
         let now = Date()
         let shouldCoalesce =
+            inverses.isEmpty && coalescedSnapshot != nil &&
             coalesceKey != nil &&
             coalesceKey == lastTransactionKey &&
             (lastTransactionTime.map { now.timeIntervalSince($0) < Self.coalesceInterval } == true)
@@ -265,15 +294,22 @@ public final class Document: @MainActor Identifiable {
             // system replacement can rebase this snapshot instead of the whole
             // stack being thrown away. See `SystemDelta`.
             let snapshot = UndoTreeSnapshot(before)
+            snapshot.transactions = [transactionID]
+            coalescedSnapshot = snapshot
             pendingUndoSnapshots.removeAll { $0.box == nil }
             pendingUndoSnapshots.append(WeakUndoSnapshot(box: snapshot))
             undoManager.registerUndo(withTarget: self) { doc in
+                let prior = doc.inverseTransactions
+                doc.inverseTransactions = snapshot.transactions.reversed()
+                defer { doc.inverseTransactions = prior }
                 doc.transaction(name: name) { doc.children = snapshot.blocks }
             }
             undoManager.setActionName(name)
             lastTransactionKey = coalesceKey
         }
+        if shouldCoalesce { coalescedSnapshot?.transactions.append(transactionID) }
         lastTransactionTime = now
+        transactionForCurrentCommit = TransactionEvidence(id:transactionID,inverses:inverses)
         persistenceDelayForCurrentCommit = persistenceDelay
         defer { persistenceDelayForCurrentCommit = nil }
         didCommitTransaction?(changes)
@@ -319,6 +355,7 @@ public final class Document: @MainActor Identifiable {
     public func breakCoalescing() {
         lastTransactionKey = nil
         lastTransactionTime = nil
+        coalescedSnapshot = nil
     }
 
     /// Pulls a title out of the first top-level H1, falling back to the
@@ -347,6 +384,7 @@ public final class Document: @MainActor Identifiable {
         children = newChildren
         lastTransactionKey = nil
         lastTransactionTime = nil
+        coalescedSnapshot = nil
         // Undo snapshots are whole-tree states. Once a fresh parse replaces the
         // tree, replaying an older snapshot would erase externally-arrived
         // blocks and incorrectly report their hashes as user-authored removals
@@ -393,6 +431,7 @@ public final class Document: @MainActor Identifiable {
         // own undo entry rather than folding into a burst that predates this.
         lastTransactionKey = nil
         lastTransactionTime = nil
+        coalescedSnapshot = nil
         notifyReplacement(.reconciled)
         return .reconciled
     }

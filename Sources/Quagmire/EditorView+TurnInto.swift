@@ -131,14 +131,17 @@ extension EditorView {
         // immediately, and report .handled optimistically (a failed
         // creation eats the keypress rather than falling through).
         Task { @MainActor in
-            guard let reference = await host.createDocument(title: title, requestedReference: requestedPath, initialContent: initialContent)
+            let transaction = UUID()
+            guard let reference = await host.createDocument(title: title, requestedReference: requestedPath, initialContent: initialContent, transaction: transaction)
             else { return }
             // The block may have moved out from under us during the await.
-            guard document.find(blockID) != nil else { return }
+            guard document.find(blockID) == block else { return }
+            document.withTransactionIdentity(transaction) {
             mutate("Create Document") {
                 document.replaceSubtree(blockID, with: [
                     .documentLink(label: AttributedString(title), reference: reference, id: blockID)
                 ])
+            }
             }
             transferFocus(to: .nav(cursor: blockID))
         }

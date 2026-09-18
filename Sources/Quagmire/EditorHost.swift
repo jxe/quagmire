@@ -212,6 +212,7 @@ public protocol EditorHost: AnyObject {
     /// creation failed. Async because the host does file I/O (and possibly
     /// a workspace rescan); the editor awaits inside a Task spawned from
     /// the key-handler.
+    func createDocument(title: String, requestedReference: DocumentReference?, initialContent: [Block]?, transaction: UUID) async -> DocumentReference?
     func createDocument(title: String, requestedReference: DocumentReference?, initialContent: [Block]?) async -> DocumentReference?
 
     /// Load the document at `reference` and return its blocks. Nil → couldn't load,
@@ -238,6 +239,7 @@ public protocol EditorHost: AnyObject {
     /// child page.
     /// Async so the host can sequence log-then-file durability before returning —
     /// the editor's local-block-removal only fires on success.
+    func copyToDocument(_ reference: DocumentReference, blocks: [Block], from document: Document) async -> Bool
     func appendToDocument(_ reference: DocumentReference, _ blocks: [Block]) async -> Bool
 
     /// Give the host a synchronous chance to transform subtrees immediately
@@ -545,5 +547,18 @@ extension EnvironmentValues {
     public var editorDocument: Document? {
         get { self[EditorDocumentKey.self] }
         set { self[EditorDocumentKey.self] = newValue }
+    }
+}
+
+public extension EditorHost {
+    /// Existing hosts can still append; provenance-aware hosts receive original IDs.
+    func copyToDocument(_ reference: DocumentReference, blocks: [Block], from document: Document) async -> Bool {
+        await appendToDocument(reference, blocks.map { $0.withFreshIDs() })
+    }
+}
+
+public extension EditorHost {
+    func createDocument(title: String, requestedReference: DocumentReference?, initialContent: [Block]?, transaction: UUID) async -> DocumentReference? {
+        await createDocument(title: title, requestedReference: requestedReference, initialContent: initialContent)
     }
 }

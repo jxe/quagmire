@@ -29,6 +29,7 @@ public enum DocumentReplacement: Sendable, Equatable {
 /// by the closure registered with `UndoManager`; nothing else retains it.
 final class UndoTreeSnapshot {
     var blocks: [Block]
+    var transactions: [UUID] = []
 
     init(_ blocks: [Block]) {
         self.blocks = blocks
