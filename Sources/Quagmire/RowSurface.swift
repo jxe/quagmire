@@ -128,6 +128,11 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     let pinchPreviewMinimumHeight: CGFloat
     let pinchPreview: AnyView?
     let footer: AnyView?
+    let header: AnyView?
+    let expandedAccessoryRows: Set<ID>
+    let accessoryLaneWidth: CGFloat
+    let rowMarker: (ID) -> AnyView?
+    let rowAccessory: (ID) -> AnyView?
     let actions: RowSurfaceActions<ID>
     let rowContent: (ID) -> RowContent
     let liftContent: (ID, CGSize) -> LiftContent
@@ -158,6 +163,11 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         pinchPreviewMinimumHeight: CGFloat = 0,
         pinchPreview: AnyView? = nil,
         footer: AnyView? = nil,
+        header: AnyView? = nil,
+        expandedAccessoryRows: Set<ID> = [],
+        accessoryLaneWidth: CGFloat = 0,
+        rowMarker: @escaping (ID) -> AnyView? = { _ in nil },
+        rowAccessory: @escaping (ID) -> AnyView? = { _ in nil },
         actions: RowSurfaceActions<ID>,
         @ViewBuilder rowContent: @escaping (ID) -> RowContent,
         @ViewBuilder liftContent: @escaping (ID, CGSize) -> LiftContent
@@ -180,6 +190,10 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         self.pinchPreviewMinimumHeight = pinchPreviewMinimumHeight
         self.pinchPreview = pinchPreview
         self.footer = footer
+        self.header = header
+        self.expandedAccessoryRows = expandedAccessoryRows
+        self.accessoryLaneWidth = accessoryLaneWidth
+        self.rowMarker = rowMarker; self.rowAccessory = rowAccessory
         self.actions = actions
         self.rowContent = rowContent
         self.liftContent = liftContent
@@ -190,7 +204,10 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
 
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                VStack(spacing: 0) { header }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { layoutCache.setHeaderHeight($0) }
                 ForEach(rows, id: \.id) { row in
+                    VStack(alignment: .leading, spacing: 0) {
                     pinchPreviewView(at: row.slot)
                     rowContent(row.id)
                         .onGeometryChange(for: CGFloat.self) { proxy in
@@ -203,6 +220,9 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
                         } action: { frame in
                             layoutCache.setRealizedInternalFrame(frame, for: row.id)
                         }
+                        .overlay(alignment: .topTrailing) {
+                            rowMarker(row.id).frame(width: accessoryLaneWidth).offset(x: accessoryLaneWidth)
+                        }
                         .padding(
                             .top,
                             row.spacingBefore
@@ -214,6 +234,11 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
                         .onDisappear {
                             layoutCache.removeRealizedInternalFrame(for: row.id)
                         }
+                    VStack(spacing: 0) { rowAccessory(row.id) }
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                            layoutCache.setAccessoryHeight($0, for: row.id)
+                        }
+                    }
                 }
                 pinchPreviewView(at: rows.count)
                 trailingDropTarget
@@ -229,6 +254,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
             // Without this the id-scroll fallback in `ensureCursorVisible` is a
             // no-op/jump.
             .scrollTargetLayout()
+            .onChange(of: expandedAccessoryRows, initial: true) { _, ids in layoutCache.retainAccessoryHeights(for: ids) }
             .onGeometryChange(for: CGRect.self) { proxy in
                 proxy.frame(in: .named(PageHoverCoordinateSpace.name))
             } action: { rect in
@@ -237,13 +263,18 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
                 layoutCache.contentWidth = rect.width
             }
             .frame(maxWidth: maxContentWidth, alignment: .leading)
+            .padding(.trailing, accessoryLaneWidth)
             .padding(.horizontal, horizontalPadding)
             .padding(.top, topPadding)
             .frame(maxWidth: .infinity, alignment: .center)
             .iosPageReorder(
                 isEnabled: isIOSReorderEnabled,
                 layoutCache: layoutCache,
-                shouldBegin: actions.shouldBeginIOSReorder,
+                shouldBegin: { id, point in
+                    guard !layoutCache.isAccessoryAtY(point.y),
+                          point.x <= layoutCache.contentOriginX + layoutCache.contentWidth else { return false }
+                    return actions.shouldBeginIOSReorder(id, point)
+                },
                 onBegin: { id, location in
                     activeReorderLocation = location
                     actions.onReorderBegin(id, location, location)
@@ -267,6 +298,10 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
             )
             .iosPagePinch(
                 isEnabled: isPinchEnabled,
+                shouldBegin: { point in
+                    !layoutCache.isAccessoryAtY(point.y) &&
+                    (accessoryLaneWidth == 0 || point.x <= layoutCache.contentOriginX + layoutCache.contentWidth)
+                },
                 onUpdate: { value in
                     if actions.onPinchUpdate(value) {
                         updatePinchAutoScroll(for: value.location)
@@ -379,6 +414,8 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     }
 
     private func handlePageLevelTap(at point: CGPoint) {
+        guard !layoutCache.isAccessoryAtY(point.y) else { return }
+        if accessoryLaneWidth > 0, point.x > layoutCache.contentOriginX + layoutCache.contentWidth { return }
         if let rowID = layoutCache.blockIDAtY(point.y),
            let frame = layoutCache.frame(of: rowID) {
             let handleLeft = frame.minX - gutterWidth

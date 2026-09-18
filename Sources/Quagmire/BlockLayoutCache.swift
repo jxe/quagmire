@@ -210,6 +210,22 @@ class RowSurfaceLayoutCache<ID: Hashable> {
     /// Measured height per block. Populated lazily as rows mount; survives
     /// unmount so an off-screen row's height stays available for hit-testing.
     private(set) var heights: [ID: CGFloat] = [:]
+    private(set) var accessoryHeights: [ID: CGFloat] = [:]
+    private(set) var headerHeight: CGFloat = 0
+
+    func setHeaderHeight(_ height: CGFloat) {
+        guard headerHeight != height else { return }
+        headerHeight = max(0, height); recomputeOffsets()
+    }
+    func setAccessoryHeight(_ height: CGFloat, for id: ID) {
+        guard accessoryHeights[id, default: 0] != height else { return }
+        accessoryHeights[id] = max(0, height); recomputeOffsets()
+    }
+    func retainAccessoryHeights(for ids: Set<ID>) {
+        let next = accessoryHeights.filter { ids.contains($0.key) }
+        guard next != accessoryHeights else { return }
+        accessoryHeights = next; recomputeOffsets()
+    }
 
     /// Visible blocks in document order — matches the layout's `ForEach`
     /// iteration. Source of truth for slot/index space.
@@ -374,7 +390,7 @@ class RowSurfaceLayoutCache<ID: Hashable> {
         offsets.reserveCapacity(orderedIDs.count + 1)
         rowTops.reserveCapacity(orderedIDs.count)
         rowBottoms.reserveCapacity(orderedIDs.count)
-        var sum: CGFloat = 0
+        var sum: CGFloat = headerHeight
         for id in orderedIDs {
             sum += topGaps[id] ?? 0
             let top = sum
@@ -382,19 +398,19 @@ class RowSurfaceLayoutCache<ID: Hashable> {
             offsets.append(top)
             rowTops.append(top)
             rowBottoms.append(bottom)
-            sum = bottom
+            sum = bottom + (accessoryHeights[id] ?? 0)
         }
         offsets.append(sum)
     }
 
     private func internalFrameSnapshot(excludingTopGaps excludedTopGaps: [ID: CGFloat]) -> [ID: CGRect] {
         var result: [ID: CGRect] = [:]
-        var y: CGFloat = 0
+        var y: CGFloat = headerHeight
         for id in orderedIDs {
             y += max(0, (topGaps[id] ?? 0) - (excludedTopGaps[id] ?? 0))
             if let height = heights[id] {
                 result[id] = CGRect(x: 0, y: y, width: contentWidth, height: height)
-                y += height
+                y += height + (accessoryHeights[id] ?? 0)
             }
         }
         return result
@@ -415,6 +431,16 @@ class RowSurfaceLayoutCache<ID: Hashable> {
         let docY = pageY - contentOriginY
         guard !orderedIDs.isEmpty, docY >= 0, docY < contentHeight else { return nil }
         return binarySearchContaining(docY: docY)
+    }
+
+    /// Host panels occupy layout space, but cannot become document tap targets.
+    func isAccessoryAtY(_ pageY: CGFloat) -> Bool {
+        let y = pageY - contentOriginY
+        if y >= 0 && y < headerHeight { return true }
+        for (index, id) in orderedIDs.enumerated() {
+            if y >= rowBottoms[index] && y < rowBottoms[index] + (accessoryHeights[id] ?? 0) { return true }
+        }
+        return false
     }
 
     /// Find the block whose y-extent contains `pageY` in

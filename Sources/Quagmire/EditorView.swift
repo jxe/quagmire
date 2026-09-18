@@ -32,6 +32,9 @@ public struct EditorView: View {
     public let pinchDictation: EditorPinchDictation?
     public let topOverscrollAction: EditorTopOverscrollAction?
     public let pageFooter: AnyView?
+    var editorAccessories: [EditorAccessory] = []
+    var accessoryReveal: EditorAccessoryReveal?
+    var unavailableAccessories: ([String]) -> Void = { _ in }
 
     // View-shaped @State that doesn't move into EditorState because it's tied to
     // SwiftUI/UIKit lifecycle (FocusState must live on a View; row-frame cache
@@ -385,6 +388,14 @@ public struct EditorView: View {
                     AnyView(pinchDictationDraftRow(draft, visibleRows: visibleRows))
                 },
                 footer: pageFooter,
+                header: documentAccessories,
+                expandedAccessoryRows: Set(editorAccessories.compactMap { accessory in
+                    if case let .block(id) = accessory.anchor, accessory.isExpanded.wrappedValue { return id }
+                    return nil
+                }),
+                accessoryLaneWidth: editorAccessories.contains { if case .block = $0.anchor { return true }; return false } ? 32 : 0,
+                rowMarker: { accessoryMarkers(at: .block($0)) },
+                rowAccessory: { accessoryDetails(at: .block($0)) },
                 actions: surfaceActions
             ) { id in
                 if let row = visibleRowByID[id] {
@@ -511,6 +522,8 @@ public struct EditorView: View {
             .focusable()
             .focused($pageFocused)
             #endif
+            .onChange(of: accessoryReveal, initial: true) { _, _ in revealAccessory() }
+            .onChange(of: missingAccessoryIDs, initial: true) { _, ids in unavailableAccessories(ids) }
             .onAppear {
                 // Open with no nav-mode selection. The first ↓ press lands on the
                 // top block via `moveCursor(by:)`'s nil-cursor branch.
@@ -645,6 +658,7 @@ public struct EditorView: View {
                 modifiers: event.modifierFlags,
                 isFullscreen: NSApp.keyWindow?.styleMask.contains(.fullScreen) == true
             ) else { return event }
+            guard !foreignTextInputHasFocus else { return event }
             guard pageFocused || state.editingBlock != nil || (action == .escape && actionSheet != nil) else {
                 return event
             }
@@ -1200,6 +1214,9 @@ public struct EditorView: View {
     /// Returns `.ignored` if no binding matches so SwiftUI can pass the press
     /// through to other handlers.
     func handleNavKeyPress(_ press: KeyPress) -> KeyPress.Result {
+#if os(macOS)
+        guard !foreignTextInputHasFocus else { return .ignored }
+#endif
         configuration.diagnostics.navkey.debug("press key=\(String(describing: press.key), privacy: .public) modifiers=\(press.modifiers.rawValue, privacy: .public) cursor=\(String(describing: state.cursor), privacy: .public) selection=\(state.selection.count, privacy: .public) editing=\(String(describing: state.editingBlock), privacy: .public)")
         // The page remains in navigation mode while its icon-picker popover is
         // open. Let the picker's focused search field/grid own every key so

@@ -26,6 +26,9 @@ extension EditorView {
     /// directly without an extra parameter pass).
     func wireEditorCommands() {
         editorCommands.perform = { action in
+#if os(macOS)
+            guard !foreignTextInputHasFocus || action == .escape else { return }
+#endif
             switch action {
             case .openBlockActionMenu:
                 guard let id = topSelectedBlockID() else { return }
@@ -150,6 +153,9 @@ extension EditorView {
         }
 
         editorCommands.can = { predicate in
+#if os(macOS)
+            guard !foreignTextInputHasFocus else { return false }
+#endif
             switch predicate {
             case .canIndent:
                 if let bid = state.editingBlock {
@@ -246,6 +252,15 @@ extension EditorView {
     func installUndoApply() {
         document.undoManager = undoController.undoManager
         undoController.document = document
+#if os(macOS)
+        undoController.routeExternalUndo = { redo in
+            guard foreignTextInputHasFocus else { return false }
+            let manager = NSApp.keyWindow?.firstResponder?.undoManager
+            guard manager !== undoController.undoManager else { return true }
+            if redo { manager?.redo() } else { manager?.undo() }
+            return true
+        }
+#endif
 
         // Single hook for every transaction — forward, undo, or redo —
         // covering both halves of "edit happened": revalidate `EditorState`
@@ -306,6 +321,9 @@ extension EditorView {
     /// The active NSTextView when one's frontmost — wraps the macOS-only
     /// firstResponder probe so callers don't need their own `#if os(macOS)`.
     #if os(macOS)
+    var foreignTextInputHasFocus: Bool {
+        NSApp.keyWindow?.firstResponder is NSTextView && activeContainedTextView() == nil
+    }
     func activeContainedTextView() -> ContainedTextView? {
         NSApp.keyWindow?.firstResponder as? ContainedTextView
     }

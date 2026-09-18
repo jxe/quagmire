@@ -123,6 +123,7 @@ extension View {
     @ViewBuilder
     func iosPagePinch(
         isEnabled: Bool,
+        shouldBegin: @escaping (CGPoint) -> Bool = { _ in true },
         onUpdate: @escaping (PagePinchValue) -> Void,
         onThirdFingerTap: @escaping () -> Void,
         onCommit: @escaping (PagePinchValue) -> Void
@@ -131,6 +132,7 @@ extension View {
         self.background(
             IOSPagePinchGestureBridge(
                 isEnabled: isEnabled,
+                shouldBegin: shouldBegin,
                 onUpdate: onUpdate,
                 onThirdFingerTap: onThirdFingerTap,
                 onCommit: onCommit
@@ -554,6 +556,7 @@ struct IOSPageReorderGestureBridge<ID: Hashable>: UIViewRepresentable {
 /// pinch felt amplified at narrow grips and undersized at wide grips.
 struct IOSPagePinchGestureBridge: UIViewRepresentable {
     var isEnabled: Bool
+    var shouldBegin: (CGPoint) -> Bool
     var onUpdate: (PagePinchValue) -> Void
     var onThirdFingerTap: () -> Void
     var onCommit: (PagePinchValue) -> Void
@@ -705,6 +708,14 @@ struct IOSPagePinchGestureBridge: UIViewRepresentable {
                 contentOffset: scrollView.contentOffset,
                 adjustedTopInset: scrollView.adjustedContentInset.top
             )
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard gestureRecognizer === recognizer, let scrollView else { return true }
+            return (0..<gestureRecognizer.numberOfTouches).allSatisfy { touch in
+                parent.shouldBegin(pageCoordinateLocation(
+                    for: gestureRecognizer.location(ofTouch: touch, in: scrollView), scrollView: scrollView))
+            }
         }
 
         func gestureRecognizer(

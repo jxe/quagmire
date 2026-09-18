@@ -659,3 +659,40 @@ The package manifest uses compatible dependency requirements so downstream
 consumers can resolve one coherent graph. This library intentionally does not
 track `Package.resolved`; verification records the version SwiftPM actually
 selected.
+
+### Host-owned editor accessories
+
+Attach comments, diagnostics, alternatives or other host UI without changing the
+block tree or its Markdown. IDs are unique within one editor session; expansion
+belongs to the host.
+
+```swift
+EditorView(document: document, state: editorState, host: host)
+    .accessories([
+        EditorAccessory(
+            id: "comment-42",
+            anchor: .block(blockID), // or .document for page-wide evidence
+            accessibilityLabel: "Show comment",
+            isExpanded: $commentExpanded,
+            marker: { Image(systemName: "text.bubble") },
+            detail: { CommentPanel(comment: comment) }
+        )
+    ], reveal: revealRequest, onUnavailable: { ids in
+        unavailableAccessoryIDs = ids
+    })
+```
+
+Assign `EditorAccessoryReveal("comment-42")` to request another reveal, including
+when the same accessory was revealed before. Reveal opens hidden ancestors and
+expands the detail without changing the document cursor. Block IDs are session
+anchors; after replacement the host must revalidate its mapping. Missing blocks
+and duplicate accessory IDs are reported and never attached to a guessed row.
+
+A marker is a label: Quagmire supplies its accessible disclosure button. Details
+may contain host controls. Block markers use a reserved trailing margin; details
+flow below the block. Document accessories appear at the top of the scroll
+content. Their sizes shift subsequent rows, but are excluded from content hit
+targets and drag lifts. Accessory data never enters document transactions,
+serialization, selection or copied blocks. Native text fields in details retain
+their own text commands and undo history. Accessory visual/focus/VoiceOver behavior
+still requires consumer interaction testing in addition to package builds.

@@ -39,6 +39,7 @@ extension FocusedValues {
 @MainActor
 public final class DocumentUndoController {
     public let undoManager: UndoManager
+    var routeExternalUndo: ((Bool) -> Bool)?
 
     /// Set by `EditorView` once the document is mounted. Used by `transaction`
     /// and `breakCoalescing` to forward into the document's API.
@@ -96,6 +97,7 @@ public final class DocumentUndoController {
     /// the 750 ms checkpoint has not fired yet. Closing the event group makes
     /// that just-registered typing transaction the top undo action immediately.
     public func undo() {
+        if routeExternalUndo?(false) == true { return }
         cancelActiveTextCheckpoint?()
         flushActiveText?()
         closeOpenUndoGroups()
@@ -108,6 +110,7 @@ public final class DocumentUndoController {
     /// was dirty, flushing it correctly invalidates the old redo stack before
     /// this checks `canRedo`, matching standard editor behavior.
     public func redo() {
+        if routeExternalUndo?(true) == true { return }
         cancelActiveTextCheckpoint?()
         flushActiveText?()
         closeOpenUndoGroups()
