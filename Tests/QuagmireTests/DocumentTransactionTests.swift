@@ -350,3 +350,35 @@ struct DocumentTransactionTests {
         #expect(plainText(doc.children[0]) == "zzz")
     }
 }
+
+extension DocumentTransactionTests {
+    @Test func copiesExposeFreshIdentityEvidenceOnlyDuringTheirCommit() {
+        let (doc, undo) = makeDocWithUndo()
+        let original = doc.children[0]
+        var commits: [[BlockID:BlockID]] = []
+        doc.didCommitTransaction = { _ in commits.append(doc.blockCopiesForCurrentCommit) }
+        let copies = doc.insertCopies(of:[original],at:.init(parent:nil,position:1))
+        #expect(copies.count == 1)
+        #expect(commits == [[copies[0].id:original.id]])
+        #expect(doc.blockCopiesForCurrentCommit.isEmpty)
+        undo.undo()
+        #expect(commits.last?.isEmpty == true)
+        undo.redo()
+        #expect(commits.last?.isEmpty == true) // Causal redo evidence is a separate contract.
+        #expect(doc.children[1].id == copies[0].id)
+    }
+
+    @Test func nestedCopiesIncludeDescendantsAndDoNotInventEvidenceForPaste() {
+        let doc = makeDoc()
+        let original = Block(kind:.bullet(text:AttributedString("parent")),children:[.paragraph(text:AttributedString("child"))])
+        doc.transaction(name:"seed") { _ = doc.insertSubtree(original,at:.init(parent:nil,position:0)) }
+        var evidence: [BlockID:BlockID] = [:]
+        doc.didCommitTransaction = { _ in evidence = doc.blockCopiesForCurrentCommit }
+        var copies: [Block] = []
+        doc.transaction(name:"outer") { copies = doc.insertCopies(of:[original],at:.init(parent:nil,position:1)) }
+        #expect(evidence[copies[0].id] == original.id)
+        #expect(evidence[copies[0].children[0].id] == original.children[0].id)
+        doc.transaction(name:"ordinary insert") { _ = doc.insertSubtree(original.withFreshIDs(),at:.init(parent:nil,position:0)) }
+        #expect(evidence.isEmpty)
+    }
+}

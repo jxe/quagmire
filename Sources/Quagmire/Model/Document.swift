@@ -77,6 +77,36 @@ public final class Document: @MainActor Identifiable {
     @ObservationIgnored
     public var didCommitTransaction: (([DocumentChange]) -> Void)?
 
+    /// Explicit same-document duplication evidence, visible only during commit
+    /// callbacks. Maps each fresh block ID to the block it was copied from.
+    /// This is editor identity evidence; hosts decide how to retain/source-map it.
+    @ObservationIgnored
+    public private(set) var blockCopiesForCurrentCommit: [BlockID: BlockID] = [:]
+
+    /// Duplicate subtrees with fresh editor identities and explicit copy evidence.
+    @discardableResult
+    public func insertCopies(of originals: [Block], at target: DropPath) -> [Block] {
+        guard !originals.isEmpty else { return [] }
+        var inserted: [Block] = []
+        transaction(name: originals.count == 1 ? "Duplicate Block" : "Duplicate Blocks") {
+            let copies = originals.map { $0.withFreshIDs() }
+            if insertSubtrees(copies, at: target) {
+                recordBlockCopies(originals: originals, copies: copies)
+                inserted = copies
+            }
+        }
+        return inserted
+    }
+
+    private func recordBlockCopies(originals: [Block], copies: [Block]) {
+        precondition(inTransaction)
+        func record(_ source: Block, _ copy: Block) {
+            blockCopiesForCurrentCommit[copy.id] = source.id
+            for (a,b) in zip(source.children,copy.children) { record(a,b) }
+        }
+        for (a,b) in zip(originals,copies) { record(a,b) }
+    }
+
     /// Fired for live text-view activity before the periodic typing checkpoint
     /// mutates the document. This is not itself a persistence commit.
     public var didReceiveEditingActivity: (() -> Void)?
@@ -189,7 +219,8 @@ public final class Document: @MainActor Identifiable {
             return []
         }
         inTransaction = true
-        defer { inTransaction = false }
+        blockCopiesForCurrentCommit = [:]
+        defer { inTransaction = false; blockCopiesForCurrentCommit = [:] }
 
         let now = Date()
         let shouldCoalesce =

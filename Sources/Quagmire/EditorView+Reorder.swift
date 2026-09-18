@@ -791,10 +791,10 @@ extension EditorView {
             (document.documentOrder(of: a) ?? .max) < (document.documentOrder(of: b) ?? .max)
         }
         let prepared = preparedBlocksForTransfer(ids: ordered)
-        let copies = prepared.map { $0.withFreshIDs() }
-        guard !copies.isEmpty else { return }
-        mutate(copies.count > 1 ? "Duplicate Blocks" : "Duplicate Block") {
-            document.insertSubtrees(copies, at: target)
+        guard !prepared.isEmpty else { return }
+        var copies: [Block] = []
+        mutate(prepared.count > 1 ? "Duplicate Blocks" : "Duplicate Block") {
+            copies = document.insertCopies(of: prepared, at: target)
         }
         selectAfterCopy(copies)
     }
@@ -810,10 +810,10 @@ extension EditorView {
             (document.documentOrder(of: a) ?? .max) < (document.documentOrder(of: b) ?? .max)
         }
         let prepared = preparedBlocksForTransfer(ids: ordered)
-        let copies = prepared.map { $0.withFreshIDs() }
-        guard !copies.isEmpty else { return }
-        mutate(copies.count > 1 ? "Duplicate Blocks" : "Duplicate Block") {
-            document.insertSubtrees(copies, at: target)
+        guard !prepared.isEmpty else { return }
+        var copies: [Block] = []
+        mutate(prepared.count > 1 ? "Duplicate Blocks" : "Duplicate Block") {
+            copies = document.insertCopies(of: prepared, at: target)
         }
         selectAfterCopy(copies)
     }
