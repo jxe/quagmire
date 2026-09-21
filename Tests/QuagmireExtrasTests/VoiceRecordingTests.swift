@@ -1,9 +1,38 @@
+import AVFoundation
 import Foundation
 import Testing
 @testable import QuagmireExtras
 
 @Suite("Voice recording")
 struct VoiceRecordingTests {
+    @Test(arguments: [44_100.0, 48_000.0])
+    func liveConversionPreservesTailWhenMicrophoneEnds(sampleRate: Double) throws {
+        let inputFormat = try #require(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
+        let outputFormat = try #require(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
+        let converter = try #require(AVAudioConverter(from: inputFormat, to: outputFormat))
+        let inputFrames = Int(sampleRate / 10)
+        var convertedFrames = 0
+        var offset = 0
+        while offset < inputFrames {
+            let count = min(1_024, inputFrames - offset)
+            let input = try #require(AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: AVAudioFrameCount(count)))
+            input.frameLength = AVAudioFrameCount(count)
+            let samples = try #require(input.floatChannelData)[0]
+            for index in 0..<count {
+                samples[index] = Float(sin(Double(offset + index) * 0.1))
+            }
+            convertedFrames += Int(try VoiceRecorder.convert(input, to: outputFormat, using: converter).frameLength)
+            offset += count
+        }
+        let framesBeforeFinish = convertedFrames
+        try VoiceRecorder.finishConversion(using: converter) { buffer in
+            #expect(buffer.frameLength > 0)
+            convertedFrames += Int(buffer.frameLength)
+        }
+        #expect(convertedFrames > framesBeforeFinish)
+        #expect(abs(convertedFrames - 1_600) <= 1)
+    }
+
     @Test func storeKeepsAudioUntilExplicitRemovalAndSortsOldestFirst() throws {
         let directory = temporaryDirectory("voice-store")
         defer { try? FileManager.default.removeItem(at: directory) }

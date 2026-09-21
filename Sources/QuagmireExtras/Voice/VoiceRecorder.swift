@@ -141,7 +141,14 @@ public final class VoiceRecorder: VoiceRecording {
                     to: analyzerFormat,
                     using: converter
                 )
-                inputContinuation.yield(AnalyzerInput(buffer: converted))
+                if converted.frameLength > 0 {
+                    inputContinuation.yield(AnalyzerInput(buffer: converted))
+                }
+            }
+            // A drained microphone stream is not a drained sample-rate converter.
+            // Deliver its buffered tail before ending the analyzer input.
+            try Self.finishConversion(using: converter) { buffer in
+                inputContinuation.yield(AnalyzerInput(buffer: buffer))
             }
         }
 
@@ -324,7 +331,7 @@ public final class VoiceRecorder: VoiceRecording {
         (finalized + (volatile.isEmpty ? [] : [volatile])).joined(separator: " ")
     }
 
-    nonisolated private static func convert(
+    nonisolated static func convert(
         _ input: AVAudioPCMBuffer,
         to outputFormat: AVAudioFormat,
         using converter: AVAudioConverter
@@ -354,6 +361,31 @@ public final class VoiceRecorder: VoiceRecording {
                 ?? VoiceRecorderError.recordingFailed(underlying: "audio conversion failed")
         }
         return output
+    }
+
+    nonisolated static func finishConversion(
+        using converter: AVAudioConverter,
+        onBuffer: (AVAudioPCMBuffer) -> Void
+    ) throws {
+        while true {
+            try Task.checkCancellation()
+            guard let output = AVAudioPCMBuffer(
+                pcmFormat: converter.outputFormat,
+                frameCapacity: 1_024
+            ) else {
+                throw VoiceRecorderError.recordingFailed(underlying: "audio buffer allocation failed")
+            }
+            var error: NSError?
+            let status = converter.convert(to: output, error: &error) { _, inputStatus in
+                inputStatus.pointee = .endOfStream
+                return nil
+            }
+            if status == .error {
+                throw error ?? VoiceRecorderError.recordingFailed(underlying: "audio conversion failed")
+            }
+            if output.frameLength > 0 { onBuffer(output) }
+            if status == .endOfStream { return }
+        }
     }
 
     private func requestPermissions() async throws {
@@ -478,10 +510,10 @@ private final class LiveAudioCapture: @unchecked Sendable {
         ) { [weak self] buffer, _ in
             guard let self else { return }
             self.lock.withLock {
-                self.storedFrames += AVAudioFramePosition(buffer.frameLength)
-            }
-            if let copiedBuffer = Self.copy(buffer) {
-                self.continuation.yield(TransferableAudioBuffer(value: copiedBuffer))
+                if let copiedBuffer = Self.copy(buffer) {
+                    self.storedFrames += AVAudioFramePosition(buffer.frameLength)
+                    self.continuation.yield(TransferableAudioBuffer(value: copiedBuffer))
+                }
             }
         }
         tapInstalled = true
@@ -502,7 +534,8 @@ private final class LiveAudioCapture: @unchecked Sendable {
             tapInstalled = false
         }
         engine.stop()
-        continuation.finish()
+        // Wait for a tap already copying its last buffer before closing the stream.
+        lock.withLock { continuation.finish() }
     }
 
     private static func copy(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
