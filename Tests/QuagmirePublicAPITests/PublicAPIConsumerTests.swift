@@ -152,9 +152,16 @@ struct PublicAPIConsumerTests {
             host: host,
             pinchDictation: dictation
         )
+        let readOnlyView = EditorView(
+            document: document,
+            state: state,
+            host: host,
+            readOnly: true
+        )
 
         #expect(document.title == "Untitled")
         _ = view
+        _ = readOnlyView
         _ = liveDictation
     }
 }

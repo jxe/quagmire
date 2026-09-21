@@ -31,6 +31,10 @@ public struct EditorView: View {
     public let configuration: EditorConfiguration
     public let pinchDictation: EditorPinchDictation?
     public let topOverscrollAction: EditorTopOverscrollAction?
+    /// Present the document with the ordinary rich block renderer while
+    /// suppressing every authored mutation and edit-mode focus transition.
+    /// Scrolling, links, finding, and local section expansion remain available.
+    public let readOnly: Bool
     public let pageFooter: AnyView?
     var editorAccessories: [EditorAccessory] = []
     var accessoryReveal: EditorAccessoryReveal?
@@ -172,7 +176,8 @@ public struct EditorView: View {
         host: any EditorHost,
         configuration: EditorConfiguration = EditorConfiguration(),
         pinchDictation: EditorPinchDictation? = nil,
-        topOverscrollAction: EditorTopOverscrollAction? = nil
+        topOverscrollAction: EditorTopOverscrollAction? = nil,
+        readOnly: Bool = false
     ) {
         self.document = document
         self.state = state
@@ -180,6 +185,7 @@ public struct EditorView: View {
         self.configuration = configuration
         self.pinchDictation = pinchDictation
         self.topOverscrollAction = topOverscrollAction
+        self.readOnly = readOnly
         self.pageFooter = nil
     }
 
@@ -190,6 +196,7 @@ public struct EditorView: View {
         configuration: EditorConfiguration = EditorConfiguration(),
         pinchDictation: EditorPinchDictation? = nil,
         topOverscrollAction: EditorTopOverscrollAction? = nil,
+        readOnly: Bool = false,
         @ViewBuilder pageFooter: () -> Footer
     ) {
         self.document = document
@@ -198,6 +205,7 @@ public struct EditorView: View {
         self.configuration = configuration
         self.pinchDictation = pinchDictation
         self.topOverscrollAction = topOverscrollAction
+        self.readOnly = readOnly
         self.pageFooter = AnyView(pageFooter())
     }
 
@@ -273,7 +281,7 @@ public struct EditorView: View {
                 sourceRow: reorderSourceRow
             )
             let surfaceActions = RowSurfaceActions<BlockID>(
-                onHover: { id in state.setHoveredBlock(id) },
+                onHover: { id in if !readOnly { state.setHoveredBlock(id) } },
                 onTapRow: { id, point in
                     #if os(iOS)
                     if actionSheet != nil {
@@ -284,6 +292,10 @@ public struct EditorView: View {
                     guard let row = visibleRowByID[id],
                           let frame = layoutCache.frame(of: id),
                           let block = document.find(id) else { return }
+                    if readOnly {
+                        if case .documentLink = block.kind { _ = navigateIntoDocumentLink(id) }
+                        return
+                    }
                     if case .documentLink(_, let reference) = block.kind,
                        host.lookupDocument(reference).can(.setIcon),
                        hitsDocumentLinkIconColumn(point: point, rowFrame: frame, depth: row.depth, theme: theme) {
@@ -307,7 +319,7 @@ public struct EditorView: View {
                         #else
                         toggleSectionExpansion(block)
                         #endif
-                    } else {
+                    } else if !readOnly {
                         handleHandleClick(blockID: id)
                     }
                 },
@@ -318,9 +330,10 @@ public struct EditorView: View {
                         return
                     }
                     #endif
-                    handleTapBelowRows(at: point)
+                    if !readOnly { handleTapBelowRows(at: point) }
                 },
                 onReorderBegin: { blockID, location, anchor in
+                    guard !readOnly else { return }
                     state.selectForReorderStart(on: blockID)
                     if anchor == location {
                         preliftReorder(blockID: blockID)
@@ -329,34 +342,37 @@ public struct EditorView: View {
                     tickReorderLift(blockID: blockID, at: location, anchorAt: anchor, snapshot: document.children)
                 },
                 shouldBeginIOSReorder: { blockID, location in
-                    shouldBeginIOSReorder(on: blockID, at: location)
+                    !readOnly && shouldBeginIOSReorder(on: blockID, at: location)
                 },
                 onReorderChanged: { location, anchor in
+                    guard !readOnly else { return }
                     guard let id = state.reorderLift?.ids.first else { return }
                     tickReorderLift(blockID: id, at: location, anchorAt: anchor, snapshot: document.children)
                 },
                 onReorderEnded: { location in
+                    guard !readOnly else { return }
                     endReorderLift(atY: location.y, snapshot: document.children)
                 },
                 onReorderCancelled: {
                     cancelReorderLift()
                 },
                 onReorderAutoscroll: { location in
-                    applyDropTarget(at: location.y, snapshot: document.children)
+                    if !readOnly { applyDropTarget(at: location.y, snapshot: document.children) }
                 },
                 onPinchUpdate: { value in
-                    handlePinchUpdate(value)
+                    !readOnly && handlePinchUpdate(value)
                 },
                 onPinchThirdFingerTap: {
-                    handlePinchThirdFingerTap()
+                    if !readOnly { handlePinchThirdFingerTap() }
                 },
                 onPinchCommit: { value in
-                    handlePinchCommit(value)
+                    if !readOnly { handlePinchCommit(value) }
                 },
                 onExternalDropUpdate: { y in
-                    applyDropTarget(at: y, snapshot: document.children)
+                    if !readOnly { applyDropTarget(at: y, snapshot: document.children) }
                 },
                 onExternalDrop: { string, y in
+                    guard !readOnly else { return }
                     if let payload = BlockDragPayload(jsonString: string) {
                         performPayloadDrop(payload, atY: y, snapshot: document.children)
                     }
@@ -377,11 +393,11 @@ public struct EditorView: View {
                 trailingDropHeight: 32 + renderedTrailingPinchGap + trailingReorderGap,
                 activeLift: rowSurfaceLift(in: unprojectedRows),
                 scrollMetrics: scrollMetrics,
-                topOverscrollAction: topOverscrollAction,
+                topOverscrollAction: readOnly ? nil : topOverscrollAction,
                 scrollPosition: $scrollPosition,
-                isIOSReorderEnabled: !pinchGestureActive,
-                isMacReorderEnabled: state.editingBlock == nil,
-                isPinchEnabled: state.editingBlock == nil && pinchDictationCompletionTask == nil,
+                isIOSReorderEnabled: !readOnly && !pinchGestureActive,
+                isMacReorderEnabled: !readOnly && state.editingBlock == nil,
+                isPinchEnabled: !readOnly && state.editingBlock == nil && pinchDictationCompletionTask == nil,
                 pinchPreviewSlot: uncommittedPinchDraft?.slot,
                 pinchPreviewMinimumHeight: state.pinchPreview?.gapHeight ?? 0,
                 pinchPreview: uncommittedPinchDraft.map { draft in
@@ -527,11 +543,15 @@ public struct EditorView: View {
             .onAppear {
                 // Open with no nav-mode selection. The first ↓ press lands on the
                 // top block via `moveCursor(by:)`'s nil-cursor branch.
-                forcePageFocusGrab()
-                installUndoApply()
-                wireEditorCommands()
+                if !readOnly {
+                    forcePageFocusGrab()
+                    installUndoApply()
+                    wireEditorCommands()
+                } else {
+                    wireReadOnlyCommands()
+                }
                 #if os(macOS)
-                installMacKeyMonitor()
+                if !readOnly { installMacKeyMonitor() }
                 #endif
             }
             .onDisappear {
@@ -594,7 +614,7 @@ public struct EditorView: View {
             }
             #endif
             .onChange(of: state.pendingAppendTicket) { _, _ in
-                if let payload = state.takePendingAppend() {
+                if !readOnly, let payload = state.takePendingAppend() {
                     appendBlocksFromHost(payload.blocks, actionName: payload.actionName)
                 }
             }
@@ -717,9 +737,9 @@ public struct EditorView: View {
         // tick — see `iosTransitioningEditorID`. The row stays mounted but is no
         // longer focused (`editorFocused` already points at the new block), so its
         // `BlockTextEditor` won't fight for first responder.
-        let isEditing = state.editingBlock == block.id || iosTransitioningEditorID == block.id
+        let isEditing = !readOnly && (state.editingBlock == block.id || iosTransitioningEditorID == block.id)
         #else
-        let isEditing = state.editingBlock == block.id
+        let isEditing = !readOnly && state.editingBlock == block.id
         #endif
         // The macOS action menu opens in nav mode, where the block is already painted with
         // the blue nav-selection tint — a second ring would just duplicate it. iOS has no
@@ -783,7 +803,7 @@ public struct EditorView: View {
             depth: depth,
             isPageTitle: isPageTitleBlock(block),
             numberingIndex: numberingIndex,
-            isSelected: isSelected,
+            isSelected: !readOnly && isSelected,
             isEditing: editing != nil,
             isActiveEditor: editing?.isActive ?? false,
             completionActive: editing?.completionActive ?? false,
@@ -799,6 +819,7 @@ public struct EditorView: View {
             reorderSourceOpacity: reorderSourceOpacity(for: block.id),
             isReorderingThisBlock: state.reorderLift?.ids.contains(block.id) == true,
             isSelectionHandleRow: isSelectionHandleRow(for: block.id),
+            isReadOnly: readOnly,
             accessibilityID: accessibilityIdentifier(for: block),
             accessibilityLabelText: accessibilityLabel(for: block),
             documentLookups: resolveDocumentLookups(for: block, host: host, in: document),
@@ -806,8 +827,9 @@ public struct EditorView: View {
         )
         let rowActions = BlockRowActions(
             editor: editing,
-            onBlockChange: { newBlock in binding.wrappedValue = newBlock },
+            onBlockChange: { newBlock in if !readOnly { binding.wrappedValue = newBlock } },
             onToggleTodo: { id in
+                guard !readOnly else { return }
                 mutate("Toggle Todo") {
                     guard let current = document.find(id),
                           case .todo(let text, let done) = current.kind else { return }
@@ -815,7 +837,7 @@ public struct EditorView: View {
                 }
             },
             onClickAtPoint: { point in
-                transferFocus(to: .editor(block.id, initialCursor: .point(point)))
+                if !readOnly { transferFocus(to: .editor(block.id, initialCursor: .point(point))) }
             },
             onToggleExpansion: {
                 toggleSectionExpansion(block)
@@ -824,7 +846,7 @@ public struct EditorView: View {
                 handleHeadingChevronLongPress(block)
             },
             onTemplateButtonPress: {
-                instantiateTemplateButton(blockID: block.id)
+                if !readOnly { instantiateTemplateButton(blockID: block.id) }
             },
             onLinkPreviewLoaded: { url, preview in linkPreviews[url] = preview },
             host: host,
@@ -839,6 +861,7 @@ public struct EditorView: View {
                     _ = navigateIntoDocumentLink(block.id)
                     return
                 }
+                guard !readOnly else { return }
                 // Clicks outside the editable text region (markers, paddings) — no
                 // position info, cursor lands at end via the editor's default behavior.
                 transferFocus(to: .editor(block.id, initialCursor: nil))
@@ -850,7 +873,8 @@ public struct EditorView: View {
                     return
                 }
                 #endif
-                openDocumentIconPicker(for: block.id)
+                if readOnly { _ = navigateIntoDocumentLink(block.id) }
+                else { openDocumentIconPicker(for: block.id) }
             },
             onActionMenuDismiss: {
                 if actionSheet != nil { actionSheet = nil }
@@ -862,6 +886,7 @@ public struct EditorView: View {
                 if iconPickerBlockID == block.id { iconPickerBlockID = nil }
             },
             onIOSDelete: {
+                guard !readOnly else { return }
                 let isMultiSelect = state.selection.contains(block.id) && state.selection.count > 1
                 if !isMultiSelect, let blk = document.find(block.id), blk.isHeading {
                     deleteHeadingKeepingChildren(blk.id)
@@ -870,7 +895,7 @@ public struct EditorView: View {
                 }
                 showActionToast("Deleted")
             },
-            onIOSShowMenu: onShowActionSheet,
+            onIOSShowMenu: { if !readOnly { onShowActionSheet() } },
             actionMenuContent: { AnyView(blockActionMenuContent(for: block.id)) },
             completionMenuContent: { AnyView(completionMenuContent()) },
             emojiPickerContent: {
@@ -1323,6 +1348,7 @@ public struct EditorView: View {
     /// one atomic undo step covering "the in-flight typing plus the
     /// structural op the user just invoked."
     func mutate(_ name: String, persistenceDelay: Duration? = nil, _ change: () -> Void) {
+        guard !readOnly else { return }
         undoController.transaction(name: name, persistenceDelay: persistenceDelay) { change() }
     }
 

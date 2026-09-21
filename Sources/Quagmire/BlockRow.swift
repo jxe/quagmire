@@ -24,6 +24,7 @@ struct BlockRowModel: Equatable {
     let reorderSourceOpacity: Double
     let isReorderingThisBlock: Bool
     let isSelectionHandleRow: Bool
+    let isReadOnly: Bool
     let accessibilityID: String
     let accessibilityLabelText: String
     let documentLookups: [String: DocumentLookup]
@@ -148,6 +149,7 @@ struct BlockRow: View, Equatable {
     var reorderSourceOpacity: Double { model.reorderSourceOpacity }
     var isReorderingThisBlock: Bool { model.isReorderingThisBlock }
     var isSelectionHandleRow: Bool { model.isSelectionHandleRow }
+    var isReadOnly: Bool { model.isReadOnly }
     var accessibilityID: String { model.accessibilityID }
     var accessibilityLabelText: String { model.accessibilityLabelText }
     var documentLookups: [String: DocumentLookup] { model.documentLookups }
@@ -290,6 +292,7 @@ struct BlockRow: View, Equatable {
                     .opacity(
                         isHandleVisible
                             && !isEditing
+                            && !isReadOnly
                             && !(block.isHeading && !isPageTitle)
                             ? 1 : 0
                     )
@@ -468,6 +471,7 @@ struct BlockRow: View, Equatable {
                     .frame(width: theme.todoMarkerColumnWidth, alignment: .trailing)
             }
             .buttonStyle(.plain)
+            .disabled(isReadOnly)
             editableText(
                 font: theme.body(),
                 fontSize: 16,
@@ -610,7 +614,7 @@ struct BlockRow: View, Equatable {
                 .clipShape(RoundedRectangle(cornerRadius: 5))
                 .contentShape(RoundedRectangle(cornerRadius: 5))
                 .onTapGesture {
-                    onTemplateButtonPress()
+                    if !isReadOnly { onTemplateButtonPress() }
                 }
             }
         }

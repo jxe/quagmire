@@ -12,6 +12,7 @@ struct BlockRowModelTests {
         isProvisionalText: Bool = false,
         isFindMatch: Bool = false,
         isCurrentFindMatch: Bool = false,
+        isReadOnly: Bool = false,
         documentLookups: [String: DocumentLookup] = [:],
         linkPreviews: [URL: LinkPreview] = [:]
     ) -> BlockRowModel {
@@ -36,6 +37,7 @@ struct BlockRowModelTests {
             reorderSourceOpacity: 1,
             isReorderingThisBlock: false,
             isSelectionHandleRow: false,
+            isReadOnly: isReadOnly,
             accessibilityID: "block-row-body",
             accessibilityLabelText: "Paragraph: body",
             documentLookups: documentLookups,
@@ -49,6 +51,7 @@ struct BlockRowModelTests {
         #expect(base != model(isProvisionalText: true))
         #expect(base != model(isFindMatch: true))
         #expect(base != model(isCurrentFindMatch: true))
+        #expect(base != model(isReadOnly: true))
 
         let pageBlock = Block.documentLink(label: AttributedString("Old"), reference: DocumentReference("child.md"))
         #expect(model(block: pageBlock, documentLookups: ["child.md": .present(title: "Child")])

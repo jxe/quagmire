@@ -20,6 +20,32 @@ import AppKit
 // 100-line setter assignment block in `onAppear`.
 
 extension EditorView {
+    /// Read-only pages keep presentation actions without exposing any command
+    /// that can mutate authored blocks or enter text editing.
+    func wireReadOnlyCommands() {
+        editorCommands.perform = { action in
+            switch action {
+            case .findInPage: presentFind()
+            case .foldAllHeadings: foldAllHeadings()
+            case .unfoldAllHeadings: unfoldAllHeadings()
+            case .navigateBack: host.navigateBack()
+            default: break
+            }
+        }
+        editorCommands.can = { predicate in
+            switch predicate {
+            case .canFoldAllHeadings: canFoldAllHeadings
+            case .canUnfoldAllHeadings: canUnfoldAllHeadings
+            default: false
+            }
+        }
+        editorCommands.performBlockAction = { _ in }
+        editorCommands.canPerformBlockAction = { _ in false }
+        editorCommands.activeEditingBlock = { nil }
+        editorCommands.insertText = { _, _ in false }
+        editorCommands.moveDraggedBlocks = { _, _ in }
+    }
+
     /// Install `editorCommands.perform` / `editorCommands.can`. Called once
     /// from `onAppear`. Each `EditorAction` arm dispatches to a private
     /// helper on `EditorView` (kept there so they read the View's state
@@ -212,6 +238,7 @@ extension EditorView {
     /// began. Prefer the mounted native editor so insertion uses its live caret;
     /// if focus moved meanwhile, preserve the captured destination and append.
     func insertExternalText(_ rawText: String, into target: BlockID) -> Bool {
+        guard !readOnly else { return false }
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let block = document.find(target) else { return false }
 
