@@ -11,13 +11,17 @@ enum PinchInsertionMode: Equatable, Sendable {
     var nextMode: PinchInsertionMode {
         switch self {
         case .contextual: .divider
-        case .emptyParagraph: .contextual
-        case .divider: .heading
-        case .heading: .emptyParagraph
+        case .emptyParagraph: .heading
+        case .divider: .emptyParagraph
+        case .heading: .contextual
         }
     }
 
     var acceptsDictation: Bool {
+        self == .contextual || self == .heading
+    }
+
+    var focusesInsertedBlock: Bool {
         self == .contextual || self == .heading
     }
 }
@@ -213,7 +217,7 @@ extension EditorView {
             let newBlock = pinchDictationDraft?.committedBlock
                 ?? smartInsertBlock(above: above, below: below)
             let usesDictation = pinchInsertionMode.acceptsDictation && pinchDictation != nil
-            let focusesTextBlock = pinchInsertionMode != .divider && !usesDictation
+            let focusesTextBlock = pinchInsertionMode.focusesInsertedBlock && !usesDictation
             configuration.diagnostics.pinch.debug(
                 "pinch committed mode=\(String(describing: pinchInsertionMode), privacy: .public) dictation=\(usesDictation, privacy: .public)"
             )

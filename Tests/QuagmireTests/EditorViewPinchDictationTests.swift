@@ -74,27 +74,31 @@ struct EditorViewPinchDictationTests {
 
         #expect(draft.insertionMode == .contextual)
         #expect(draft.insertionMode.acceptsDictation)
+        #expect(draft.insertionMode.focusesInsertedBlock)
         #expect(String(draft.block.text.characters) == "spoken contextual text")
 
         draft = draft.cyclingInsertionMode()
         #expect(draft.insertionMode == .divider)
         #expect(!draft.insertionMode.acceptsDictation)
+        #expect(!draft.insertionMode.focusesInsertedBlock)
         #expect(draft.block.kind == .divider)
 
         draft = draft.replacingText(with: "spoken heading text")
         #expect(draft.block.kind == .divider)
 
         draft = draft.cyclingInsertionMode()
-        #expect(draft.insertionMode == .heading)
-        #expect(draft.insertionMode.acceptsDictation)
-        #expect(String(draft.block.text.characters) == "spoken heading text")
-        #expect(draft.committedBlock.kind == .heading(level: .h1, text: AttributedString()))
-
-        draft = draft.cyclingInsertionMode()
         #expect(draft.insertionMode == .emptyParagraph)
         #expect(!draft.insertionMode.acceptsDictation)
+        #expect(!draft.insertionMode.focusesInsertedBlock)
         #expect(draft.block.kind == .paragraph(text: AttributedString()))
         #expect(draft.committedBlock.kind == .paragraph(text: AttributedString()))
+
+        draft = draft.cyclingInsertionMode()
+        #expect(draft.insertionMode == .heading)
+        #expect(draft.insertionMode.acceptsDictation)
+        #expect(draft.insertionMode.focusesInsertedBlock)
+        #expect(String(draft.block.text.characters) == "spoken heading text")
+        #expect(draft.committedBlock.kind == .heading(level: .h1, text: AttributedString()))
 
         draft = draft.cyclingInsertionMode()
         #expect(draft.insertionMode == .contextual)
