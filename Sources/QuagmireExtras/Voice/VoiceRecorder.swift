@@ -276,6 +276,9 @@ public final class VoiceRecorder: VoiceRecording {
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker])
+            // iOS mutes haptics while recording by default; the pinch lock's
+            // arming tap and the editor's other gesture haptics land mid-recording.
+            try session.setAllowHapticsAndSystemSoundsDuringRecording(true)
             try session.setActive(true, options: [])
         } catch {
             logger?.error("audio session activation failed: \(String(describing: error), privacy: .public)")

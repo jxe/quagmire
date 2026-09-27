@@ -150,23 +150,26 @@ that whole selection while the menu remains open.
   same action through `EditorCommands.performBlockAction` using its id.
 
 **Pinch-to-insert** (trackpad / touchscreen)
-Spread fingers between two rows to open a gap. The pinch begins in contextual
-mode: it inserts a neighbour-shaped paragraph/list row and checks for speech.
-While holding the pinch open, tap a third finger anywhere on the editor surface
-outside the two pinching fingers' exclusion zones to cycle through Divider,
-Heading, Empty Paragraph, and back to the contextual neighbour style. The tap is
-consumed rather than activating editor content. Empty Paragraph previews as a
-blank row and deliberately ignores speech; Heading uses speech as its text.
+Spread fingers between two rows to open a gap. Releasing inserts a
+neighbour-shaped paragraph or list row. On iOS, sliding the open pinch toward
+the trailing edge locks it: once the finger midpoint has covered a third of the
+distance from where the gap opened to the trailing edge, a firm haptic fires, a
+lock badge appears at the end of the draft row, and floating **Heading** (an
+H1) and **Indent** (a bullet nested under the previous sibling) toggles appear.
+Sliding back before lifting disarms the lock. Lift the fingers while locked and
+the gap stays open: a tap anywhere inserts the block, and a horizontal swipe
+inserts a divider instead.
 Hosts may supply `EditorPinchDictation`: recording begins when the opening
-threshold is crossed and finishes on release for contextual and Heading modes.
-A host can publish volatile live drafts while the pinch remains open; Quagmire
-renders them through a provisional
-ordinary block row, so typography, wrapping, and spacing match the eventual
-block without creating a document change or undo entry. Only the completion
-transcript fills the inserted row and leaves it selected in nav mode; silence or
-an unavailable recorder focuses the empty row for keyboard entry. Cancelled and
-non-dictating explicit modes discard gesture audio. Microphone permission,
-transcription, durability policy, and error presentation remain host-owned.
+threshold is crossed and finishes when the block is inserted, on release or on
+the held tap. A host can publish volatile live drafts meanwhile; Quagmire
+renders them through a provisional ordinary block row, so typography,
+wrapping, and spacing match the eventual block without creating a document
+change or undo entry. Only the completion transcript fills the inserted row
+and leaves it selected in nav mode. If nothing was said, whatever style was
+chosen, the row becomes a blank paragraph selected in nav mode. Without a
+recorder the inserted row opens for keyboard entry. Dividers and cancelled
+pinches discard gesture audio. Microphone permission, transcription,
+durability policy, and error presentation remain host-owned.
 
 **Copy / paste**
 The editor reads/writes the system pasteboard. The host owns the wire

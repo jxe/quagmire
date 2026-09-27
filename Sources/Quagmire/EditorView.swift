@@ -107,7 +107,17 @@ public struct EditorView: View {
     #endif
     @State var pinchGestureActive = false
     @State var pinchCrossedInsertThreshold = false
-    @State var pinchInsertionMode: PinchInsertionMode = .contextual
+    /// Whether an open pinch has been slid into the trailing lock zone
+    /// (`armed`), or released there so recording continues hands-free
+    /// (`held`). See `PinchLockPhase`.
+    @State var pinchLock: PinchLockPhase = .none
+    /// Fixed when the gap first opens, from where the fingers were then.
+    @State var pinchLockZone: PinchLockZone?
+    /// Heading / Indent toggles chosen while the pinch is locked.
+    @State var pinchInsertStyle: PinchInsertStyle = .contextual
+    #if os(iOS)
+    @Environment(\.scenePhase) private var scenePhase
+    #endif
     /// Index of the slot the gap will open at, captured once at gesture start.
     /// Recomputing each update is wrong: as the gap grows it shifts the rows
     /// below it, mutating their `midY`, which can flip the calculation to an
@@ -362,9 +372,6 @@ public struct EditorView: View {
                 onPinchUpdate: { value in
                     !readOnly && handlePinchUpdate(value)
                 },
-                onPinchThirdFingerTap: {
-                    if !readOnly { handlePinchThirdFingerTap() }
-                },
                 onPinchCommit: { value in
                     if !readOnly { handlePinchCommit(value) }
                 },
@@ -397,7 +404,7 @@ public struct EditorView: View {
                 scrollPosition: $scrollPosition,
                 isIOSReorderEnabled: !readOnly && !pinchGestureActive,
                 isMacReorderEnabled: !readOnly && state.editingBlock == nil,
-                isPinchEnabled: !readOnly && state.editingBlock == nil && pinchDictationCompletionTask == nil,
+                isPinchEnabled: !readOnly && state.editingBlock == nil && pinchDictationCompletionTask == nil && pinchLock != .held,
                 pinchPreviewSlot: uncommittedPinchDraft?.slot,
                 pinchPreviewMinimumHeight: state.pinchPreview?.gapHeight ?? 0,
                 pinchPreview: uncommittedPinchDraft.map { draft in
@@ -495,6 +502,22 @@ public struct EditorView: View {
                 }
             }
             .animation(.easeOut(duration: 0.16), value: actionSheet?.id)
+            .overlay {
+                if pinchLock != .none {
+                    PinchLockOverlay(
+                        isHeld: pinchLock == .held,
+                        style: pinchInsertStyle,
+                        onToggle: togglePinchInsertStyle,
+                        onFinish: { finishLockedPinch() },
+                        onDivider: { finishLockedPinch(style: .divider) }
+                    )
+                }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                // Leaving the app ends the recording session; keep what was
+                // said rather than dropping it.
+                if phase != .active { finishLockedPinch() }
+            }
             #endif
             // Hand the controller down through the environment. BlockTextEditor reads it
             // to register typing-burst checkpoints and the final blur flush.
@@ -555,6 +578,7 @@ public struct EditorView: View {
                 #endif
             }
             .onDisappear {
+                finishLockedPinch()
                 blockActionTask?.cancel()
                 blockActionTask = nil
                 runningBlockActionID = nil
@@ -1086,9 +1110,12 @@ public struct EditorView: View {
     }
 
     /// Tree-aware insert (pinch-open, anywhere in the visible-row stack).
-    func insertBlock(_ newBlock: Block, at path: DropPath, focus: Bool = true) {
+    /// `indent` nests the new block under its previous sibling in the same
+    /// undo step; with no previous sibling it stays at `path`.
+    func insertBlock(_ newBlock: Block, at path: DropPath, focus: Bool = true, indent: Bool = false) {
         mutate("Insert Block") {
             document.insertSubtree(newBlock, at: path)
+            if indent { _ = document.indent(newBlock.id) }
         }
         if focus {
             transferFocus(to: .editor(newBlock.id, initialCursor: nil))

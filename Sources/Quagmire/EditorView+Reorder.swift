@@ -627,16 +627,27 @@ extension EditorView {
     ///   visually flat with the heading)
     /// - row[k] and row[k-1] share a parent → drop as the next sibling of
     ///   row[k-1] under that shared parent
+    /// - row[k-1] is a nested list-like row (bullet, numbered, todo, quote)
+    ///   whose sub-list ends here → drop as the next sibling of row[k-1], so
+    ///   the end of a nested list extends it rather than jumping out to
+    ///   row[k]'s depth (or the root, at the trailing slot)
     /// - otherwise (we're exiting row[k-1]'s subtree to land in below's
     ///   parent) → drop "before row[k]" at row[k]'s depth
     func dropPath(forVisibleSlot slot: Int, rows: [VisibleRow]) -> DropPath {
         if slot <= 0 {
             return DropPath(parent: nil, position: 0)
         }
+        let above = rows[min(slot, rows.count) - 1]
+        if let parentID = above.parentID,
+           above.kind.continuesNestedList,
+           slot >= rows.count || rows[slot].parentID != parentID && rows[slot].parentID != above.id,
+           let siblings = document.find(parentID)?.children,
+           let index = siblings.firstIndex(where: { $0.id == above.id }) {
+            return DropPath(parent: parentID, position: index + 1)
+        }
         if slot >= rows.count {
             return DropPath(parent: nil, position: document.children.count)
         }
-        let above = rows[slot - 1]
         let below = rows[slot]
 
         // First child of `above`. Catches the heading-flush case where above
@@ -676,14 +687,28 @@ extension EditorView {
         // Find the row whose (parent, position) matches — i.e. the row whose
         // insertion would land at this DropPath. The slot is "the index of the
         // row that would sit AT or AFTER this drop path's effective position."
+        let parentChildren: [Block] = path.parent.flatMap(document.find)?.children ?? document.children
         for (k, row) in rows.enumerated() {
             if row.parentID == path.parent {
-                let parentChildren: [Block] = path.parent.flatMap(document.find)?.children ?? document.children
                 if path.position < parentChildren.count {
                     let target = parentChildren[path.position].id
                     if row.id == target { return k }
                 }
             }
+        }
+        // Appending to a nested list: the slot sits just past the subtree
+        // of the parent's last child.
+        if path.parent != nil,
+           path.position == parentChildren.count,
+           let last = parentChildren.last,
+           let lastIndex = rows.firstIndex(where: { $0.id == last.id }) {
+            var subtree: Set<BlockID> = [last.id]
+            var k = lastIndex + 1
+            while k < rows.count, let parent = rows[k].parentID, subtree.contains(parent) {
+                subtree.insert(rows[k].id)
+                k += 1
+            }
+            if dropPath(forVisibleSlot: k, rows: rows) == path { return k }
         }
         return nil
     }
@@ -894,6 +919,17 @@ extension EditorView {
     func applyPreparedBlocks(_ blocks: [Block]) {
         for block in blocks {
             _ = document.replaceSubtree(block.id, with: [block])
+        }
+    }
+}
+
+private extension VisibleRowKind {
+    /// List-like rows whose nested run a drop below them extends (the same
+    /// kinds a pinch insert mirrors in `smartInsertBlock`).
+    var continuesNestedList: Bool {
+        switch self {
+        case .bullet, .numbered, .todo, .quote: true
+        default: false
         }
     }
 }

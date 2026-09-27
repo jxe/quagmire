@@ -1,5 +1,4 @@
 import SwiftUI
-import os
 import UniformTypeIdentifiers
 #if os(iOS)
 import UIKit
@@ -125,7 +124,6 @@ extension View {
         isEnabled: Bool,
         shouldBegin: @escaping (CGPoint) -> Bool = { _ in true },
         onUpdate: @escaping (PagePinchValue) -> Void,
-        onThirdFingerTap: @escaping () -> Void,
         onCommit: @escaping (PagePinchValue) -> Void
     ) -> some View {
         #if os(iOS)
@@ -134,7 +132,6 @@ extension View {
                 isEnabled: isEnabled,
                 shouldBegin: shouldBegin,
                 onUpdate: onUpdate,
-                onThirdFingerTap: onThirdFingerTap,
                 onCommit: onCommit
             )
         )
@@ -295,15 +292,10 @@ struct PagePinchValue {
     var startLocation: CGPoint
     var location: CGPoint
     var spreadDelta: CGFloat
-}
-
-struct PagePinchThirdTapGeometry {
-    static let fingerExclusionRadius: CGFloat = 36
-
-    static func allows(_ point: CGPoint, awayFrom first: CGPoint, and second: CGPoint) -> Bool {
-        hypot(point.x - first.x, point.y - first.y) > fingerExclusionRadius
-            && hypot(point.x - second.x, point.y - second.y) > fingerExclusionRadius
-    }
+    /// The finger midpoint's position across the visible scroll view, 0 at
+    /// the leading edge and 1 at the trailing edge. Sliding an open pinch into
+    /// toward the trailing edge locks it (see `PinchLockZone`).
+    var horizontalFraction: CGFloat = 0.5
 }
 
 /// Reference type so property mutations (driven by every scroll tick) don't
@@ -558,7 +550,6 @@ struct IOSPagePinchGestureBridge: UIViewRepresentable {
     var isEnabled: Bool
     var shouldBegin: (CGPoint) -> Bool
     var onUpdate: (PagePinchValue) -> Void
-    var onThirdFingerTap: () -> Void
     var onCommit: (PagePinchValue) -> Void
 
     func makeUIView(context: Context) -> UIView {
@@ -572,7 +563,6 @@ struct IOSPagePinchGestureBridge: UIViewRepresentable {
     func updateUIView(_ view: UIView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.recognizer?.isEnabled = isEnabled
-        context.coordinator.thirdTapRecognizer?.isEnabled = isEnabled
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -595,7 +585,6 @@ struct IOSPagePinchGestureBridge: UIViewRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var parent: IOSPagePinchGestureBridge
         weak var recognizer: UIPinchGestureRecognizer?
-        weak var thirdTapRecognizer: ThirdFingerPinchTapRecognizer?
         weak var scrollView: UIScrollView?
         private var startDistance: CGFloat = 0
         private var startMidpoint: CGPoint = .zero
@@ -610,23 +599,11 @@ struct IOSPagePinchGestureBridge: UIViewRepresentable {
             while let v = current {
                 if let scroll = v as? UIScrollView {
                     let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
-                    let thirdTap = ThirdFingerPinchTapRecognizer(target: nil, action: nil)
-                    thirdTap.pinchRecognizer = pinch
-                    thirdTap.onThirdFingerTap = { [weak self] in
-                        self?.parent.onThirdFingerTap()
-                    }
                     pinch.cancelsTouchesInView = false
                     pinch.delegate = self
                     pinch.isEnabled = parent.isEnabled
-                    thirdTap.cancelsTouchesInView = true
-                    thirdTap.delaysTouchesBegan = false
-                    thirdTap.delaysTouchesEnded = false
-                    thirdTap.delegate = self
-                    thirdTap.isEnabled = parent.isEnabled
                     scroll.addGestureRecognizer(pinch)
-                    scroll.addGestureRecognizer(thirdTap)
                     self.recognizer = pinch
-                    self.thirdTapRecognizer = thirdTap
                     self.scrollView = scroll
                     return
                 }
@@ -638,11 +615,7 @@ struct IOSPagePinchGestureBridge: UIViewRepresentable {
             if let recognizer, let scrollView {
                 scrollView.removeGestureRecognizer(recognizer)
             }
-            if let thirdTapRecognizer, let scrollView {
-                scrollView.removeGestureRecognizer(thirdTapRecognizer)
-            }
             recognizer = nil
-            thirdTapRecognizer = nil
             scrollView = nil
         }
 
@@ -692,10 +665,12 @@ struct IOSPagePinchGestureBridge: UIViewRepresentable {
                 midScroll = recognizer.location(in: scrollView)
             }
             let midPage = pageCoordinateLocation(for: midScroll, scrollView: scrollView)
+            let width = scrollView.bounds.width
             return PagePinchValue(
                 startLocation: startMidpoint,
                 location: midPage,
-                spreadDelta: currentDistance - startDistance
+                spreadDelta: currentDistance - startDistance,
+                horizontalFraction: width > 0 ? (midScroll.x - scrollView.contentOffset.x) / width : 0.5
             )
         }
 
@@ -722,150 +697,8 @@ struct IOSPagePinchGestureBridge: UIViewRepresentable {
             _ gestureRecognizer: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
         ) -> Bool {
-            if gestureRecognizer === thirdTapRecognizer || other === thirdTapRecognizer {
-                return gestureRecognizer === recognizer || other === recognizer
-            }
-            return true
+            true
         }
-    }
-}
-
-/// A sibling recognizer for the third touch. `UIPinchGestureRecognizer` does not
-/// reliably deliver touches beyond the two it chose for the pinch, so trying
-/// to observe the tap from a pinch subclass misses it on device. Once an extra
-/// touch begins during an active pinch, this recognizer consumes that touch so
-/// it cannot activate editor content. Eligible short taps cycle insertion mode.
-@MainActor
-final class ThirdFingerPinchTapRecognizer: UIGestureRecognizer {
-    private static let logger = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "Quagmire",
-        category: "pinch"
-    )
-
-    var onThirdFingerTap: (() -> Void)?
-    weak var pinchRecognizer: UIPinchGestureRecognizer?
-
-    private var primaryTouches: [UITouch] = []
-    private weak var thirdTouch: UITouch?
-    private var thirdTouchStart: CGPoint = .zero
-    private var thirdTouchStartTime: TimeInterval = 0
-    private var thirdTouchIsEligible = false
-    private static let maximumTapDuration: TimeInterval = 0.65
-    private static let maximumTapMovement: CGFloat = 36
-
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        for touch in touches {
-            if primaryTouches.count < 2 {
-                primaryTouches.append(touch)
-            } else if thirdTouch == nil, let view {
-                let point = touch.location(in: view)
-                guard pinchIsActive else {
-                    Self.logger.debug("extra touch ignored because pinch is not active")
-                    continue
-                }
-                thirdTouch = touch
-                thirdTouchStart = point
-                thirdTouchStartTime = touch.timestamp
-                thirdTouchIsEligible = pointIsAwayFromPrimaryTouches(point, in: view)
-                if state == .possible {
-                    state = .began
-                } else {
-                    state = .changed
-                }
-                guard thirdTouchIsEligible else {
-                    Self.logger.debug(
-                        "third touch inside a pinch-finger exclusion zone at x=\(point.x, privacy: .public) y=\(point.y, privacy: .public)"
-                    )
-                    continue
-                }
-                Self.logger.debug(
-                    "third-finger candidate began at x=\(point.x, privacy: .public) y=\(point.y, privacy: .public)"
-                )
-            }
-        }
-    }
-
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-        if let thirdTouch, touches.contains(thirdTouch), let view {
-            let point = thirdTouch.location(in: view)
-            if hypot(point.x - thirdTouchStart.x, point.y - thirdTouchStart.y) > Self.maximumTapMovement {
-                if thirdTouchIsEligible {
-                    Self.logger.debug("third-finger candidate rejected after moving")
-                }
-                thirdTouchIsEligible = false
-            }
-        }
-    }
-
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-        let completedTap: Bool
-        if let thirdTouch, touches.contains(thirdTouch), let view {
-            let point = thirdTouch.location(in: view)
-            let duration = thirdTouch.timestamp - thirdTouchStartTime
-            let movement = hypot(point.x - thirdTouchStart.x, point.y - thirdTouchStart.y)
-            completedTap = thirdTouchIsEligible
-                && duration <= Self.maximumTapDuration
-                && movement <= Self.maximumTapMovement
-            Self.logger.debug(
-                "third-finger candidate ended accepted=\(completedTap, privacy: .public) duration=\(duration, privacy: .public) movement=\(movement, privacy: .public)"
-            )
-            clearThirdTouch()
-            if state == .began {
-                state = .changed
-            }
-        } else {
-            completedTap = false
-        }
-        if completedTap { onThirdFingerTap?() }
-        finishIfPrimaryTouchEnded(in: touches)
-    }
-
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-        if let thirdTouch, touches.contains(thirdTouch) {
-            clearThirdTouch()
-        }
-        finishIfPrimaryTouchEnded(in: touches)
-    }
-
-    override func reset() {
-        super.reset()
-        primaryTouches.removeAll(keepingCapacity: true)
-        clearThirdTouch()
-    }
-
-    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
-        preventedGestureRecognizer !== pinchRecognizer
-    }
-
-    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
-        false
-    }
-
-    private var pinchIsActive: Bool {
-        pinchRecognizer?.state == .began || pinchRecognizer?.state == .changed
-    }
-
-    private func pointIsAwayFromPrimaryTouches(_ point: CGPoint, in view: UIView) -> Bool {
-        guard primaryTouches.count == 2 else { return false }
-        return PagePinchThirdTapGeometry.allows(
-            point,
-            awayFrom: primaryTouches[0].location(in: view),
-            and: primaryTouches[1].location(in: view)
-        )
-    }
-
-    private func clearThirdTouch() {
-        thirdTouch = nil
-        thirdTouchStart = .zero
-        thirdTouchStartTime = 0
-        thirdTouchIsEligible = false
-    }
-
-    private func finishIfPrimaryTouchEnded(in touches: Set<UITouch>) {
-        guard primaryTouches.contains(where: { primary in
-            touches.contains(where: { $0 === primary })
-        }) else { return }
-        state = state == .possible ? .failed : .ended
     }
 }
 

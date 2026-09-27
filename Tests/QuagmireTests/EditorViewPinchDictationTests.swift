@@ -23,7 +23,7 @@ struct EditorViewPinchDictationTests {
         #expect(host.persistCalls == 1)
     }
 
-    @Test func silenceFocusesTheEmptyInsertedBlock() {
+    @Test func silenceLeavesABlankParagraphInNavigationMode() {
         let block = Block.paragraph(text: AttributedString())
         let document = Document(id: DocumentID("test"), children: [block])
         let state = EditorState()
@@ -33,9 +33,29 @@ struct EditorViewPinchDictationTests {
 
         editor.applyPinchDictationCompletion(.noSpeech, to: block.id)
 
-        #expect(state.editingBlock == block.id)
-        #expect(document.find(block.id)!.text.characters.isEmpty)
+        #expect(state.cursor == block.id)
+        #expect(state.editingBlock == nil)
+        #expect(document.find(block.id)!.kind == .paragraph(text: AttributedString()))
         #expect(!document.undoManager!.canUndo)
+    }
+
+    @Test func silenceTurnsABulletOrHeadingIntoABlankParagraph() {
+        for inserted in [
+            Block.bullet(text: AttributedString()),
+            Block.heading(level: .h1, text: AttributedString()),
+        ] {
+            let document = Document(id: DocumentID("test"), children: [inserted])
+            let state = EditorState()
+            state.setCursor(inserted.id)
+            let editor = EditorView(document: document, state: state, host: PinchDictationTestHost())
+            editor.installUndoApply()
+
+            editor.applyPinchDictationCompletion(.transcript("   "), to: inserted.id)
+
+            #expect(document.find(inserted.id)!.kind == .paragraph(text: AttributedString()))
+            #expect(state.cursor == inserted.id)
+            #expect(state.editingBlock == nil)
+        }
     }
 
     @Test func completionDoesNotOverwriteAChangedBlockOrStealMovedFocus() {
@@ -67,53 +87,149 @@ struct EditorViewPinchDictationTests {
         #expect(document.children == [existing])
     }
 
-    @Test func thirdFingerTapCyclesThroughAllFourInsertionModes() {
+    @Test func lockedStylesShapeThePreviewAndTheCommittedBlock() {
         let contextual = Block.bullet(text: AttributedString())
         var draft = PinchDictationDraft(block: contextual, slot: 1)
-            .replacingText(with: "spoken contextual text")
+            .replacingText(with: "spoken text")
 
-        #expect(draft.insertionMode == .contextual)
-        #expect(draft.insertionMode.acceptsDictation)
-        #expect(draft.insertionMode.focusesInsertedBlock)
-        #expect(String(draft.block.text.characters) == "spoken contextual text")
+        #expect(draft.style == .contextual)
+        #expect(draft.block.kind == .bullet(text: AttributedString("spoken text")))
+        #expect(draft.committedBlock.kind == .bullet(text: AttributedString()))
 
-        draft = draft.cyclingInsertionMode()
-        #expect(draft.insertionMode == .divider)
-        #expect(!draft.insertionMode.acceptsDictation)
-        #expect(!draft.insertionMode.focusesInsertedBlock)
-        #expect(draft.block.kind == .divider)
-
-        draft = draft.replacingText(with: "spoken heading text")
-        #expect(draft.block.kind == .divider)
-
-        draft = draft.cyclingInsertionMode()
-        #expect(draft.insertionMode == .emptyParagraph)
-        #expect(!draft.insertionMode.acceptsDictation)
-        #expect(!draft.insertionMode.focusesInsertedBlock)
-        #expect(draft.block.kind == .paragraph(text: AttributedString()))
-        #expect(draft.committedBlock.kind == .paragraph(text: AttributedString()))
-
-        draft = draft.cyclingInsertionMode()
-        #expect(draft.insertionMode == .heading)
-        #expect(draft.insertionMode.acceptsDictation)
-        #expect(draft.insertionMode.focusesInsertedBlock)
-        #expect(String(draft.block.text.characters) == "spoken heading text")
+        draft = draft.withStyle(.heading)
+        #expect(draft.block.kind == .heading(level: .h1, text: AttributedString("spoken text")))
         #expect(draft.committedBlock.kind == .heading(level: .h1, text: AttributedString()))
 
-        draft = draft.cyclingInsertionMode()
-        #expect(draft.insertionMode == .contextual)
-        #expect(draft.insertionMode.acceptsDictation)
-        #expect(String(draft.block.text.characters) == "spoken heading text")
+        draft = draft.withStyle(.indentedBullet)
+        #expect(draft.block.kind == .bullet(text: AttributedString("spoken text")))
+        #expect(draft.committedBlock.kind == .bullet(text: AttributedString()))
+
+        draft = draft.withStyle(.divider)
+        #expect(!draft.style.acceptsDictation)
+        #expect(draft.block.kind == .divider)
+        #expect(draft.committedBlock.kind == .divider)
+
+        draft = draft.withStyle(.contextual)
+        #expect(draft.block.kind == .bullet(text: AttributedString("spoken text")))
+        #expect(draft.committedBlock.id == contextual.id)
     }
 
-    @Test func thirdTapMayLandAnywhereOutsideThePinchFingerExclusionZones() {
-        let first = CGPoint(x: 20, y: 100)
-        let second = CGPoint(x: 220, y: 100)
+    @Test func headingPreviewShowsAPlaceholderUntilSpeechArrives() {
+        let draft = PinchDictationDraft(block: .paragraph(), slot: 0).withStyle(.heading)
+        #expect(draft.block.kind == .heading(level: .h1, text: AttributedString("Heading")))
+    }
 
-        #expect(PagePinchThirdTapGeometry.allows(CGPoint(x: 120, y: 110), awayFrom: first, and: second))
-        #expect(PagePinchThirdTapGeometry.allows(CGPoint(x: 120, y: 300), awayFrom: first, and: second))
-        #expect(!PagePinchThirdTapGeometry.allows(CGPoint(x: 55, y: 100), awayFrom: first, and: second))
-        #expect(PagePinchThirdTapGeometry.allows(CGPoint(x: 57, y: 100), awayFrom: first, and: second))
+    @Test func lockArmsPartWayFromTheOpeningPointToTheTrailingEdge() {
+        // Centred: 0.5 + 0.5 × 0.35 = 0.675, releasing below 0.625.
+        let centred = PinchLockZone(origin: 0.5)
+        #expect(centred.phase(after: .none, fraction: 0.67) == .none)
+        #expect(centred.phase(after: .none, fraction: 0.68) == .armed)
+        #expect(centred.phase(after: .armed, fraction: 0.64) == .armed)
+        #expect(centred.phase(after: .armed, fraction: 0.6) == .none)
+        #expect(centred.phase(after: .held, fraction: 0.1) == .held)
+
+        // Leading: 0.2 + 0.8 × 0.35 = 0.48.
+        let leading = PinchLockZone(origin: 0.2)
+        #expect(leading.phase(after: .none, fraction: 0.47) == .none)
+        #expect(leading.phase(after: .none, fraction: 0.49) == .armed)
+
+        // Trailing: 0.8 + 0.2 × 0.35 = 0.87.
+        let trailing = PinchLockZone(origin: 0.8)
+        #expect(trailing.phase(after: .none, fraction: 0.86) == .none)
+        #expect(trailing.phase(after: .none, fraction: 0.88) == .armed)
+        #expect(trailing.exit > trailing.origin)
+
+        let edge = PinchLockZone(origin: 0.97)
+        #expect(edge.enter == PinchLockZone.maximumEnter)
+        #expect(edge.phase(after: .none, fraction: 0.97) == .armed)
+    }
+
+    @Test func heldCaptureLayerTellsTapsFromSwipes() {
+        #expect(PinchLockZone.release(for: CGSize(width: 3, height: -4)) == .tap)
+        #expect(PinchLockZone.release(for: CGSize(width: -120, height: 20)) == .swipe)
+        #expect(PinchLockZone.release(for: CGSize(width: 120, height: 90)) == .none)
+        #expect(PinchLockZone.release(for: CGSize(width: 10, height: 140)) == .none)
+    }
+
+    @Test func slotBelowTheLastNestedBulletContinuesTheSubList() {
+        let bar = Block.bullet(text: AttributedString("bar"))
+        let foo = Block.bullet(text: AttributedString("foo"), children: [bar])
+        let baz = Block.bullet(text: AttributedString("baz"))
+        let document = Document(id: DocumentID("test"), children: [foo, baz])
+        let editor = EditorView(document: document, state: EditorState(), host: PinchDictationTestHost())
+        let (rows, _) = BlockLayoutCache().currentVisibleRows(snapshot: document.children, isCollapsed: { _ in false })
+
+        // Between bar and baz: a sibling after bar, not a root row before baz.
+        #expect(editor.dropPath(forVisibleSlot: 2, rows: rows) == DropPath(parent: foo.id, position: 1))
+        // Other slots are unchanged.
+        #expect(editor.dropPath(forVisibleSlot: 1, rows: rows) == DropPath(parent: foo.id, position: 0))
+        #expect(editor.dropPath(forVisibleSlot: 3, rows: rows) == DropPath(parent: nil, position: 2))
+    }
+
+    @Test func trailingSlotBelowANestedBulletContinuesTheSubList() {
+        let bar = Block.bullet(text: AttributedString("bar"))
+        let foo = Block.bullet(text: AttributedString("foo"), children: [bar])
+        let document = Document(id: DocumentID("test"), children: [foo])
+        let editor = EditorView(document: document, state: EditorState(), host: PinchDictationTestHost())
+        let (rows, _) = BlockLayoutCache().currentVisibleRows(snapshot: document.children, isCollapsed: { _ in false })
+
+        #expect(editor.dropPath(forVisibleSlot: 2, rows: rows) == DropPath(parent: foo.id, position: 1))
+    }
+
+    @Test func reorderHoverMapsASubListAppendBackToItsSlot() {
+        let qux = Block.bullet(text: AttributedString("qux"))
+        let bar = Block.bullet(text: AttributedString("bar"), children: [qux])
+        let foo = Block.bullet(text: AttributedString("foo"), children: [bar])
+        let baz = Block.bullet(text: AttributedString("baz"))
+        let document = Document(id: DocumentID("test"), children: [foo, baz])
+        let state = EditorState()
+        let editor = EditorView(document: document, state: state, host: PinchDictationTestHost())
+        let (rows, _) = BlockLayoutCache().currentVisibleRows(snapshot: document.children, isCollapsed: { _ in false })
+
+        // foo, bar, qux, baz: the slot before baz extends qux's list.
+        let path = editor.dropPath(forVisibleSlot: 3, rows: rows)
+        #expect(path == DropPath(parent: bar.id, position: 1))
+        state.currentDropTarget = .insertAt(path)
+        #expect(editor.visibleSlotForCurrentDropPath(in: rows) == 3)
+    }
+
+    @Test func slotBelowAHeadingSectionStillLandsAtTheNextHeading() {
+        let body = Block.paragraph(text: AttributedString("body"))
+        let first = Block.heading(level: .h1, text: AttributedString("One"), children: [body])
+        let second = Block.heading(level: .h1, text: AttributedString("Two"))
+        let document = Document(id: DocumentID("test"), children: [first, second])
+        let editor = EditorView(document: document, state: EditorState(), host: PinchDictationTestHost())
+        let (rows, _) = BlockLayoutCache().currentVisibleRows(snapshot: document.children, isCollapsed: { _ in false })
+
+        #expect(editor.dropPath(forVisibleSlot: 2, rows: rows) == DropPath(parent: nil, position: 1))
+    }
+
+    @Test func indentedInsertNestsUnderThePreviousSiblingInOneUndoStep() {
+        let parent = Block.bullet(text: AttributedString("parent"))
+        let document = Document(id: DocumentID("test"), children: [parent])
+        let editor = EditorView(document: document, state: EditorState(), host: PinchDictationTestHost())
+        editor.installUndoApply()
+        let inserted = Block.bullet(text: AttributedString())
+
+        editor.insertBlock(inserted, at: DropPath(parent: nil, position: 1), focus: false, indent: true)
+
+        #expect(document.children.map(\.id) == [parent.id])
+        #expect(document.find(parent.id)!.children.map(\.id) == [inserted.id])
+        document.undoManager!.undo()
+        #expect(document.find(inserted.id) == nil)
+        #expect(document.children.map(\.id) == [parent.id])
+    }
+
+    @Test func indentedInsertWithNoPreviousSiblingStaysAtTheSlot() {
+        let below = Block.paragraph(text: AttributedString("below"))
+        let document = Document(id: DocumentID("test"), children: [below])
+        let editor = EditorView(document: document, state: EditorState(), host: PinchDictationTestHost())
+        editor.installUndoApply()
+        let inserted = Block.bullet(text: AttributedString())
+
+        editor.insertBlock(inserted, at: DropPath(parent: nil, position: 0), focus: false, indent: true)
+
+        #expect(document.children.map(\.id) == [inserted.id, below.id])
     }
 
     @Test func provisionalChildrenUseTheSameRenderedDepthAsCommittedRows() {

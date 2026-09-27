@@ -2,27 +2,84 @@ import SwiftUI
 
 // MARK: - Pinch-open-to-insert (iOS)
 
-enum PinchInsertionMode: Equatable, Sendable {
+/// What a pinch inserts. An unlocked release is always `contextual`; the
+/// other styles are chosen while the pinch is locked open.
+enum PinchInsertStyle: Equatable, Sendable {
+    /// The neighbour-shaped block (bullet, numbered, todo, quote, or
+    /// paragraph) with whatever was said.
     case contextual
-    case emptyParagraph
-    case divider
+    /// An H1 made of whatever was said.
     case heading
+    /// A bullet nested one level under the row above.
+    case indentedBullet
+    /// A divider; speech is discarded.
+    case divider
 
-    var nextMode: PinchInsertionMode {
-        switch self {
-        case .contextual: .divider
-        case .emptyParagraph: .heading
-        case .divider: .emptyParagraph
-        case .heading: .contextual
+    var acceptsDictation: Bool { self != .divider }
+}
+
+/// Sliding an open pinch into the trailing band of the screen locks it:
+/// `armed` while the fingers are still down there, `held` once they lift.
+/// While held, recording continues until a tap finishes it.
+enum PinchLockPhase: Equatable, Sendable {
+    case none
+    case armed
+    case held
+}
+
+/// The lock zone for one pinch, measured from where the finger midpoint sat
+/// when the gap first opened (`origin`, a fraction of the visible width).
+/// Arming takes a slide a third of the way from there to the trailing edge, so a pinch
+/// opened near the leading edge travels further than one opened near the
+/// middle, and one opened near the trailing edge still needs a deliberate
+/// slide rather than locking at once.
+struct PinchLockZone: Equatable {
+    /// Share of the remaining distance to the trailing edge that arms.
+    static let travel: CGFloat = 0.35
+    /// Keep the zone reachable for a pinch opened hard against the edge.
+    static let maximumEnter: CGFloat = 0.92
+    /// Arming releases this far short of `enter`, so a hand resting on the
+    /// boundary doesn't flicker in and out.
+    static let hysteresis: CGFloat = 0.05
+
+    let origin: CGFloat
+
+    init(origin: CGFloat) {
+        self.origin = min(1, max(0, origin))
+    }
+
+    /// Midpoint fraction of the visible width that arms the lock.
+    var enter: CGFloat {
+        min(Self.maximumEnter, origin + (1 - origin) * Self.travel)
+    }
+
+    var exit: CGFloat {
+        max(origin, enter - Self.hysteresis)
+    }
+
+    /// The next finger-down phase for a midpoint at `fraction`. `held` is
+    /// never produced here; it only follows a release while `armed`.
+    func phase(after current: PinchLockPhase, fraction: CGFloat) -> PinchLockPhase {
+        switch current {
+        case .none: fraction >= enter ? .armed : .none
+        case .armed: fraction < exit ? .none : .armed
+        case .held: .held
         }
     }
 
-    var acceptsDictation: Bool {
-        self == .contextual || self == .heading
-    }
+    /// A drag on the held capture layer: a clear horizontal swipe inserts a
+    /// divider, a near-stationary touch is a tap that finishes, and anything
+    /// else (a vertical drag) is ignored.
+    enum Release: Equatable { case tap, swipe, none }
 
-    var focusesInsertedBlock: Bool {
-        self == .contextual || self == .heading
+    static let tapSlop: CGFloat = 12
+    static let swipeDistance: CGFloat = 80
+
+    static func release(for translation: CGSize) -> Release {
+        let dx = abs(translation.width), dy = abs(translation.height)
+        if dx >= swipeDistance && dx > dy * 2 { return .swipe }
+        if hypot(dx, dy) <= tapSlop { return .tap }
+        return .none
     }
 }
 
@@ -31,7 +88,7 @@ struct PinchDictationDraft {
     var slot: Int
     private var contextualBlock: Block
     private var latestTranscript = ""
-    private(set) var insertionMode: PinchInsertionMode = .contextual
+    private(set) var style: PinchInsertStyle = .contextual
 
     init(block: Block, slot: Int) {
         self.block = block
@@ -46,37 +103,39 @@ struct PinchDictationDraft {
         return copy
     }
 
-    func cyclingInsertionMode() -> PinchDictationDraft {
+    func withStyle(_ style: PinchInsertStyle) -> PinchDictationDraft {
         var copy = self
-        copy.insertionMode = insertionMode.nextMode
+        copy.style = style
         copy.refreshPreviewBlock()
         return copy
     }
 
+    /// The block to insert, empty: speech arrives through
+    /// `applyPinchDictationCompletion` once the recorder finishes.
     var committedBlock: Block {
-        switch insertionMode {
+        switch style {
         case .contextual:
             contextualBlock
-        case .emptyParagraph:
-            .paragraph(text: AttributedString(), id: block.id)
-        case .divider:
-            .divider(id: block.id)
         case .heading:
             .heading(level: .h1, text: AttributedString(), id: block.id)
+        case .indentedBullet:
+            .bullet(text: AttributedString(), id: block.id)
+        case .divider:
+            .divider(id: block.id)
         }
     }
 
     private mutating func refreshPreviewBlock() {
-        switch insertionMode {
+        switch style {
         case .contextual:
             block = contextualBlock.withText(AttributedString(latestTranscript))
-        case .emptyParagraph:
-            block = .paragraph(text: AttributedString(), id: block.id)
-        case .divider:
-            block = .divider(id: block.id)
         case .heading:
             let text = latestTranscript.isEmpty ? "Heading" : latestTranscript
             block = .heading(level: .h1, text: AttributedString(text), id: block.id)
+        case .indentedBullet:
+            block = .bullet(text: AttributedString(latestTranscript), id: block.id)
+        case .divider:
+            block = .divider(id: block.id)
         }
     }
 }
@@ -154,6 +213,10 @@ extension EditorView {
                 SoundFX.play(.pinchOpen, enabled: configuration.isAudioFeedbackEnabled)
                 preparePinchDictationDraft(at: insertIndex)
                 beginPinchDictationIfAvailable()
+                pinchLockZone = PinchLockZone(origin: value.horizontalFraction)
+            }
+            if pinchCrossedInsertThreshold {
+                updatePinchLock(fraction: value.horizontalFraction)
             }
             return true
         } else if state.pinchPreview != nil {
@@ -169,29 +232,37 @@ extension EditorView {
     }
 
     /// Reset the pinch's per-gesture bookkeeping (insert-slot anchor + the
-    /// threshold-crossed latch). The preview state itself is owned by
-    /// `EditorState.pinchPreview` and cleared separately.
+    /// threshold-crossed latch + a not-yet-held lock). The preview state
+    /// itself is owned by `EditorState.pinchPreview` and cleared separately.
     private func clearPinchThresholds() {
         pinchPendingInsertIndex = nil
         pinchCrossedInsertThreshold = false
+        if pinchLock == .armed {
+            pinchLock = .none
+            pinchInsertStyle = .contextual
+        }
+        pinchLockZone = nil
     }
 
-    func handlePinchThirdFingerTap() {
-        let gapHeight = state.pinchPreview?.gapHeight ?? 0
-        guard pinchCrossedInsertThreshold,
-              let draft = pinchDictationDraft else {
-            configuration.diagnostics.pinch.debug(
-                "third-finger callback ignored threshold=\(self.pinchCrossedInsertThreshold, privacy: .public) gap=\(gapHeight, privacy: .public) draft=\(self.pinchDictationDraft != nil, privacy: .public)"
-            )
-            return
+    /// Arm or disarm the lock as the finger midpoint moves across the screen.
+    private func updatePinchLock(fraction: CGFloat) {
+        let zone = pinchLockZone ?? PinchLockZone(origin: fraction)
+        let next = zone.phase(after: pinchLock, fraction: fraction)
+        guard next != pinchLock else { return }
+        // The badge and the style buttons appear together on arming, with
+        // a firm tap, so the lock is felt before the fingers lift.
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.75)) {
+            pinchLock = next
+            if next == .none { pinchInsertStyle = .contextual }
         }
-        let cycled = draft.cyclingInsertionMode()
-        pinchDictationDraft = cycled
-        pinchInsertionMode = cycled.insertionMode
+        if next == .armed {
+            Haptics.heavy(enabled: configuration.isHapticFeedbackEnabled)
+        } else {
+            Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
+        }
         configuration.diagnostics.pinch.debug(
-            "third-finger tap selected \(String(describing: cycled.insertionMode), privacy: .public)"
+            "pinch lock \(String(describing: next), privacy: .public)"
         )
-        Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
     }
 
     func handlePinchCommit(_ value: PagePinchValue) {
@@ -202,44 +273,16 @@ extension EditorView {
             let slot = pinchPendingInsertIndex
                 ?? preview?.insertIndex
                 ?? pinchInsertIndex(for: value.startLocation)
-            // Resolve the visible slot to a tree DropPath, with the visible-row
-            // above/below at that slot as neighbour context for kind inference.
-            let (rows, _) = layoutCache.currentVisibleRows(
-                snapshot: document.children, isCollapsed: isCollapsedSection
-            )
-            let path = dropPath(forVisibleSlot: slot, rows: rows)
-            let above: VisibleRowKind? = (slot - 1 >= 0 && slot - 1 < rows.count) ? rows[slot - 1].kind : nil
-            let below: VisibleRowKind? = (slot >= 0 && slot < rows.count) ? rows[slot].kind : nil
-            // The open distance has one semantic threshold. Contextual mode
-            // keeps the established neighbour-shaped insertion and optional
-            // dictation behavior. A third-finger tap enters the explicit mode
-            // cycle; only Heading also consumes the already-running audio.
-            let newBlock = pinchDictationDraft?.committedBlock
-                ?? smartInsertBlock(above: above, below: below)
-            let usesDictation = pinchInsertionMode.acceptsDictation && pinchDictation != nil
-            let focusesTextBlock = pinchInsertionMode.focusesInsertedBlock && !usesDictation
-            configuration.diagnostics.pinch.debug(
-                "pinch committed mode=\(String(describing: pinchInsertionMode), privacy: .public) dictation=\(usesDictation, privacy: .public)"
-            )
-            // Bundle the structural insert and the gap collapse into the same
-            // spring transaction so the new row appears inside the opened gap
-            // and the surrounding rows close in around it. Without the shared
-            // animation transaction the gap snap-closes first and the new row
-            // pops in afterwards — visually disjoint.
-            Haptics.heavy(enabled: configuration.isHapticFeedbackEnabled)
-            withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
-                insertBlock(newBlock, at: path, focus: focusesTextBlock)
-                if usesDictation {
-                    transferFocus(to: .nav(cursor: newBlock.id))
-                }
-                state.setPinchPreview(nil)
+            if pinchLock == .armed {
+                // Released inside the lock zone: keep the gap and the recorder
+                // open. A tap (or swipe) on the held overlay finishes.
+                pinchPendingInsertIndex = slot
+                Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
+                pinchLock = .held
+                configuration.diagnostics.pinch.debug("pinch held open")
+                return
             }
-            if usesDictation {
-                finishPinchDictation(for: newBlock.id)
-            } else {
-                cancelPinchDictationIfNeeded()
-                pinchDictationDraft = nil
-            }
+            commitPinchInsert(at: slot, style: .contextual)
         } else {
             cancelPinchDictationIfNeeded()
             pinchDictationDraft = nil
@@ -247,9 +290,86 @@ extension EditorView {
                 state.setPinchPreview(nil)
             }
         }
+        resetPinchGesture()
+    }
+
+    /// Finish a held pinch: insert the block in the chosen style. A tap
+    /// passes the toggled style; a horizontal swipe passes `.divider`.
+    func finishLockedPinch(style: PinchInsertStyle? = nil) {
+        guard pinchLock == .held else { return }
+        let slot = pinchPendingInsertIndex
+            ?? state.pinchPreview?.insertIndex
+            ?? pinchDictationDraft?.slot
+        if let slot, state.editingBlock == nil {
+            commitPinchInsert(at: slot, style: style ?? pinchInsertStyle)
+        } else {
+            cancelPinchDictationIfNeeded()
+            pinchDictationDraft = nil
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
+                state.setPinchPreview(nil)
+            }
+        }
+        withAnimation(.easeOut(duration: 0.16)) {
+            resetPinchGesture()
+        }
+    }
+
+    /// Toggle one of the locked pinch's style buttons. Heading and Indent are
+    /// mutually exclusive; toggling the active one returns to contextual.
+    func togglePinchInsertStyle(_ style: PinchInsertStyle) {
+        guard pinchLock != .none else { return }
+        let next: PinchInsertStyle = pinchInsertStyle == style ? .contextual : style
+        pinchInsertStyle = next
+        pinchDictationDraft = pinchDictationDraft?.withStyle(next)
+        Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
+    }
+
+    private func resetPinchGesture() {
         clearPinchThresholds()
-        pinchInsertionMode = .contextual
+        pinchLock = .none
+        pinchInsertStyle = .contextual
         pinchGestureActive = false
+    }
+
+    private func commitPinchInsert(at slot: Int, style: PinchInsertStyle) {
+        // Resolve the visible slot to a tree DropPath, with the visible-row
+        // above/below at that slot as neighbour context for kind inference.
+        let (rows, _) = layoutCache.currentVisibleRows(
+            snapshot: document.children, isCollapsed: isCollapsedSection
+        )
+        let path = dropPath(forVisibleSlot: slot, rows: rows)
+        let above: VisibleRowKind? = (slot - 1 >= 0 && slot - 1 < rows.count) ? rows[slot - 1].kind : nil
+        let below: VisibleRowKind? = (slot >= 0 && slot < rows.count) ? rows[slot].kind : nil
+        let draft = pinchDictationDraft?.withStyle(style)
+        let newBlock = draft?.committedBlock ?? smartInsertBlock(above: above, below: below)
+        let usesDictation = style.acceptsDictation && pinchDictation != nil
+        // Without a recorder the pinch is a plain insert, so a text block
+        // opens the keyboard. With one, the block waits in navigation mode
+        // for the transcript (or becomes a blank paragraph on silence).
+        let focusesTextBlock = style.acceptsDictation && !usesDictation
+        configuration.diagnostics.pinch.debug(
+            "pinch committed style=\(String(describing: style), privacy: .public) dictation=\(usesDictation, privacy: .public)"
+        )
+        // Bundle the structural insert and the gap collapse into the same
+        // spring transaction so the new row appears inside the opened gap
+        // and the surrounding rows close in around it. Without the shared
+        // animation transaction the gap snap-closes first and the new row
+        // pops in afterwards — visually disjoint.
+        Haptics.heavy(enabled: configuration.isHapticFeedbackEnabled)
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+            insertBlock(newBlock, at: path, focus: focusesTextBlock, indent: style == .indentedBullet)
+            if usesDictation {
+                transferFocus(to: .nav(cursor: newBlock.id))
+            }
+            state.setPinchPreview(nil)
+        }
+        if usesDictation {
+            pinchDictationDraft = draft
+            finishPinchDictation(for: newBlock.id)
+        } else {
+            cancelPinchDictationIfNeeded()
+            pinchDictationDraft = nil
+        }
     }
 
     private func beginPinchDictationIfAvailable() {
@@ -306,9 +426,10 @@ extension EditorView {
         visibleRows: [VisibleRow]
     ) -> some View {
         let path = dropPath(forVisibleSlot: draft.slot, rows: visibleRows)
-        let depth = path.parent.flatMap { parent in
+        let slotDepth = path.parent.flatMap { parent in
             visibleRows.first(where: { $0.id == parent })
         }.map { $0.kind.childDepth(from: $0.depth) } ?? 0
+        let depth = slotDepth + (draft.style == .indentedBullet && path.position > 0 ? 1 : 0)
         let previous = draft.slot > 0 && draft.slot <= visibleRows.count
             ? visibleRows[draft.slot - 1]
             : nil
@@ -335,6 +456,9 @@ extension EditorView {
         )
         .padding(.top, spacing)
         .accessibilityHidden(true)
+        .overlay(alignment: .trailing) {
+            PinchLockBadge(phase: pinchLock)
+        }
     }
 
     private func cancelPinchDictationIfNeeded() {
@@ -383,27 +507,35 @@ extension EditorView {
         guard let block = document.find(blockID), block.text.characters.isEmpty else { return }
         let isStillWaitingAtInsertedBlock = state.editingBlock == nil && state.cursor == blockID
 
+        let transcript: String
         switch completion {
         case .transcript(let rawTranscript):
-            let transcript = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !transcript.isEmpty else {
-                if isStillWaitingAtInsertedBlock {
-                    transferFocus(to: .editor(blockID, initialCursor: nil))
-                }
-                return
-            }
-            mutate("Insert Dictation") {
-                document.mutate(blockID) { current in
-                    current = current.withText(AttributedString(transcript))
+            transcript = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .noSpeech, .failed:
+            transcript = ""
+        }
+        guard !transcript.isEmpty else {
+            // Nothing was said: whatever style was chosen, leave a blank
+            // paragraph selected in navigation mode, without the keyboard.
+            if case .paragraph = block.kind {} else {
+                mutate("Blank Paragraph") {
+                    document.mutate(blockID) { current in
+                        current = .paragraph(id: blockID, children: current.children)
+                    }
                 }
             }
             if isStillWaitingAtInsertedBlock {
                 transferFocus(to: .nav(cursor: blockID))
             }
-        case .noSpeech, .failed:
-            if isStillWaitingAtInsertedBlock {
-                transferFocus(to: .editor(blockID, initialCursor: nil))
+            return
+        }
+        mutate("Insert Dictation") {
+            document.mutate(blockID) { current in
+                current = current.withText(AttributedString(transcript))
             }
+        }
+        if isStillWaitingAtInsertedBlock {
+            transferFocus(to: .nav(cursor: blockID))
         }
     }
 
