@@ -69,6 +69,7 @@ public struct EditorView: View {
     /// Intercepts keys that AppKit handles before SwiftUI or NSTextView can apply
     /// the editor's meaning: Shift-Tab focus traversal and fullscreen Escape.
     @State var macKeyMonitor: Any?
+    @State var macContentHasFocus = false
     #endif
     #if os(iOS)
     /// One-tick overlap during inter-block focus transfer: when `state.sessionState` flips
@@ -560,6 +561,7 @@ public struct EditorView: View {
             // the soft keyboard mid-split. Skip both on iOS.
             .focusable()
             .focused($pageFocused)
+            .background { MacEditorContentFocus(hasFocus: $macContentHasFocus) }
             #endif
             .onChange(of: accessoryReveal, initial: true) { _, _ in revealAccessory() }
             .onChange(of: missingAccessoryIDs, initial: true) { _, ids in unavailableAccessories(ids) }
@@ -754,7 +756,7 @@ public struct EditorView: View {
         #if os(iOS)
         let isSelected = false
         #else
-        let isSelected = selectedIDs.contains(block.id)
+        let isSelected = pageFocused && macContentHasFocus && selectedIDs.contains(block.id)
         #endif
         #if os(iOS)
         // Treat the just-transitioned-away block as still editing for one runloop
