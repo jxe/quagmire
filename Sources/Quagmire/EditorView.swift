@@ -1269,6 +1269,14 @@ public struct EditorView: View {
     func handleNavKeyPress(_ press: KeyPress) -> KeyPress.Result {
 #if os(macOS)
         guard !foreignTextInputHasFocus else { return .ignored }
+        // Keep the cached display gates beside the current native state so a
+        // host-specific focus failure can be diagnosed in the running app.
+        let window = NSApp.keyWindow
+        let responderType = window?.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
+        let nativeContentFocus = MacEditorContentFocus.Probe.isContentResponder(
+            window?.firstResponder, in: window?.contentView
+        )
+        configuration.diagnostics.navkey.debug("focus page=\(pageFocused, privacy: .public) content=\(macContentHasFocus, privacy: .public) appActive=\(NSApp.isActive, privacy: .public) keyWindow=\(window != nil, privacy: .public) nativeContent=\(nativeContentFocus, privacy: .public) responder=\(responderType, privacy: .public)")
 #endif
         configuration.diagnostics.navkey.debug("press key=\(String(describing: press.key), privacy: .public) modifiers=\(press.modifiers.rawValue, privacy: .public) cursor=\(String(describing: state.cursor), privacy: .public) selection=\(state.selection.count, privacy: .public) editing=\(String(describing: state.editingBlock), privacy: .public)")
         // The page remains in navigation mode while its icon-picker popover is
