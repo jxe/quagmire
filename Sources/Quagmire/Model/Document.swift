@@ -104,6 +104,19 @@ public final class Document: @MainActor Identifiable {
     @ObservationIgnored
     public private(set) var blockCopiesForCurrentCommit: [BlockID: BlockID] = [:]
 
+    /// Blocks explicitly relocated by this transaction, including their descendants.
+    /// Available during commit callbacks; consumers map these editor IDs to source.
+    @ObservationIgnored
+    public private(set) var movedBlocksForCurrentCommit: Set<BlockID> = []
+
+    private func recordMovedBlocks(_ blocks: [Block]) {
+        guard inTransaction else { return }
+        for block in blocks {
+            movedBlocksForCurrentCommit.insert(block.id)
+            recordMovedBlocks(block.children)
+        }
+    }
+
     /// Duplicate subtrees with fresh editor identities and explicit copy evidence.
     @discardableResult
     public func insertCopies(of originals: [Block], at target: DropPath) -> [Block] {
@@ -246,9 +259,10 @@ public final class Document: @MainActor Identifiable {
         }
         inTransaction = true
         blockCopiesForCurrentCommit = [:]
+        movedBlocksForCurrentCommit = []
         let transactionID = suppliedTransactionID ?? UUID()
         let inverses = inverseTransactions
-        defer { inTransaction = false; blockCopiesForCurrentCommit = [:]; transactionForCurrentCommit = nil }
+        defer { inTransaction = false; blockCopiesForCurrentCommit = [:]; movedBlocksForCurrentCommit = []; transactionForCurrentCommit = nil }
 
         let now = Date()
         let shouldCoalesce =
@@ -1082,6 +1096,7 @@ public final class Document: @MainActor Identifiable {
             by: delta,
             skippingHeadingIDs: skippingHeadingIDs
         ) else { return false }
+        recordMovedBlocks(plan.movedBlocks)
         for id in plan.orderedIDs { removeSubtree(id) }
         return insertSubtrees(plan.movedBlocks, at: plan.target)
     }
@@ -1128,6 +1143,7 @@ public final class Document: @MainActor Identifiable {
         }
         let adjustedPosition = max(0, min(target.position - removalsBeforeTarget, postCount))
         let dropPath = DropPath(parent: target.parent, position: adjustedPosition)
+        recordMovedBlocks(collected)
         return insertSubtrees(collected, at: dropPath)
     }
 
