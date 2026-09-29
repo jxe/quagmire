@@ -13,7 +13,9 @@ These instructions apply to the whole repository.
 
 ## Verification
 
-- Run the smallest focused tests while developing.
+- Run the smallest focused tests while developing and before ordinary commits.
+  Test the affected behavior; do not run the full test suite and platform builds
+  before every commit.
 - Before declaring a revision releasable, run `scripts/verify.sh`. It runs the
   package tests and clean macOS and iOS Simulator builds for `Quagmire` and
   `QuagmireExtras`.

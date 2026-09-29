@@ -1028,7 +1028,10 @@ final class ContainedTextView: NSTextView {
         }
         lm.ensureLayout(for: tc)
         let used = lm.usedRect(for: tc)
-        return NSSize(width: NSView.noIntrinsicMetric, height: ceil(used.height))
+        // Preserve fractional line spacing. SwiftUI handles alignment to the
+        // display's pixels; rounding to whole points adds a half-point below
+        // even line counts on Retina when lineSpacing is 3.5pt.
+        return NSSize(width: NSView.noIntrinsicMetric, height: used.height)
     }
 
     override func didChangeText() {
