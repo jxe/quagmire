@@ -61,6 +61,12 @@ struct NavKeyBindingTests {
         #expect(EditorView.navAction(for: .tab, modifiers: []) == .indent)
     }
 
+    @Test func backTabWithShiftOutdents() {
+        // Canopy's native event path retains Shift on NSBackTabCharacter.
+        #expect(EditorView.navAction(for: KeyEquivalent("\u{19}"), modifiers: .shift) == .outdent)
+        #expect(EditorView.navAction(for: KeyEquivalent("\u{19}"), modifiers: [.shift, .command]) == nil)
+    }
+
     @Test func backTabOutdents() {
         // Shift+Tab arrives as the BackTab character (U+0019), not .tab + .shift.
         #expect(EditorView.navAction(for: KeyEquivalent("\u{19}"), modifiers: []) == .outdent)

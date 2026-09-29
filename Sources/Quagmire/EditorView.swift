@@ -624,8 +624,15 @@ public struct EditorView: View {
             // load-bearing). Replaces five sites that each ran the same
             // double-`DispatchQueue.main.async` directly.
             .onChange(of: pageFocusToken) { _, _ in
+                configuration.diagnostics.navkey.debug("focus request token=\(pageFocusToken, privacy: .public) before=\(pageFocused, privacy: .public)")
                 pageFocused = false
-                DispatchQueue.main.async { pageFocused = true }
+                DispatchQueue.main.async {
+                    pageFocused = true
+                    configuration.diagnostics.navkey.debug("focus request applied")
+                }
+            }
+            .onChange(of: pageFocused) { oldValue, newValue in
+                configuration.diagnostics.navkey.debug("focus changed from=\(oldValue, privacy: .public) to=\(newValue, privacy: .public)")
             }
             #if os(iOS)
             // On iOS the user can lose editor focus without touching `state.sessionState`
@@ -1349,6 +1356,7 @@ public struct EditorView: View {
         .init(key: .tab, modifiers: [], action: .indent),
         .init(key: .tab, modifiers: .shift, action: .outdent),
         .init(key: KeyEquivalent("\u{19}"), modifiers: [], action: .outdent),
+        .init(key: KeyEquivalent("\u{19}"), modifiers: .shift, action: .outdent),
 
         // Arrows — modifier-aware action.
         .init(key: .upArrow, modifiers: [], action: .moveCursor(delta: -1)),
