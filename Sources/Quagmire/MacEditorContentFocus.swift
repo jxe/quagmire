@@ -2,8 +2,8 @@
 import AppKit
 import SwiftUI
 
-/// SwiftUI's page focus can outlive AppKit focus, particularly when a fullscreen
-/// toolbar owns the first responder. Observe the native boundary independently.
+/// Native ownership of page navigation and its selection highlight. SwiftUI's
+/// FocusState can disagree after NSTextView hands focus back to its hosting view.
 struct MacEditorContentFocus: NSViewRepresentable {
     @Binding var hasFocus: Bool
 
@@ -49,7 +49,9 @@ struct MacEditorContentFocus: NSViewRepresentable {
 
         func refresh() {
             let value = window.map {
-                NSApp.isActive && $0.isKeyWindow && Self.isContentResponder($0.firstResponder, in: $0.contentView)
+                NSApp.isActive && $0.isKeyWindow && Self.isContentResponder(
+                    $0.firstResponder, in: $0.contentView, editorAnchor: self
+                )
             } ?? false
             guard value != lastValue else { return }
             lastValue = value
@@ -59,14 +61,19 @@ struct MacEditorContentFocus: NSViewRepresentable {
             }
         }
 
-        static func isContentResponder(_ responder: NSResponder?, in content: NSView?) -> Bool {
+        static func isContentResponder(_ responder: NSResponder?, in content: NSView?, editorAnchor: NSView? = nil) -> Bool {
             guard let content else { return false }
             // Clearing NSTextView's first responder on Escape leaves the window
-            // itself as responder. SwiftUI can own page focus in that state;
-            // EditorView separately requires pageFocused before showing selection.
+            // itself as responder before the hosting view takes over. The
+            // editor's existing navigation selection still belongs to the page.
             if let window = content.window, responder === window { return true }
             guard let view = responder as? NSView else { return false }
-            return view === content || view.isDescendant(of: content)
+            guard view === content || view.isDescendant(of: content) else { return false }
+            // SwiftUI routes page keys through the editor's ancestor hosting
+            // view. Sibling native controls (sidebar lists, search fields) do
+            // not own the editor merely because they share its window.
+            guard let editorAnchor else { return true }
+            return view === editorAnchor || editorAnchor.isDescendant(of: view)
         }
 
         isolated deinit {

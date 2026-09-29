@@ -711,7 +711,7 @@ public struct EditorView: View {
                 isFullscreen: NSApp.keyWindow?.styleMask.contains(.fullScreen) == true
             ) else { return event }
             guard !foreignTextInputHasFocus else { return event }
-            guard pageFocused || state.editingBlock != nil || (action == .escape && actionSheet != nil) else {
+            guard macContentHasFocus || state.editingBlock != nil || (action == .escape && actionSheet != nil) else {
                 return event
             }
             editorCommands.perform(action)
@@ -762,7 +762,10 @@ public struct EditorView: View {
         #if os(iOS)
         let isSelected = false
         #else
-        let isSelected = pageFocused && macContentHasFocus && selectedIDs.contains(block.id)
+        // AppKit can route navigation keys to the hosting view while SwiftUI's
+        // page FocusState remains false after NSTextView relinquishes focus.
+        // Use the native editor boundary for both highlight and key ownership.
+        let isSelected = macContentHasFocus && state.editingBlock == nil && selectedIDs.contains(block.id)
         #endif
         #if os(iOS)
         // Treat the just-transitioned-away block as still editing for one runloop

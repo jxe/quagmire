@@ -5,6 +5,24 @@ import Testing
 
 @MainActor
 struct MacEditorContentFocusTests {
+    @Test func nativePageFocusAcceptsHostingAncestorsButNotSiblingControls() {
+        let content = NSView()
+        let hosting = NSView()
+        let editorAnchor = NSView()
+        let sidebar = NSOutlineView()
+        let search = NSTextField()
+        content.addSubview(hosting)
+        hosting.addSubview(editorAnchor)
+        hosting.addSubview(sidebar)
+        hosting.addSubview(search)
+
+        #expect(MacEditorContentFocus.Probe.isContentResponder(hosting, in: content, editorAnchor: editorAnchor))
+        #expect(MacEditorContentFocus.Probe.isContentResponder(content, in: content, editorAnchor: editorAnchor))
+        #expect(!MacEditorContentFocus.Probe.isContentResponder(sidebar, in: content, editorAnchor: editorAnchor))
+        #expect(!MacEditorContentFocus.Probe.isContentResponder(search, in: content, editorAnchor: editorAnchor))
+        #expect(!MacEditorContentFocus.Probe.isContentResponder(nil, in: content, editorAnchor: editorAnchor))
+    }
+
     @Test func queuedTextFocusCannotReclaimResponderAfterEscape() async {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
                               styleMask: [.titled], backing: .buffered, defer: false)
