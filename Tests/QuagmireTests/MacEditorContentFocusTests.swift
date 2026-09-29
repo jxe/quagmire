@@ -5,6 +5,40 @@ import Testing
 
 @MainActor
 struct MacEditorContentFocusTests {
+    @Test func queuedTextFocusCannotReclaimResponderAfterEscape() async {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        let editor = ContainedTextView(frame: window.contentView!.bounds)
+        editor.wantsFocus = true
+        // Mounting schedules a focus request. Escape can arrive before it runs,
+        // while SwiftUI still has the old text view attached to the window.
+        window.contentView!.addSubview(editor)
+        #expect(window.makeFirstResponder(editor))
+        editor.relinquishFocus()
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        #expect(editor.window === window)
+        #expect(!editor.wantsFocus)
+        #expect(window.firstResponder === window)
+
+        editor.wantsFocus = true
+        editor.claimRequestedFocus(in: window)
+        #expect(window.firstResponder === editor)
+    }
+
+    @Test func relinquishingOldEditorDoesNotClearNewResponder() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        let oldEditor = ContainedTextView(frame: window.contentView!.bounds)
+        let newEditor = NSTextView(frame: window.contentView!.bounds)
+        window.contentView!.addSubview(oldEditor)
+        window.contentView!.addSubview(newEditor)
+        #expect(window.makeFirstResponder(newEditor))
+        oldEditor.relinquishFocus()
+        #expect(window.firstResponder === newEditor)
+    }
+
     @Test func acceptsWindowResponderAfterLeavingTextEditing() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
                               styleMask: [.titled], backing: .buffered, defer: false)

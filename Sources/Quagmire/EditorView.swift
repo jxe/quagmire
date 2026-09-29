@@ -67,7 +67,7 @@ public struct EditorView: View {
     /// synchronously instead of waiting for the NSTextView's own async self-grab.
     @State var macActiveTextView = MacActiveTextView()
     /// Intercepts keys that AppKit handles before SwiftUI or NSTextView can apply
-    /// the editor's meaning: Shift-Tab focus traversal and fullscreen Escape.
+    /// the editor's meaning: Tab/Shift-Tab focus traversal and fullscreen Escape.
     @State var macKeyMonitor: Any?
     @State var macContentHasFocus = false
     #endif
@@ -683,11 +683,10 @@ public struct EditorView: View {
         isFullscreen: Bool
     ) -> EditorAction? {
         let deviceModifiers = modifiers.intersection(.deviceIndependentFlagsMask)
-        let isShiftTab =
-            keyCode == 48 &&
-            deviceModifiers.contains(.shift) &&
-            deviceModifiers.subtracting([.shift, .capsLock]).isEmpty
-        if isShiftTab { return .outdent }
+        if keyCode == 48,
+           deviceModifiers.subtracting([.shift, .capsLock]).isEmpty {
+            return deviceModifiers.contains(.shift) ? .outdent : .indent
+        }
 
         let isFullscreenEscape =
             keyCode == 53 &&
@@ -1465,6 +1464,12 @@ public struct EditorView: View {
             state.enterEditMode(on: id, initialCursor: initialCursor)
 
         case .nav(let cursor):
+            #if os(macOS)
+            // End native ownership before requesting SwiftUI page focus. In
+            // fullscreen, Escape arrives through the local monitor and never
+            // visits NSTextView.cancelOperation.
+            macActiveTextView.view?.relinquishFocus()
+            #endif
             state.exitEditModeWithoutCursor()
             // Same soft-lookup tolerance: trust the caller. `state.revalidate` cleans
             // up dangling cursor IDs against the current block set on undo/redo.
@@ -1499,6 +1504,9 @@ public struct EditorView: View {
             // fires after the render that picks up the new state, which is too late.
         case .navigating:
             editorFocused = nil
+            #if os(macOS)
+            macActiveTextView.view?.relinquishFocus()
+            #endif
             // Only re-grab page focus on real edit→nav transitions. .onChange fires on
             // intra-nav selection changes (cursor moves, extends) and gesture ticks
             // too; re-grabbing every time would steal focus from menus and sheets.

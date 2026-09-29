@@ -33,8 +33,16 @@ struct EditorViewEscapeTests {
         #expect(EditorView.monitoredMacAction(keyCode: 53, modifiers: .command, isFullscreen: true) == nil)
     }
 
-    @Test func localMonitorStillInterceptsShiftTabForOutdent() {
-        #expect(EditorView.monitoredMacAction(keyCode: 48, modifiers: .shift, isFullscreen: false) == .outdent)
+    @Test func localMonitorConsumesBothTabDirectionsBeforeFocusTraversal() {
+        for fullscreen in [false, true] {
+            #expect(EditorView.monitoredMacAction(keyCode: 48, modifiers: [], isFullscreen: fullscreen) == .indent)
+            #expect(EditorView.monitoredMacAction(keyCode: 48, modifiers: .shift, isFullscreen: fullscreen) == .outdent)
+            #expect(EditorView.monitoredMacAction(keyCode: 48, modifiers: .capsLock, isFullscreen: fullscreen) == .indent)
+            #expect(EditorView.monitoredMacAction(keyCode: 48, modifiers: [.shift, .capsLock], isFullscreen: fullscreen) == .outdent)
+            for modifiers: NSEvent.ModifierFlags in [.command, .control, .option, [.command, .shift]] {
+                #expect(EditorView.monitoredMacAction(keyCode: 48, modifiers: modifiers, isFullscreen: fullscreen) == nil)
+            }
+        }
     }
     #endif
 }

@@ -262,7 +262,7 @@ struct BlockTextEditor: View {
     var body: some View {
         #if os(macOS)
         // The editor only mounts when its row is the active editing block (EditorView gates
-        // this via `isEditing`). So unconditionally request focus on mount — `@FocusState`
+        // this via `isEditing`). Request focus from that active-row state — `@FocusState`
         // writes from EditorView's `enterEditMode` are deferred and don't propagate before
         // `makeNSView`/`viewDidMoveToWindow` fire, which previously left `wantsFocus=false`
         // and the focus grab silently no-op'd.
@@ -272,7 +272,7 @@ struct BlockTextEditor: View {
             bold: bold,
             lineSpacing: lineSpacing,
             theme: theme,
-            isFocused: true,
+            isFocused: isActive,
             onFocusChange: { newFocused in
                 if newFocused {
                     focused = blockID
@@ -482,11 +482,8 @@ struct MacBlockTextEditor: NSViewRepresentable {
                 // Calling makeFirstResponder on a view that's no longer in the captured
                 // window logs an AppKit error and nils out first responder.
                 DispatchQueue.main.async { [weak view, weak window] in
-                    guard let view, let window, view.window === window else { return }
-                    if window.firstResponder !== view {
-                        window.makeFirstResponder(view)
-                    }
-                    view.applyPendingCursorPositionOrSeekToEnd()
+                    guard let view, let window else { return }
+                    view.claimRequestedFocus(in: window)
                 }
             }
         }
@@ -813,12 +810,26 @@ final class ContainedTextView: NSTextView {
             // this window between scheduling and firing — bail unless we're still
             // hosted by the same window.
             DispatchQueue.main.async { [weak self, weak window] in
-                guard let self, let window, self.window === window else { return }
-                if window.firstResponder !== self {
-                    window.makeFirstResponder(self)
-                }
-                self.applyPendingCursorPositionOrSeekToEnd()
+                guard let self, let window else { return }
+                self.claimRequestedFocus(in: window)
             }
+        }
+    }
+
+    /// Recheck the request when a queued focus grab runs. The row may still
+    /// be attached for one render after Escape has switched to navigation.
+    func claimRequestedFocus(in window: NSWindow) {
+        guard wantsFocus, self.window === window else { return }
+        if window.firstResponder !== self {
+            window.makeFirstResponder(self)
+        }
+        applyPendingCursorPositionOrSeekToEnd()
+    }
+
+    func relinquishFocus() {
+        wantsFocus = false
+        if let window, window.firstResponder === self {
+            window.makeFirstResponder(nil)
         }
     }
 
@@ -1118,7 +1129,7 @@ final class ContainedTextView: NSTextView {
         // first would synchronously fire `textDidEndEditing` and re-renders may
         // race the commit.
         if let onKey = coordinator?.parent.onKey, onKey(.escape) == .handled {
-            window?.makeFirstResponder(nil)
+            relinquishFocus()
             return
         }
         super.cancelOperation(sender)
