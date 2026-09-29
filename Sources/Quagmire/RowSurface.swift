@@ -347,7 +347,9 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         .onContinuousHover { phase in
             switch phase {
             case .active(let location):
-                updateHover(layoutCache.blockIDAtY(location.y))
+                // Hit the rendered row, not a prefix sum of potentially stale
+                // heights from rows outside the LazyVStack materialization window.
+                updateHover(layoutCache.realizedBlockIDAtPageY(location.y))
             case .ended:
                 updateHover(nil)
             }
@@ -414,8 +416,8 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     private func handlePageLevelTap(at point: CGPoint) {
         guard !layoutCache.isAccessoryAtY(point.y) else { return }
         if accessoryLaneWidth > 0, point.x > layoutCache.contentOriginX + layoutCache.contentWidth { return }
-        if let rowID = layoutCache.blockIDAtY(point.y),
-           let frame = layoutCache.frame(of: rowID) {
+        if let rowID = layoutCache.realizedBlockIDAtPageY(point.y),
+           let frame = layoutCache.realizedFrame(of: rowID) {
             let handleLeft = frame.minX - gutterWidth
             if point.x >= handleLeft, point.x < frame.minX {
                 actions.onTapGutter(rowID)

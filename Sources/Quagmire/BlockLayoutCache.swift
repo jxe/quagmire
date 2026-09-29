@@ -482,8 +482,8 @@ class RowSurfaceLayoutCache<ID: Hashable> {
     /// scoped to the visual drag-handle strip instead of letting any row-body
     /// vertical drag become a reorder/autoscroll.
     func blockIDAtHandlePoint(_ point: CGPoint, gutterWidth: CGFloat) -> ID? {
-        guard let id = blockIDAtY(point.y),
-              let frame = frame(of: id)
+        guard let id = realizedBlockIDAtPageY(point.y),
+              let frame = realizedFrame(of: id)
         else { return nil }
         let handleLeft = frame.minX - gutterWidth
         guard point.x >= handleLeft, point.x < frame.minX else { return nil }

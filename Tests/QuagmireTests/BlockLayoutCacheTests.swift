@@ -52,6 +52,8 @@ struct RowSurfaceLayoutCacheTests {
         cache.contentOriginY = 100
         cache.contentWidth = 320
 
+        cache.setRealizedInternalFrame(CGRect(x: 0, y: 0, width: 320, height: 50), for: "row")
+
         #expect(cache.blockIDAtHandlePoint(CGPoint(x: -4, y: 120), gutterWidth: 28) == "row")
         #expect(cache.blockIDAtHandlePoint(CGPoint(x: 23.9, y: 120), gutterWidth: 28) == "row")
         #expect(cache.blockIDAtHandlePoint(CGPoint(x: 24, y: 120), gutterWidth: 28) == nil)
@@ -115,6 +117,28 @@ struct RowSurfaceLayoutCacheTests {
         cache.updateOrder(["heading", "tall"])
         #expect(cache.realizedInternalFrames["target"] == nil)
         #expect(cache.realizedFrame(of: "target") == nil)
+    }
+
+    @Test func hoverAndHandleFollowRealizedRowsWhenEarlierHeightsDrift() {
+        let cache = RowSurfaceLayoutCache<String>()
+        cache.updateOrder(["offscreen", "a", "b"])
+        cache.setHeight(500, for: "offscreen")
+        cache.setHeight(40, for: "a")
+        cache.setHeight(40, for: "b")
+        cache.contentOriginX = 100
+        cache.contentOriginY = -500
+        cache.setRealizedInternalFrame(CGRect(x: 0, y: 540, width: 320, height: 40), for: "a")
+        cache.setRealizedInternalFrame(CGRect(x: 0, y: 590, width: 320, height: 40), for: "b")
+
+        // Cached heights would choose b where a is actually rendered.
+        #expect(cache.blockIDAtY(60) == "b")
+        #expect(cache.realizedBlockIDAtPageY(60) == "a")
+        #expect(cache.blockIDAtHandlePoint(CGPoint(x: 90, y: 60), gutterWidth: 28) == "a")
+        #expect(cache.blockIDAtHandlePoint(CGPoint(x: 90, y: 85), gutterWidth: 28) == nil)
+
+        cache.contentOriginY = -550
+        #expect(cache.realizedBlockIDAtPageY(60) == "b")
+        #expect(cache.blockIDAtHandlePoint(CGPoint(x: 90, y: 60), gutterWidth: 28) == "b")
     }
 
     @Test func realizedFrameIncludesScrolledPageOrigin() {
