@@ -128,7 +128,7 @@ extension EditorView {
             case .newBlockBelow:
                 runDualMode(
                     edit: { bid in _ = insertEmptySiblingAfter(bid) },
-                    nav: { _ = createEmptySiblingAndEdit() }
+                    nav: { _ = createEmptySiblingAndSelect() }
                 )
             case .moveBlockUp:
                 runDualMode(

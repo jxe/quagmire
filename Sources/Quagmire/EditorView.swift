@@ -2763,16 +2763,16 @@ public struct EditorView: View {
         }
     }
 
-    /// Nav-mode Cmd+Return: create an empty sibling of the same kind directly
-    /// after the selected block and enter edit mode on it.
-    func createEmptySiblingAndEdit() -> Bool {
+    /// Nav-mode Cmd+Return: create an empty paragraph sibling directly
+    /// after the selected block and keep the original selected in navigation mode.
+    func createEmptySiblingAndSelect() -> Bool {
         guard let id = state.cursor, state.selection.count == 1 else { return false }
         return insertEmptySiblingAfter(id)
     }
 
     func insertEmptySiblingAfter(_ id: BlockID) -> Bool {
-        guard let source = document.find(id) else { return false }
-        let newBlock = followUpBlock(after: source, withText: AttributedString())
+        guard document.find(id) != nil else { return false }
+        let newBlock = Block.paragraph(text: AttributedString())
         // Always insert as the next sibling under the source's parent — even
         // containers with children (toggles, lists) get a peer below, not a
         // nested first-child. Headings auto-refold their body via
@@ -2786,7 +2786,7 @@ public struct EditorView: View {
         mutate("New Block") {
             document.insertSubtree(newBlock, at: dropPath)
         }
-        transferFocus(to: .editor(newBlock.id, initialCursor: .offset(0)))
+        transferFocus(to: .nav(cursor: id))
         return true
     }
 
