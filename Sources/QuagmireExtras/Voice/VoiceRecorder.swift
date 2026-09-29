@@ -27,7 +27,17 @@ protocol VoiceRecording: AnyObject {
 @MainActor
 @Observable
 public final class VoiceRecorder: VoiceRecording {
-    public private(set) var state: VoiceRecordingState = .idle
+    public private(set) var state: VoiceRecordingState = .idle {
+        didSet {
+            if state == .recording {
+                if recordingIdleTimerLease == nil {
+                    recordingIdleTimerLease = RecordingIdleTimer.shared.acquire()
+                }
+            } else {
+                recordingIdleTimerLease = nil
+            }
+        }
+    }
     public var unexpectedStopHandler: ((String) -> Void)?
 
     private let logger: Logger?
@@ -39,6 +49,7 @@ public final class VoiceRecorder: VoiceRecording {
     private var liveCapture: LiveAudioCapture?
     private var liveConversionTask: Task<Void, Error>?
     private var transcriptionWasCancelled = false
+    private var recordingIdleTimerLease: RecordingIdleTimer.Lease?
 
     public init(loggingSubsystem: String? = nil) {
         logger = loggingSubsystem.map { Logger(subsystem: $0, category: "voice") }
