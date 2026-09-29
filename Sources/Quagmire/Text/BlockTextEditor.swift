@@ -292,11 +292,11 @@ struct BlockTextEditor: View {
         )
         .alignmentGuide(.firstTextBaseline) { _ in
             // NSTextView with textContainerInset=.zero, lineFragmentPadding=0 puts its first
-            // baseline at `font.ascender` from the top of the view. Without this guide,
+            // baseline at the rounded font ascender, matching SwiftUI Text. Without this guide,
             // SwiftUI uses the view's top as the baseline, which pushes the editor visually
             // below a sibling marker in an HStack(alignment: .firstTextBaseline).
             let nsFont = MacBlockTextEditor.resolveNSFont(size: fontSize, bold: bold, theme: theme)
-            return nsFont.ascender
+            return nsFont.ascender.rounded()
         }
         .onAppear {
             focused = blockID
@@ -502,9 +502,7 @@ struct MacBlockTextEditor: NSViewRepresentable {
         // entire text storage, which would stomp the per-range bold/italic font traits
         // that `InlineMarksBridge.toggleMark` writes. The base font is already applied per-
         // range by `loadAttributedString` (via toNS).
-        let style = NSMutableParagraphStyle()
-        style.lineSpacing = lineSpacing
-        view.defaultParagraphStyle = style
+        view.defaultParagraphStyle = InlineMarksBridge.paragraphStyle(baseFontSize: fontSize, baseBold: bold, lineSpacing: lineSpacing, theme: theme)
         view.typingAttributes = InlineMarksBridge.baseTypingAttributes(baseFontSize: fontSize, baseBold: bold, lineSpacing: lineSpacing, theme: theme)
     }
 

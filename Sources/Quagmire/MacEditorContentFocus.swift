@@ -60,7 +60,12 @@ struct MacEditorContentFocus: NSViewRepresentable {
         }
 
         static func isContentResponder(_ responder: NSResponder?, in content: NSView?) -> Bool {
-            guard let view = responder as? NSView, let content else { return false }
+            guard let content else { return false }
+            // Clearing NSTextView's first responder on Escape leaves the window
+            // itself as responder. SwiftUI can own page focus in that state;
+            // EditorView separately requires pageFocused before showing selection.
+            if let window = content.window, responder === window { return true }
+            guard let view = responder as? NSView else { return false }
             return view === content || view.isDescendant(of: content)
         }
 

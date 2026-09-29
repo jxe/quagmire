@@ -65,14 +65,32 @@ public enum InlineMark: Sendable {
 /// strikethrough style) when reading back, because that's what the platform text view
 /// mutates during edits. The custom typed `AttributedStringKey`s live only in the model.
 enum InlineMarksBridge {
+    static func paragraphStyle(baseFontSize: CGFloat, baseBold: Bool, lineSpacing: CGFloat, theme: EditorTheme) -> NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = lineSpacing
+        #if os(macOS)
+        let font = bodyFont(size: baseFontSize, bold: baseBold, italic: false, theme: theme)
+        // SwiftUI rounds the font's typographic height. TextKit's default can
+        // be a point shorter (notably the 16pt system font used for body text).
+        style.minimumLineHeight = (font.ascender - font.descender + font.leading).rounded()
+        #endif
+        return style
+    }
+
     static func baseTypingAttributes(baseFontSize: CGFloat, baseBold: Bool, lineSpacing: CGFloat, theme: EditorTheme = .default) -> [NSAttributedString.Key: Any] {
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = lineSpacing
-        return [
-            .font: bodyFont(size: baseFontSize, bold: baseBold, italic: false, theme: theme),
-            .paragraphStyle: paragraphStyle,
+        let font = bodyFont(size: baseFontSize, bold: baseBold, italic: false, theme: theme)
+        let style = paragraphStyle(baseFontSize: baseFontSize, baseBold: baseBold, lineSpacing: lineSpacing, theme: theme)
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .paragraphStyle: style,
             .foregroundColor: theme.platformForeground
         ]
+        #if os(macOS)
+        // A larger minimum line height moves TextKit's baseline down. Keep the
+        // extra height below the baseline, matching read-only SwiftUI Text.
+        attributes[.baselineOffset] = max(0, style.minimumLineHeight - NSLayoutManager().defaultLineHeight(for: font))
+        #endif
+        return attributes
     }
 
     /// Convert a model `AttributedString` into the `NSAttributedString` for textStorage.
@@ -80,8 +98,7 @@ enum InlineMarksBridge {
     /// `baseFontSize=24, baseBold=true`); inline marks layer on top of that base.
     static func toNS(_ source: AttributedString, baseFontSize: CGFloat, baseBold: Bool, lineSpacing: CGFloat, theme: EditorTheme = .default) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = lineSpacing
+        let baseAttributes = baseTypingAttributes(baseFontSize: baseFontSize, baseBold: baseBold, lineSpacing: lineSpacing, theme: theme)
 
         if source.characters.isEmpty {
             // Empty AttributedString — return an empty NSAttributedString. Typing attributes
@@ -99,10 +116,7 @@ enum InlineMarksBridge {
             let strike = run[InlineAttributes.StrikethroughAttribute.self] == true
             let link = run.link
 
-            var attrs: [NSAttributedString.Key: Any] = [
-                .paragraphStyle: paragraphStyle,
-                .foregroundColor: theme.platformForeground
-            ]
+            var attrs = baseAttributes
 
             if code {
                 attrs[.font] = monoFont(size: theme.inlineCodeSize)
