@@ -225,6 +225,7 @@ final class MacPageScrollController {
     static let shared = MacPageScrollController()
 
     weak var scrollView: NSScrollView?
+    weak var owner: AnyObject?
 
     @discardableResult
     func scroll(toY y: CGFloat) -> Bool {
@@ -239,7 +240,7 @@ final class MacPageScrollController {
     }
 }
 
-private struct MacScrollControllerReader: NSViewRepresentable {
+struct MacScrollControllerReader: NSViewRepresentable {
     func makeNSView(context: Context) -> ReaderView {
         ReaderView()
     }
@@ -248,8 +249,26 @@ private struct MacScrollControllerReader: NSViewRepresentable {
         nsView.installIfNeeded()
     }
 
+    static func dismantleNSView(_ view: ReaderView, coordinator: ()) {
+        view.tearDown()
+    }
+
     @MainActor
     final class ReaderView: NSView {
+        private var isDismantled = false
+
+        func tearDown() {
+            isDismantled = true
+            clearScrollReference()
+        }
+
+        private func clearScrollReference() {
+            if MacPageScrollController.shared.owner === self {
+                MacPageScrollController.shared.scrollView = nil
+                MacPageScrollController.shared.owner = nil
+            }
+        }
+
         override func viewDidMoveToSuperview() {
             super.viewDidMoveToSuperview()
             installDeferred()
@@ -261,8 +280,13 @@ private struct MacScrollControllerReader: NSViewRepresentable {
         }
 
         func installIfNeeded() {
-            guard let scrollView = nearestScrollView() else { return }
+            guard !isDismantled else { return }
+            guard window != nil, let scrollView = nearestScrollView() else {
+                clearScrollReference()
+                return
+            }
             MacPageScrollController.shared.scrollView = scrollView
+            MacPageScrollController.shared.owner = self
         }
 
         private func installDeferred() {
@@ -424,6 +448,11 @@ struct IOSPageReorderGestureBridge<ID: Hashable>: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
+    static func dismantleUIView(_ view: UIView, coordinator: Coordinator) {
+        coordinator.detach()
+        (view as? HostView)?.coordinator = nil
+    }
+
     @MainActor
     final class HostView: UIView {
         weak var coordinator: Coordinator?
@@ -566,6 +595,11 @@ struct IOSPagePinchGestureBridge: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+    static func dismantleUIView(_ view: UIView, coordinator: Coordinator) {
+        coordinator.detach()
+        (view as? HostView)?.coordinator = nil
+    }
 
     @MainActor
     final class HostView: UIView {
@@ -748,6 +782,7 @@ final class PageScrollController {
     static let shared = PageScrollController()
 
     weak var scrollView: UIScrollView?
+    weak var owner: AnyObject?
 
     func scroll(toY y: CGFloat) {
         guard let scrollView else { return }
@@ -774,6 +809,11 @@ struct IOSScrollMetricsReader: UIViewRepresentable {
         context.coordinator.topOverscrollAction = topOverscrollAction
         uiView.coordinator = context.coordinator
         uiView.installIfNeeded()
+    }
+
+    static func dismantleUIView(_ view: ReaderView, coordinator: Coordinator) {
+        view.coordinator = nil
+        coordinator.detach()
     }
 
     @MainActor
@@ -807,13 +847,12 @@ struct IOSScrollMetricsReader: UIViewRepresentable {
         }
 
         func installIfNeeded() {
-            guard let scrollView = nearestScrollView() else {
-                // NSLog("[REORDER-AS] metrics reader: nearestScrollView returned nil")
+            guard let coordinator else { return }
+            guard window != nil, let scrollView = nearestScrollView() else {
+                coordinator.detach()
                 return
             }
-            // NSLog("[REORDER-AS] metrics reader: attached to scrollView bounds=%@ adjustedInset=(t:%f b:%f)", NSCoder.string(for: scrollView.bounds), scrollView.adjustedContentInset.top, scrollView.adjustedContentInset.bottom)
-            PageScrollController.shared.scrollView = scrollView
-            coordinator?.update(from: scrollView)
+            coordinator.update(from: scrollView)
         }
 
         private func nearestScrollView() -> UIScrollView? {
@@ -842,7 +881,25 @@ struct IOSScrollMetricsReader: UIViewRepresentable {
             self.topOverscrollAction = topOverscrollAction
         }
 
+        func detach() {
+            if let scrollView = observedScrollView {
+                scrollView.panGestureRecognizer.removeTarget(
+                    self, action: #selector(panGestureChanged(_:))
+                )
+                if PageScrollController.shared.owner === self {
+                    PageScrollController.shared.scrollView = nil
+                    PageScrollController.shared.owner = nil
+                }
+            }
+            observation = nil
+            boundsObservation = nil
+            contentSizeObservation = nil
+            observedScrollView = nil
+        }
+
         func update(from scrollView: UIScrollView) {
+            PageScrollController.shared.scrollView = scrollView
+            PageScrollController.shared.owner = self
             if observedScrollView !== scrollView {
                 observedScrollView?.panGestureRecognizer.removeTarget(
                     self,
@@ -883,6 +940,8 @@ struct IOSScrollMetricsReader: UIViewRepresentable {
         }
 
         private func publish(_ scrollView: UIScrollView) {
+            // KVO and installation can enqueue work before teardown or reparenting.
+            guard observedScrollView === scrollView else { return }
             metrics.viewportHeight = scrollView.bounds.height
             metrics.contentHeight = scrollView.contentSize.height
             metrics.contentOffsetY = scrollView.contentOffset.y
@@ -1146,6 +1205,14 @@ struct IOSRowSwipeGestureBridge: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+    static func dismantleUIView(_ view: UIView, coordinator: Coordinator) {
+        // The scroll view owns the recognizer, but its target/delegate and the
+        // host's coordinator are weak. Tear down while SwiftUI still supplies
+        // the coordinator: a later didMoveToWindow can arrive after it is gone.
+        coordinator.detach()
+        (view as? HostView)?.coordinator = nil
+    }
 
     @MainActor
     final class HostView: UIView {
