@@ -13,9 +13,12 @@ These instructions apply to the whole repository.
 
 ## Verification
 
-- Run the smallest focused tests while developing and before ordinary commits.
-  Test the affected behavior; do not run the full test suite and platform builds
-  before every commit.
+- Run the smallest focused tests while developing. Committing does not require
+  a fresh test run: reuse results for unchanged code, and rerun when further edits
+  or unresolved failures warrant it. A request to commit does not trigger broader
+  verification. Report known failures and respect Joe's explicit instruction to
+  commit without more checks. Reserve the full suite and platform builds for
+  periodic release verification.
 - Before declaring a revision releasable, run `scripts/verify.sh`. It runs the
   package tests and clean macOS and iOS Simulator builds for `Quagmire` and
   `QuagmireExtras`.
