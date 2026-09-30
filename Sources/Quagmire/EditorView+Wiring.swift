@@ -58,7 +58,11 @@ extension EditorView {
             switch action {
             case .openBlockActionMenu:
                 guard let id = topSelectedBlockID() else { return }
-                actionSheet = BlockActionSheet(id: id)
+                if state.editingBlock != nil {
+                    handleHandleClick(blockID: id)
+                } else {
+                    actionSheet = BlockActionSheet(id: id)
+                }
 
             case .openMoveTo:
                 guard host.supportsMoveDestinationPicker else { return }

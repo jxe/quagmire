@@ -1219,7 +1219,7 @@ public struct EditorView: View {
     /// Same as the previous per-row drag-handle tap: collapse selection
     /// to this row, open the action menu on the next runloop tick (so
     /// the `.onChange(of: state.sessionState)` clear-handler runs first).
-    private func handleHandleClick(blockID: BlockID) {
+    func handleHandleClick(blockID: BlockID) {
         transferFocus(to: .nav(cursor: blockID))
         DispatchQueue.main.async {
             actionSheet = BlockActionSheet(id: blockID)
