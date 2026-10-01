@@ -579,7 +579,15 @@ class RowSurfaceLayoutCache<ID: Hashable> {
     /// updates or clamps the scroll view around a compact move projection.
     func projectedInternalRowTop(at slot: Int, topGap: CGFloat) -> CGFloat {
         let clampedSlot = max(0, min(slot, orderedIDs.count))
-        let previousBottom = clampedSlot == 0 ? 0 : rowBottoms[clampedSlot - 1]
+        // Same accounting as `recomputeOffsets`: the header, then each earlier
+        // row's bottom plus its accessory panel.
+        let previousBottom: CGFloat
+        if clampedSlot == 0 {
+            previousBottom = headerHeight
+        } else {
+            let previousID = orderedIDs[clampedSlot - 1]
+            previousBottom = rowBottoms[clampedSlot - 1] + (accessoryHeights[previousID] ?? 0)
+        }
         return previousBottom + max(0, topGap)
     }
 

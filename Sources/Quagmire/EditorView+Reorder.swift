@@ -7,7 +7,8 @@ import AppKit
 
 extension EditorView {
     /// Drift gap rendered above the visible-row at `slot` (or at the trailing
-    /// slot == visibleRows.count). Both `hoverSlot` and `liftFootprint` are
+    /// slot == visibleRows.count). External payload drops have no lift to
+    /// measure and use a fixed 42pt gap. Both `hoverSlot` and `liftFootprint` are
     /// precomputed once per body pass — `hoverSlot` is the visible slot
     /// corresponding to the current `dropHoverPath`, `liftFootprint` is the
     /// contiguous range of visible-row slots occupied by the lifted subtree.
@@ -48,11 +49,13 @@ extension EditorView {
                 prevDepth: sourceRow.depth
             )
         } ?? 0
+        // Exactly the space the lifted row will occupy once dropped, so the
+        // lift fits the hole and neighbors don't shift again on drop.
         let insertedFootprint = gapBeforeSource
             + lift.sourceFrame.height
             + gapAfterSource
             - existingNeighborGap
-        return max(42, insertedFootprint)
+        return max(0, insertedFootprint)
     }
 
     /// Visible-slot range covered by the active reorder lift's blocks (and
@@ -108,16 +111,27 @@ extension EditorView {
         )
     }
 
+    /// Renders the lifted row as itself: same indent, on a full-width band of
+    /// page background so rows passing underneath don't show through and no
+    /// side edges make it read as a card. While landing, the indent animates
+    /// to the destination row's depth.
     @ViewBuilder
-    func reorderLiftContent(for id: BlockID, size: CGSize) -> some View {
-        if let lift = state.reorderLift, lift.block.id == id {
+    func reorderLiftContent(for id: BlockID, size: CGSize, isLanding: Bool, pageWidth: CGFloat) -> some View {
+        if let lift = state.reorderLift ?? reorderSettle?.lift, lift.block.id == id {
             BlockRowPreview(
                 block: lift.block,
-                depth: 0,
+                depth: isLanding ? reorderSettleDestinationDepth() ?? lift.sourceDepth : lift.sourceDepth,
                 documentLookups: resolveDocumentLookups(for: lift.block, host: host, in: document),
                 theme: configuration.theme
             )
             .frame(width: size.width, height: size.height, alignment: .leading)
+            .background {
+                // The lift spans the row's column; bleed to the page edges.
+                Rectangle()
+                    .fill(configuration.theme.background)
+                    .padding(.leading, -lift.sourceFrame.minX)
+                    .padding(.trailing, -max(0, pageWidth - lift.sourceFrame.maxX))
+            }
             .overlay(alignment: .topLeading) {
                 if lift.isCopy {
                     copyBadge
@@ -125,6 +139,35 @@ extension EditorView {
                 }
             }
         }
+    }
+
+    private func reorderSettleDestinationDepth() -> Int? {
+        guard let settle = reorderSettle, !settle.fadesOut, let id = settle.destinationID else { return nil }
+        return visibleRowsForRendering(snapshot: document.children).first { $0.id == id }?.depth
+    }
+
+    func rowSurfaceSettle() -> RowSurfaceSettle<BlockID>? {
+        guard let settle = reorderSettle else { return nil }
+        let lift = settle.lift
+        let size = lift.sourceFrame.size
+        return RowSurfaceSettle(
+            id: lift.block.id,
+            size: size,
+            anchor: reorderLiftAnchor(touchOffset: lift.touchOffset, size: size),
+            releaseCenter: CGPoint(
+                x: lift.sourceFrame.midX,
+                y: lift.location.y - lift.touchOffset.height + size.height / 2
+            ),
+            destinationID: settle.destinationID,
+            fadesOut: settle.fadesOut,
+            token: settle.token
+        )
+    }
+
+    /// Hand off from the landed lift to its row in one unanimated update.
+    func finishReorderSettle(token: UUID) {
+        guard reorderSettle?.token == token else { return }
+        withoutReorderAnimation { reorderSettle = nil }
     }
 
     private var copyBadge: some View {
@@ -152,8 +195,21 @@ extension EditorView {
             isCopy: false
         ) else { return }
         layoutCache.beginReorderFrameSnapshot(rebaseOnNextOrderChange: true)
-        state.setReorderLift(lift)
-        seedSourceDropTarget(for: lift, snapshot: document.children)
+        withoutReorderAnimation {
+            reorderSettle = nil
+            state.setReorderLift(lift)
+            seedSourceDropTarget(for: lift, snapshot: document.children)
+        }
+    }
+
+    /// Structural reorder transitions (pickup, drop, cancel) must not spring.
+    /// On pickup the source rows leave instantly while the seeded gap takes
+    /// their place; animating that gap from zero would collapse the rows
+    /// below and then push them back down.
+    private func withoutReorderAnimation(_ body: () -> Void) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction, body)
     }
 
     /// Build a `ReorderLift` for `blockID`. Returns nil if the block, its row
@@ -192,6 +248,8 @@ extension EditorView {
         let outlineHeadingLevel: HeadingLevel? = roots == [blockID]
             ? block.headingLevel
             : nil
+        let sourceDepth = rowsBeforeReorderSourceRemoval(snapshot: document.children)
+            .first { $0.id == blockID }?.depth ?? 0
         return ReorderLift(
             block: block,
             ids: ids,
@@ -204,11 +262,15 @@ extension EditorView {
                 rawOffset: scrollMetrics.contentOffsetY,
                 topInset: scrollMetrics.topInset
             ),
-            sourceInternalMinY: sourceFrame.minY - layoutCache.contentOriginY,
+            // Measure in the same prefix-sum layout the projected top is
+            // computed from, so measurement drift cannot scroll the page.
+            sourceInternalMinY: layoutCache.internalFrame(of: blockID)?.minY
+                ?? sourceFrame.minY - layoutCache.contentOriginY,
             touchOffset: touchOffset ?? CGSize(width: sourceFrame.width / 2, height: sourceFrame.height / 2),
             location: location ?? CGPoint(x: sourceFrame.midX, y: sourceFrame.midY),
             pendingAnchor: pendingAnchor,
-            isCopy: isCopy
+            isCopy: isCopy,
+            sourceDepth: sourceDepth
         )
     }
 
@@ -234,7 +296,14 @@ extension EditorView {
         }
         if let path, document.canDrop(ids: lift.ids, to: path) {
             state.currentDropTarget = .insertAt(path)
+            // Heading outlines map paths to their chosen candidate slot.
+            setDropSlotHint(target: .insertAt(path), slot: lift.outlineHeadingLevel == nil ? sourceSlot : nil)
         }
+    }
+
+    private func setDropSlotHint(target: DropTarget, slot: Int?) {
+        let hint = slot.map { DropSlotHint(target: target, slot: $0) }
+        if state.dropSlotHint != hint { state.dropSlotHint = hint }
     }
 
     /// Prefer the live frame used by iOS source hit-testing. The cumulative
@@ -280,8 +349,11 @@ extension EditorView {
             layoutCache.beginReorderFrameSnapshot(
                 rebaseOnNextOrderChange: lift.outlineHeadingLevel != nil || !lift.isCopy
             )
-            state.setReorderLift(lift)
-            seedSourceDropTarget(for: lift, snapshot: snapshot)
+            withoutReorderAnimation {
+                reorderSettle = nil
+                state.setReorderLift(lift)
+                seedSourceDropTarget(for: lift, snapshot: snapshot)
+            }
             waitingForReorderProjection = lift.outlineHeadingLevel != nil || !lift.isCopy
         } else if var lift = state.reorderLift {
             if lift.isCopy != isCopy {
@@ -337,40 +409,53 @@ extension EditorView {
         // Re-check Option at drop time so a release-just-before-drop reverts
         // to a move; the drop is the load-bearing read.
         let isCopy = currentReorderCopyIntent()
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
+        var released = lift
+        released.location.y = y
+        withoutReorderAnimation {
             state.currentDropTarget = nil
+            state.dropSlotHint = nil
             state.setReorderLift(nil)
             layoutCache.endReorderFrameSnapshot()
+            let destinationID: BlockID?
+            let fadesOut: Bool
             switch target {
             case .insertAt(let path):
                 if isCopy {
-                    copyBlocks(ids: ids, to: path, snapshot: snapshot)
+                    destinationID = copyBlocks(ids: ids, to: path, snapshot: snapshot).first
                 } else {
                     moveBlocks(ids: ids, to: path)
+                    destinationID = lift.block.id
                 }
+                fadesOut = false
             case .asLastChildOf(let parentID):
                 if isCopy {
                     copyBlocks(ids: ids, asChildrenOf: parentID, snapshot: snapshot, hidden: hidden)
                 } else {
                     moveBlocks(ids: ids, asChildrenOf: parentID, snapshot: snapshot, hidden: hidden)
                 }
-            case .intoDocument(_, let reference):
+                destinationID = parentID
+                fadesOut = true
+            case .intoDocument(let rowID, let reference):
                 if isCopy {
                     Task { await copyBlocks(ids: ids, intoDocument: reference) }
                 } else {
                     Task { await moveBlocks(ids: ids, intoDocument: reference) }
                 }
+                destinationID = rowID
+                fadesOut = true
             }
+            reorderSettle = ReorderSettle(lift: released, destinationID: destinationID, fadesOut: fadesOut)
         }
     }
 
     func cancelReorderLift() {
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
+        withoutReorderAnimation {
+            if let lift = state.reorderLift {
+                // Glide back to where it came from.
+                reorderSettle = ReorderSettle(lift: lift, destinationID: lift.block.id, fadesOut: false)
+            }
             state.currentDropTarget = nil
+            state.dropSlotHint = nil
             state.setReorderLift(nil)
             layoutCache.endReorderFrameSnapshot()
         }
@@ -380,13 +465,21 @@ extension EditorView {
     /// (the lift itself) are excluded from the drop-on hit-test so you can't
     /// drop onto your own collapsed parent.
     func applyDropTarget(at y: CGFloat, snapshot: [Block]) {
-        let target = resolveDropTarget(atY: y, snapshot: snapshot)
+        let (target, slot) = resolveDropTargetAndSlot(atY: y, snapshot: snapshot)
+        setDropSlotHint(target: target, slot: slot)
         if state.currentDropTarget != target {
             state.currentDropTarget = target
         }
     }
 
     fileprivate func resolveDropTarget(atY y: CGFloat, snapshot: [Block]) -> DropTarget {
+        resolveDropTargetAndSlot(atY: y, snapshot: snapshot).target
+    }
+
+    /// The target plus the visible slot of the insertion gap shown with it
+    /// (nil for heading outline drags, whose candidates map back
+    /// unambiguously). Drop-onto targets keep the gap where it was.
+    fileprivate func resolveDropTargetAndSlot(atY y: CGFloat, snapshot: [Block]) -> (target: DropTarget, slot: Int?) {
         let lift = state.reorderLift
         let liftIDs = lift?.ids ?? []
         // Build the visible-flat layout once and use it for BOTH the hit-test
@@ -402,19 +495,48 @@ extension EditorView {
         // stable, so a sustained drag does zero tree walks here.
         let unprojectedRows = rowsBeforeReorderSourceRemoval(snapshot: snapshot)
         let rows = projectedRowsForActiveReorder(unprojectedRows)
+        let slotY = lift.map { reorderInsertionProbeY(pointerY: y, lift: $0) } ?? y
 
         if let lift, let level = lift.outlineHeadingLevel {
-            return resolveHeadingDropTarget(atY: y, rows: rows, level: level, lift: lift)
+            return (resolveHeadingDropTarget(atY: slotY, rows: rows, level: level, lift: lift), nil)
         }
 
-        // Resolve document-link rows before insertion slots. Their padded,
-        // sticky target prevents a nearby animated insertion gap from making
-        // a run of short link rows chase the pointer.
-        let linkRows: [(row: VisibleRow, frame: ReorderDropFrame)] = rows.compactMap { row in
+        // The insertion slot decides where the gap is, and the gap decides
+        // where everything below it is drawn, so resolve it first. It stays in
+        // place while a drop-onto row is targeted: closing the gap would move
+        // that row out from under the finger and flip straight back.
+        let footprint = currentLiftFootprint(in: rows)
+        let slot = resolveDropSlot(
+            forY: slotY,
+            in: rows,
+            previousIndex: visibleSlotForCurrentDropPath(in: rows),
+            liftFootprint: footprint
+        )
+
+        // Drop-onto rows are hit-tested where they are drawn. The frozen
+        // frames omit the lift's gap, so rows past it sit a whole lift
+        // height above their on-screen position; under a tall lift the
+        // finger would otherwise land on rows hidden beneath it.
+        let gapShift: CGFloat = lift == nil ? 0 : reorderDriftGap(
+            at: slot,
+            hoverSlot: slot,
+            liftFootprint: footprint,
+            rows: rows,
+            sourceRow: lift.flatMap { lift in unprojectedRows.first { $0.id == lift.block.id } }
+        )
+        func displayedFrame(of index: Int) -> CGRect? {
+            guard let frame = layoutCache.reorderFrame(of: rows[index].id) else { return nil }
+            return index >= slot ? frame.offsetBy(dx: 0, dy: gapShift) : frame
+        }
+
+        // Resolve document-link rows before collapsed sections. Their padded,
+        // sticky target keeps a run of short link rows from flickering.
+        let linkRows: [(row: VisibleRow, frame: ReorderDropFrame)] = rows.indices.compactMap { index in
+            let row = rows[index]
             guard !liftIDs.contains(row.id),
                   case .documentLink(let reference) = row.kind,
                   host.lookupDocument(reference).can(.receiveBlocks),
-                  let frame = layoutCache.reorderFrame(of: row.id)
+                  let frame = displayedFrame(of: index)
             else { return nil }
             return (row, ReorderDropFrame(frame: frame))
         }
@@ -427,30 +549,35 @@ extension EditorView {
             rowFrames: linkRows.map(\.frame),
             previousIndex: previousLinkIndex
         ), case .documentLink(let reference) = linkRows[index].row.kind {
-            return .intoDocument(linkRows[index].row.id, reference)
+            return (.intoDocument(linkRows[index].row.id, reference), slot)
         }
 
         // Hit-test for "drop on closed parent". Edge band keeps the gap
         // above/below the row reachable for between-rows drops.
         let edgeBand: CGFloat = 6
-        for row in rows where !liftIDs.contains(row.id) {
-            guard let frame = layoutCache.reorderFrame(of: row.id) else { continue }
+        for index in rows.indices where !liftIDs.contains(rows[index].id) {
+            guard let frame = displayedFrame(of: index) else { continue }
             guard y > frame.minY + edgeBand && y < frame.maxY - edgeBand else { continue }
-            if isCollapsedSection(id: row.id, kind: row.kind) {
-                return .asLastChildOf(row.id)
+            if isCollapsedSection(id: rows[index].id, kind: rows[index].kind) {
+                return (.asLastChildOf(rows[index].id), slot)
             }
         }
 
-        // Between-rows insertion: resolve "kth visible slot" against the
-        // visible-flat row frames, then convert to a tree DropPath using
-        // the layout's depth + parent metadata.
-        let slot = resolveDropSlot(
-            forY: y,
-            in: rows,
-            previousIndex: visibleSlotForCurrentDropPath(in: rows),
-            liftFootprint: currentLiftFootprint(in: rows)
-        )
-        return .insertAt(dropPath(forVisibleSlot: slot, rows: rows))
+        // Between-rows insertion: convert the visible slot to a tree DropPath
+        // using the layout's depth + parent metadata.
+        return (.insertAt(dropPath(forVisibleSlot: slot, rows: rows)), slot)
+    }
+
+    /// The y-position that selects an insertion slot. A move resolves against
+    /// frozen frames with the source removed, where opening the gap at slot k
+    /// puts the lift's top where row k's top was. Probing with the lift's top
+    /// edge therefore picks the slot the lift visually sits in, and changes
+    /// slot when the lift covers half of a neighbor in either direction. The
+    /// pointer would bias that by the grab point: a row grabbed near its
+    /// bottom starts past the next row's midline. Copies keep the source rows
+    /// in the frames, so they keep resolving by the pointer.
+    func reorderInsertionProbeY(pointerY: CGFloat, lift: ReorderLift) -> CGFloat {
+        lift.isCopy ? pointerY : pointerY - lift.touchOffset.height
     }
 
     /// Heading drags are outline restructuring, not arbitrary block drops.
@@ -486,6 +613,16 @@ extension EditorView {
             return leftDistance < rightDistance
         } ?? candidates[0]
         return .insertAt(nearest.path)
+    }
+
+    struct ReorderSettle: Equatable {
+        /// The lift as released, for its content and release position.
+        let lift: ReorderLift
+        /// Row the lift lands on; its rendering stays hidden until then.
+        let destinationID: BlockID?
+        /// Drops that take the rows out of view shrink into the target row.
+        let fadesOut: Bool
+        let token = UUID()
     }
 
     struct HeadingDropCandidate: Equatable {
@@ -677,6 +814,9 @@ extension EditorView {
     /// (if any). Used as a stickiness hint for `ReorderDropResolver` so the
     /// slot doesn't oscillate near gap boundaries.
     func visibleSlotForCurrentDropPath(in rows: [VisibleRow]) -> Int? {
+        if let hint = state.dropSlotHint, hint.target == state.currentDropTarget, hint.slot <= rows.count {
+            return hint.slot
+        }
         guard let path = state.dropHoverPath else { return nil }
         if let lift = state.reorderLift,
            let level = lift.outlineHeadingLevel {
@@ -688,10 +828,18 @@ extension EditorView {
         // insertion would land at this DropPath. The slot is "the index of the
         // row that would sit AT or AFTER this drop path's effective position."
         let parentChildren: [Block] = path.parent.flatMap(document.find)?.children ?? document.children
+        // The document keeps the moving blocks in place during a drag, so the
+        // seeded source path names a lifted block that the projected rows
+        // omit. Its slot is the next retained sibling's.
+        let dragged = state.reorderLift?.draggedSubtreeIDs ?? []
+        var position = path.position
+        while position < parentChildren.count, dragged.contains(parentChildren[position].id) {
+            position += 1
+        }
         for (k, row) in rows.enumerated() {
             if row.parentID == path.parent {
-                if path.position < parentChildren.count {
-                    let target = parentChildren[path.position].id
+                if position < parentChildren.count {
+                    let target = parentChildren[position].id
                     if row.id == target { return k }
                 }
             }
@@ -809,19 +957,21 @@ extension EditorView {
 
     /// Option-drag duplicate: insert fresh-ID copies of `ids` at `target`,
     /// leaving the originals in place. Selects the new copies.
-    fileprivate func copyBlocks(ids: [BlockID], to target: DropPath, snapshot _: [Block]) {
+    @discardableResult
+    fileprivate func copyBlocks(ids: [BlockID], to target: DropPath, snapshot _: [Block]) -> [BlockID] {
         // Collect originals in document order (so a multi-block selection
         // duplicates in the right order) and deep-copy with fresh IDs.
         let ordered = ids.sorted { (a, b) in
             (document.documentOrder(of: a) ?? .max) < (document.documentOrder(of: b) ?? .max)
         }
         let prepared = preparedBlocksForTransfer(ids: ordered)
-        guard !prepared.isEmpty else { return }
+        guard !prepared.isEmpty else { return [] }
         var copies: [Block] = []
         mutate(prepared.count > 1 ? "Duplicate Blocks" : "Duplicate Block") {
             copies = document.insertCopies(of: prepared, at: target)
         }
         selectAfterCopy(copies)
+        return copies.map(\.id)
     }
 
     /// Option-drag onto a closed parent: append duplicates as that parent's

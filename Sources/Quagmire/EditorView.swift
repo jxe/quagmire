@@ -106,6 +106,8 @@ public struct EditorView: View {
     @State var lastDropHapticTarget: DropTarget?
     @State var lastDropHapticFireAt: Date?
     #endif
+    /// A released lift gliding onto its destination after a drop or cancel.
+    @State var reorderSettle: ReorderSettle?
     @State var pinchGestureActive = false
     @State var pinchCrossedInsertThreshold = false
     /// Whether an open pinch has been slid into the trailing lock zone
@@ -370,6 +372,9 @@ public struct EditorView: View {
                 onReorderAutoscroll: { location in
                     if !readOnly { applyDropTarget(at: location.y, snapshot: document.children) }
                 },
+                onReorderSettled: { token in
+                    finishReorderSettle(token: token)
+                },
                 onPinchUpdate: { value in
                     !readOnly && handlePinchUpdate(value)
                 },
@@ -400,6 +405,7 @@ public struct EditorView: View {
                 gutterWidth: DragHandle.gutterWidth,
                 trailingDropHeight: 32 + renderedTrailingPinchGap + trailingReorderGap,
                 activeLift: rowSurfaceLift(in: unprojectedRows),
+                settle: rowSurfaceSettle(),
                 scrollMetrics: scrollMetrics,
                 topOverscrollAction: readOnly ? nil : topOverscrollAction,
                 scrollPosition: $scrollPosition,
@@ -443,8 +449,8 @@ public struct EditorView: View {
                         )
                     }
                 }
-            } liftContent: { id, size in
-                reorderLiftContent(for: id, size: size)
+            } liftContent: { id, size, isLanding in
+                reorderLiftContent(for: id, size: size, isLanding: isLanding, pageWidth: geometry.size.width)
             }
             #if os(iOS)
             .onScrollPhaseChange { _, phase in

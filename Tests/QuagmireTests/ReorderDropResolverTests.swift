@@ -241,6 +241,13 @@ struct ReorderDropResolverTests {
         #expect(cache.projectedInternalRowTop(at: 1, topGap: 7) == 37)
         cache.contentOriginY = -500
         #expect(cache.projectedInternalRowTop(at: 1, topGap: 7) == 37)
+
+        // Same accounting as the row tops: header first, accessories after rows.
+        cache.setHeaderHeight(20)
+        cache.setAccessoryHeight(15, for: "before")
+        #expect(cache.projectedInternalRowTop(at: 0, topGap: 7) == 27)
+        #expect(cache.projectedInternalRowTop(at: 1, topGap: 7) == 72)
+        #expect(cache.projectedInternalRowTop(at: 1, topGap: 10) == cache.internalFrame(of: "after")?.minY)
     }
 
     @Test func acceptsLargeJumpsWithoutStickyIntermediateSlots() {

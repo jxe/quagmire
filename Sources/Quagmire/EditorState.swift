@@ -74,6 +74,12 @@ public final class EditorState {
     // and `dropOntoBlockID` are computed views below for sites that only care
     // about one shape of target.
     var currentDropTarget: DropTarget? = nil
+    /// The visible slot of the reorder gap shown with `currentDropTarget`.
+    /// Mapping a `DropPath` back to a slot is ambiguous mid-drag, because the
+    /// moving blocks stay in the document while the projected rows omit them
+    /// (for example after the last item of a list), and a drop-onto target
+    /// has no path at all. Valid only while its target is current.
+    var dropSlotHint: DropSlotHint? = nil
 
     // Page-local view state. Toggles/templates default closed; ordinary
     // headings default expanded. None of this is persisted to the document.
@@ -324,6 +330,9 @@ struct ReorderLift: Equatable, Sendable {
     /// macOS Option-drag: drop performs a duplicate instead of a move, and
     /// the source rows stay at full opacity. Live-updated each gesture tick.
     var isCopy: Bool
+    /// Visible depth of the lead row at lift time. The lift renders at this
+    /// indent so it starts exactly over the row it replaced.
+    var sourceDepth: Int
 
     init(
         block: Block,
@@ -338,7 +347,8 @@ struct ReorderLift: Equatable, Sendable {
         touchOffset: CGSize,
         location: CGPoint,
         pendingAnchor: Bool,
-        isCopy: Bool = false
+        isCopy: Bool = false,
+        sourceDepth: Int = 0
     ) {
         self.block = block
         self.ids = ids
@@ -353,7 +363,13 @@ struct ReorderLift: Equatable, Sendable {
         self.location = location
         self.pendingAnchor = pendingAnchor
         self.isCopy = isCopy
+        self.sourceDepth = sourceDepth
     }
+}
+
+struct DropSlotHint: Equatable, Sendable {
+    let target: DropTarget
+    let slot: Int
 }
 
 struct PinchPreviewState: Equatable, Sendable {

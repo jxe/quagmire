@@ -38,6 +38,36 @@ struct RowSurfaceLift<ID: Hashable>: Equatable {
     let hasSeededDropTarget: Bool
 }
 
+/// A released lift gliding to rest. After a drop or cancel the overlay moves
+/// from where it was released onto its row, which stays hidden until the
+/// overlay lands, then the row takes over.
+struct RowSurfaceSettle<ID: Hashable>: Equatable {
+    /// Lift content to keep rendering while settling.
+    let id: ID
+    let size: CGSize
+    /// Unit point under the finger; the lift scales around it.
+    let anchor: UnitPoint
+    let releaseCenter: CGPoint
+    /// Row the lift lands on. Nil fades the lift out where it was released.
+    let destinationID: ID?
+    /// The lifted rows are going out of view (into a collapsed section or
+    /// another page), so the lift shrinks away into the destination row
+    /// instead of covering it.
+    let fadesOut: Bool
+    let token: UUID
+}
+
+/// Lift-time scale and shadow: enough to read as the row picked up off the
+/// page, not a separate card.
+private enum ReorderLiftStyle {
+    static let liftedScale: CGFloat = 1.03
+    static let shadowOpacity: Double = 0.10
+    static let shadowRadius: CGFloat = 14
+    static let shadowY: CGFloat = 6
+    static let pickup = Animation.smooth(duration: 0.2)
+    static let landing = Animation.smooth(duration: 0.24)
+}
+
 private struct RowSurfaceOrder<ID: Hashable>: Equatable {
     let ids: [ID]
     let topGaps: [ID: CGFloat]
@@ -55,6 +85,10 @@ private struct RowSurfaceOrder<ID: Hashable>: Equatable {
             .compactMapValues { $0 > 0 ? $0 : nil }
     }
 }
+
+/// Gap open/close while a reorder hole moves between slots. Critically
+/// damped: layout that overshoots reads as wobbly under a held finger.
+private let reorderGapAnimation = Animation.smooth(duration: 0.26)
 
 func reorderAnchorPreservingOffset(
     sourceEffectiveOffset: CGFloat,
@@ -95,6 +129,8 @@ struct RowSurfaceActions<ID: Hashable> {
     var onReorderEnded: (CGPoint) -> Void = { _ in }
     var onReorderCancelled: () -> Void = {}
     var onReorderAutoscroll: (CGPoint) -> Void = { _ in }
+    /// The settle overlay with this token has landed; clear it.
+    var onReorderSettled: (UUID) -> Void = { _ in }
 
     /// Return true when the pinch has crossed the editor's semantic threshold
     /// and should drive edge autoscroll.
@@ -117,6 +153,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     let gutterWidth: CGFloat
     let trailingDropHeight: CGFloat
     let activeLift: RowSurfaceLift<ID>?
+    let settle: RowSurfaceSettle<ID>?
     let scrollMetrics: PageScrollMetrics
     let topOverscrollAction: EditorTopOverscrollAction?
     @Binding var scrollPosition: ScrollPosition
@@ -134,7 +171,9 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     let rowAccessory: (ID) -> AnyView?
     let actions: RowSurfaceActions<ID>
     let rowContent: (ID) -> RowContent
-    let liftContent: (ID, CGSize) -> LiftContent
+    /// `isLanding` turns true when a settling lift starts moving onto its
+    /// destination, so the content can animate to its destination styling.
+    let liftContent: (ID, CGSize, _ isLanding: Bool) -> LiftContent
 
     @State private var pinchAutoScrollTask: Task<Void, Never>?
     @State private var pinchAutoScrollVelocity: CGFloat = 0
@@ -142,6 +181,9 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     @State private var reorderAutoScrollVelocity: CGFloat = 0
     @State private var activeReorderLocation: CGPoint?
     @State private var hoveredRowID: ID?
+    /// Where the current settle lands, once measured; animating this in
+    /// moves the lift onto its row.
+    @State private var settleLanding: ReorderSettleLanding?
 
     init(
         rows: [RowSurfaceRow<ID>],
@@ -152,6 +194,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         gutterWidth: CGFloat,
         trailingDropHeight: CGFloat,
         activeLift: RowSurfaceLift<ID>?,
+        settle: RowSurfaceSettle<ID>? = nil,
         scrollMetrics: PageScrollMetrics,
         topOverscrollAction: EditorTopOverscrollAction? = nil,
         scrollPosition: Binding<ScrollPosition>,
@@ -169,7 +212,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         rowAccessory: @escaping (ID) -> AnyView? = { _ in nil },
         actions: RowSurfaceActions<ID>,
         @ViewBuilder rowContent: @escaping (ID) -> RowContent,
-        @ViewBuilder liftContent: @escaping (ID, CGSize) -> LiftContent
+        @ViewBuilder liftContent: @escaping (ID, CGSize, _ isLanding: Bool) -> LiftContent
     ) {
         self.rows = rows
         self.layoutCache = layoutCache
@@ -179,6 +222,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         self.gutterWidth = gutterWidth
         self.trailingDropHeight = trailingDropHeight
         self.activeLift = activeLift
+        self.settle = settle
         self.scrollMetrics = scrollMetrics
         self.topOverscrollAction = topOverscrollAction
         self._scrollPosition = scrollPosition
@@ -228,8 +272,8 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
                                 + (pinchPreviewSlot == row.slot ? 0 : row.pinchGap)
                                 + row.reorderGap
                         )
-                        .opacity(row.isSourceDimmed ? 0.12 : 1)
-                        .animation(.spring(response: 0.26, dampingFraction: 0.76), value: row.reorderGap)
+                        .opacity(rowOpacity(row))
+                        .animation(reorderGapAnimation, value: row.reorderGap)
                         .onDisappear {
                             layoutCache.removeRealizedInternalFrame(for: row.id)
                         }
@@ -369,6 +413,9 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         .onAppear {
             applyRowOrder(rowOrder)
         }
+        .task(id: settle?.token) {
+            await landSettle()
+        }
         .onChange(of: rowOrder) { oldValue, newValue in
             applyRowOrder(newValue)
             if oldValue.ids != newValue.ids {
@@ -394,22 +441,99 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
             .contentShape(Rectangle())
             .accessibilityIdentifier("block-drop-slot-\(rows.count)")
             .accessibilityLabel("Drop before block \(rows.count + 1)")
-            .animation(.spring(response: 0.26, dampingFraction: 0.76), value: trailingDropHeight)
+            .animation(reorderGapAnimation, value: trailingDropHeight)
     }
 
+    private func rowOpacity(_ row: RowSurfaceRow<ID>) -> Double {
+        if let settle, !settle.fadesOut, settle.destinationID == row.id { return 0 }
+        return row.isSourceDimmed ? 0.12 : 1
+    }
+
+    /// One overlay for both the drag and the settle that follows it, so the
+    /// view keeps its identity (and pickup state) across the release.
     @ViewBuilder
     private var liftOverlay: some View {
+        if let model = liftOverlayModel {
+            ReorderLiftOverlay(
+                isLifted: model.isLifted,
+                isVisible: model.isVisible,
+                center: model.center,
+                anchor: model.anchor,
+                size: model.size
+            ) {
+                liftContent(model.id, model.size, model.isLanding)
+            }
+        }
+    }
+
+    private var liftOverlayModel: ReorderLiftOverlayModel<ID>? {
         if let lift = activeLift {
             let size = lift.sourceFrame.size
-            liftContent(lift.id, size)
-                .frame(width: size.width, height: size.height, alignment: .leading)
-                .scaleEffect(1.035)
-                .position(
-                    x: lift.location.x - lift.touchOffset.width + (size.width / 2),
+            return ReorderLiftOverlayModel(
+                id: lift.id,
+                size: size,
+                anchor: reorderLiftAnchor(touchOffset: lift.touchOffset, size: size),
+                // Vertical-only: horizontal position never changes the
+                // destination, so the lift stays aligned with its column.
+                center: CGPoint(
+                    x: lift.sourceFrame.midX,
                     y: lift.location.y - lift.touchOffset.height + (size.height / 2)
-                )
-                .allowsHitTesting(false)
-                .zIndex(100)
+                ),
+                isLifted: true,
+                isVisible: true,
+                isLanding: false
+            )
+        }
+        guard let settle else { return nil }
+        return ReorderLiftOverlayModel(
+            id: settle.id,
+            size: settle.size,
+            anchor: settle.anchor,
+            center: settleLanding.map { CGPoint(x: $0.frame.midX, y: $0.frame.midY) } ?? settle.releaseCenter,
+            isLifted: settleLanding == nil,
+            isVisible: !(settleLanding?.fadesOut ?? false),
+            isLanding: settleLanding != nil
+        )
+    }
+
+    /// Wait for the destination row's first layout after the drop commits,
+    /// then animate the lift onto it and hand off to the row.
+    private func landSettle() async {
+        settleLanding = nil
+        guard let settle else { return }
+        var destination: CGRect?
+        if let destinationID = settle.destinationID {
+            for _ in 0..<8 {
+                try? await Task.sleep(for: .milliseconds(8))
+                if Task.isCancelled { return }
+                if let frame = layoutCache.realizedFrame(of: destinationID) {
+                    destination = frame
+                    break
+                }
+            }
+        }
+        // Rows span the content width; keep the lift's own height so it lands
+        // on the destination's top edge. A destination that never laid out
+        // (scrolled away, or none) fades out where it was released.
+        let landing = destination.map { frame in
+            ReorderSettleLanding(
+                frame: CGRect(x: frame.minX, y: frame.minY, width: frame.width, height: settle.size.height),
+                fadesOut: settle.fadesOut
+            )
+        } ?? ReorderSettleLanding(
+            frame: CGRect(
+                x: settle.releaseCenter.x - settle.size.width / 2,
+                y: settle.releaseCenter.y - settle.size.height / 2,
+                width: settle.size.width,
+                height: settle.size.height
+            ),
+            fadesOut: true
+        )
+        let token = settle.token
+        withAnimation(ReorderLiftStyle.landing) {
+            settleLanding = landing
+        } completion: {
+            actions.onReorderSettled(token)
         }
     }
 
@@ -599,6 +723,60 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         #else
         scrollPosition.scrollTo(point: CGPoint(x: 0, y: nextOffset))
         #endif
+    }
+}
+
+private struct ReorderSettleLanding {
+    let frame: CGRect
+    let fadesOut: Bool
+}
+
+private struct ReorderLiftOverlayModel<ID> {
+    let id: ID
+    let size: CGSize
+    let anchor: UnitPoint
+    let center: CGPoint
+    let isLifted: Bool
+    let isVisible: Bool
+    let isLanding: Bool
+}
+
+func reorderLiftAnchor(touchOffset: CGSize, size: CGSize) -> UnitPoint {
+    guard size.width > 0, size.height > 0 else { return .center }
+    return UnitPoint(
+        x: min(1, max(0, touchOffset.width / size.width)),
+        y: min(1, max(0, touchOffset.height / size.height))
+    )
+}
+
+/// The floating row. Animates its own pickup when it appears; the settle
+/// animates `isLifted`/`center` from outside.
+private struct ReorderLiftOverlay<Content: View>: View {
+    let isLifted: Bool
+    let isVisible: Bool
+    let center: CGPoint
+    let anchor: UnitPoint
+    let size: CGSize
+    @ViewBuilder let content: Content
+    @State private var hasPickedUp = false
+
+    var body: some View {
+        let lifted = isLifted && hasPickedUp
+        content
+            .frame(width: size.width, height: size.height, alignment: .leading)
+            .shadow(
+                color: .black.opacity(lifted ? ReorderLiftStyle.shadowOpacity : 0),
+                radius: lifted ? ReorderLiftStyle.shadowRadius : 0,
+                y: lifted ? ReorderLiftStyle.shadowY : 0
+            )
+            .scaleEffect(isVisible ? (lifted ? ReorderLiftStyle.liftedScale : 1) : 0.9, anchor: anchor)
+            .opacity(isVisible ? 1 : 0)
+            .position(center)
+            .allowsHitTesting(false)
+            .zIndex(100)
+            .onAppear {
+                withAnimation(ReorderLiftStyle.pickup) { hasPickedUp = true }
+            }
     }
 }
 
