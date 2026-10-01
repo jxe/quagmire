@@ -273,6 +273,13 @@ class RowSurfaceLayoutCache<ID: Hashable> {
     /// Rebase the frozen destination geometry once that new order arrives,
     /// then freeze it normally for the remainder of the drag.
     private var rebaseReorderSnapshotOnNextOrderChange = false
+    /// Offset from the prefix-sum layout to where SwiftUI actually placed the
+    /// realized rows, frozen with the reorder snapshot. Rows above the
+    /// viewport that were never measured, or were measured at another width
+    /// (a resized window), leave the prefix sums off by a constant through
+    /// the on-screen region; the lift follows real geometry, so destinations
+    /// must too.
+    private var reorderSnapshotCorrection: CGFloat = 0
 
     /// Y-position of the LazyVStack's top in PageHoverCoordinateSpace.
     /// Updated from a single anchor view at the top of the content area.
@@ -322,7 +329,19 @@ class RowSurfaceLayoutCache<ID: Hashable> {
         reorderInternalFrameSnapshot = Dictionary(uniqueKeysWithValues: orderedIDs.compactMap { id in
             internalFrame(of: id).map { (id, $0) }
         })
+        reorderSnapshotCorrection = realizedLayoutCorrection()
         rebaseReorderSnapshotOnNextOrderChange = rebaseOnNextOrderChange
+    }
+
+    /// Realized rows are measured fresh, so any one of them shows how far
+    /// the prefix sums sit from the drawn layout across the viewport.
+    private func realizedLayoutCorrection() -> CGFloat {
+        for (index, id) in orderedIDs.enumerated() {
+            if let realized = realizedInternalFrames[id] {
+                return realized.minY - rowTops[index]
+            }
+        }
+        return 0
     }
 
     func rebaseReorderFrameSnapshotOnNextOrderChange() {
@@ -332,16 +351,19 @@ class RowSurfaceLayoutCache<ID: Hashable> {
 
     func endReorderFrameSnapshot() {
         reorderInternalFrameSnapshot = nil
+        reorderSnapshotCorrection = 0
         rebaseReorderSnapshotOnNextOrderChange = false
     }
 
     /// Destination frame for reorder hit-testing. Frozen in document-local
-    /// coordinates for the drag lifetime, but projected through the current
-    /// page origin so scrolling continues to move the targets on screen.
+    /// coordinates for the drag lifetime, aligned to the drawn rows, and
+    /// projected through the current page origin so scrolling continues to
+    /// move the targets on screen.
     func reorderFrame(of id: ID) -> CGRect? {
-        guard let frame = reorderInternalFrameSnapshot?[id] ?? internalFrame(of: id) else {
-            return nil
+        if let frame = reorderInternalFrameSnapshot?[id] {
+            return frame.offsetBy(dx: contentOriginX, dy: contentOriginY + reorderSnapshotCorrection)
         }
+        guard let frame = internalFrame(of: id) else { return nil }
         return frame.offsetBy(dx: contentOriginX, dy: contentOriginY)
     }
 

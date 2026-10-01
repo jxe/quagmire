@@ -164,6 +164,27 @@ struct ReorderDropResolverTests {
     }
 
     @MainActor
+    @Test func reorderFrameSnapshotAlignsWithDrawnRowsWhenHeightsAboveAreUnknown() {
+        // "above" was never measured (scrolled past, or measured at another
+        // width): the prefix sums put "near" at 0 while it is drawn at 400.
+        let cache = RowSurfaceLayoutCache<String>()
+        cache.updateOrder(["above", "near", "next"])
+        cache.setHeight(30, for: "near")
+        cache.setHeight(30, for: "next")
+        cache.contentOriginY = -300
+        cache.setRealizedInternalFrame(CGRect(x: 0, y: 400, width: 320, height: 30), for: "near")
+        cache.setRealizedInternalFrame(CGRect(x: 0, y: 430, width: 320, height: 30), for: "next")
+
+        cache.beginReorderFrameSnapshot()
+
+        #expect(cache.reorderFrame(of: "near")?.minY == cache.realizedFrame(of: "near")?.minY)
+        #expect(cache.reorderFrame(of: "next")?.minY == cache.realizedFrame(of: "next")?.minY)
+
+        cache.endReorderFrameSnapshot()
+        #expect(cache.reorderFrame(of: "next")?.minY == -270)
+    }
+
+    @MainActor
     @Test func reorderFrameSnapshotIgnoresAnimatedGapAndTracksScrolling() {
         let cache = RowSurfaceLayoutCache<String>()
         cache.updateOrder(["a", "b", "c"])
