@@ -92,7 +92,8 @@ extension View {
         onBegin: @escaping (ID, CGPoint) -> Void,
         onChanged: @escaping (CGPoint) -> Void,
         onEnded: @escaping (CGPoint) -> Void,
-        onCancelled: @escaping () -> Void
+        onCancelled: @escaping () -> Void,
+        onPressHint: @escaping (ID?) -> Void = { _ in }
     ) -> some View {
         #if os(iOS)
         // Apply unconditionally; gate the recognizer via isEnabled. Avoids
@@ -106,7 +107,8 @@ extension View {
                 onBegin: onBegin,
                 onChanged: onChanged,
                 onEnded: onEnded,
-                onCancelled: onCancelled
+                onCancelled: onCancelled,
+                onPressHint: onPressHint
             )
         )
         #else
@@ -432,6 +434,13 @@ struct IOSPageReorderGestureBridge<ID: Hashable>: UIViewRepresentable {
     var onChanged: (CGPoint) -> Void
     var onEnded: (CGPoint) -> Void
     var onCancelled: () -> Void
+    /// A row is being held still and may lift: show it (non-nil) or clear
+    /// the hint (nil) when the press moves, ends, or becomes the lift.
+    var onPressHint: (ID?) -> Void = { _ in }
+
+    /// Stationary press time before the hint starts. Long enough that taps
+    /// never flash it; the hint then fills the rest of the lift delay.
+    static var pressHintDelay: Duration { .milliseconds(150) }
 
     func makeUIView(context: Context) -> UIView {
         let view = HostView()
@@ -444,6 +453,7 @@ struct IOSPageReorderGestureBridge<ID: Hashable>: UIViewRepresentable {
     func updateUIView(_ view: UIView, context: Context) {
         context.coordinator.parent = self
         context.coordinator.recognizer?.isEnabled = isEnabled
+        context.coordinator.pressObserver?.isEnabled = isEnabled
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -471,8 +481,11 @@ struct IOSPageReorderGestureBridge<ID: Hashable>: UIViewRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var parent: IOSPageReorderGestureBridge
         weak var recognizer: UILongPressGestureRecognizer?
+        weak var pressObserver: PressObservingGestureRecognizer?
         weak var scrollView: UIScrollView?
         private var activeBlockID: ID?
+        private var pressHintTask: Task<Void, Never>?
+        private var isShowingPressHint = false
 
         init(parent: IOSPageReorderGestureBridge) {
             self.parent = parent
@@ -491,7 +504,16 @@ struct IOSPageReorderGestureBridge<ID: Hashable>: UIViewRepresentable {
                     lp.isEnabled = parent.isEnabled
                     scroll.addGestureRecognizer(lp)
                     scroll.panGestureRecognizer.require(toFail: lp)
+                    let observer = PressObservingGestureRecognizer(
+                        allowableMovement: lp.allowableMovement
+                    )
+                    observer.delegate = self
+                    observer.isEnabled = parent.isEnabled
+                    observer.onPress = { [weak self] in self?.pressBegan() }
+                    observer.onRelease = { [weak self] in self?.clearPressHint() }
+                    scroll.addGestureRecognizer(observer)
                     self.recognizer = lp
+                    self.pressObserver = observer
                     self.scrollView = scroll
                     return
                 }
@@ -500,12 +522,41 @@ struct IOSPageReorderGestureBridge<ID: Hashable>: UIViewRepresentable {
         }
 
         func detach() {
-            if let recognizer, let scrollView {
-                scrollView.removeGestureRecognizer(recognizer)
+            clearPressHint()
+            if let scrollView {
+                if let recognizer { scrollView.removeGestureRecognizer(recognizer) }
+                if let pressObserver { scrollView.removeGestureRecognizer(pressObserver) }
             }
             recognizer = nil
+            pressObserver = nil
             scrollView = nil
             activeBlockID = nil
+        }
+
+        /// A single finger came down. If it stays put on a row that could
+        /// lift, hint that row; the lift (or movement, or release) clears it.
+        private func pressBegan() {
+            clearPressHint()
+            guard let pressObserver, let scrollView else { return }
+            let location = pageCoordinateLocation(for: pressObserver, scrollView: scrollView)
+            guard let blockID = parent.layoutCache.realizedBlockIDAtPageY(location.y),
+                  parent.shouldBegin(blockID, location)
+            else { return }
+            pressHintTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: IOSPageReorderGestureBridge.pressHintDelay)
+                guard let self, !Task.isCancelled else { return }
+                self.isShowingPressHint = true
+                self.parent.onPressHint(blockID)
+            }
+        }
+
+        private func clearPressHint() {
+            pressHintTask?.cancel()
+            pressHintTask = nil
+            if isShowingPressHint {
+                isShowingPressHint = false
+                parent.onPressHint(nil)
+            }
         }
 
         @objc func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
@@ -518,6 +569,11 @@ struct IOSPageReorderGestureBridge<ID: Hashable>: UIViewRepresentable {
                     return
                 }
                 activeBlockID = blockID
+                // The lift takes over from the hint; onBegin clears it in
+                // the same frame rather than fading it out under the lift.
+                pressHintTask?.cancel()
+                pressHintTask = nil
+                isShowingPressHint = false
                 parent.onBegin(blockID, location)
             case .changed:
                 guard activeBlockID != nil else { return }
@@ -556,6 +612,7 @@ struct IOSPageReorderGestureBridge<ID: Hashable>: UIViewRepresentable {
         }
 
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard gestureRecognizer !== pressObserver else { return false }
             guard gestureRecognizer === recognizer,
                   let scrollView else {
                 return true
@@ -777,6 +834,70 @@ struct PageBlockDropDelegate: DropDelegate {
     }
 }
 
+/// Watches a single-finger press without ever recognizing, so scrolling,
+/// taps, and text interaction are untouched. Reports the press, and its end
+/// once the finger lifts, moves past `allowableMovement`, or a second finger
+/// lands.
+final class PressObservingGestureRecognizer: UIGestureRecognizer {
+    var onPress: () -> Void = {}
+    var onRelease: () -> Void = {}
+    private let allowableMovement: CGFloat
+    private var start: CGPoint?
+    private var isPressing = false
+
+    init(allowableMovement: CGFloat) {
+        self.allowableMovement = allowableMovement
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesBegan(touches, with: event)
+        guard start == nil, numberOfTouches == 1, let view else {
+            release()
+            return
+        }
+        start = location(in: view)
+        isPressing = true
+        onPress()
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesMoved(touches, with: event)
+        guard isPressing, let start, let view else { return }
+        let point = location(in: view)
+        if hypot(point.x - start.x, point.y - start.y) > allowableMovement {
+            release()
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesEnded(touches, with: event)
+        release()
+        state = .failed
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesCancelled(touches, with: event)
+        release()
+        state = .failed
+    }
+
+    override func reset() {
+        super.reset()
+        start = nil
+        isPressing = false
+    }
+
+    private func release() {
+        guard isPressing else { return }
+        isPressing = false
+        onRelease()
+    }
+}
+
 @MainActor
 final class PageScrollController {
     static let shared = PageScrollController()
@@ -787,6 +908,20 @@ final class PageScrollController {
     func scroll(toY y: CGFloat) {
         guard let scrollView else { return }
         scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: y), animated: false)
+    }
+
+    /// Per-frame autoscroll step against the live offset and insets. The
+    /// published `PageScrollMetrics` lag a runloop turn behind, which would
+    /// drop steps when called every display refresh.
+    func scroll(byY delta: CGFloat) {
+        guard let scrollView else { return }
+        let insets = scrollView.adjustedContentInset
+        let minY = -insets.top
+        let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + insets.bottom)
+        let current = scrollView.contentOffset.y
+        let next = min(maxY, max(minY, current + delta))
+        guard next != current else { return }
+        scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: next), animated: false)
     }
 }
 

@@ -350,7 +350,8 @@ public struct EditorView: View {
                     state.selectForReorderStart(on: blockID)
                     if anchor == location {
                         preliftReorder(blockID: blockID)
-                        Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
+                        Haptics.medium(enabled: configuration.isHapticFeedbackEnabled)
+                        Haptics.prepareSelection(enabled: configuration.isHapticFeedbackEnabled)
                     }
                     tickReorderLift(blockID: blockID, at: location, anchorAt: anchor, snapshot: document.children)
                 },
@@ -374,6 +375,10 @@ public struct EditorView: View {
                 },
                 onReorderSettled: { token in
                     finishReorderSettle(token: token)
+                },
+                onReorderPressHint: { id in
+                    // Warm the pickup impact while the hold completes.
+                    if id != nil { Haptics.prepareMedium(enabled: configuration.isHapticFeedbackEnabled) }
                 },
                 onPinchUpdate: { value in
                     !readOnly && handlePinchUpdate(value)

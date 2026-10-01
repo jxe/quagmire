@@ -66,6 +66,11 @@ private enum ReorderLiftStyle {
     static let shadowY: CGFloat = 6
     static let pickup = Animation.smooth(duration: 0.2)
     static let landing = Animation.smooth(duration: 0.24)
+    /// iOS hold-to-lift hint: a full-width tint that deepens over the rest
+    /// of the long-press delay, so the hold reads as progressing.
+    static let pressHintFill = Color.primary.opacity(0.07)
+    static let pressHintIn = Animation.easeIn(duration: 0.35)
+    static let pressHintOut = Animation.easeOut(duration: 0.15)
 }
 
 private struct RowSurfaceOrder<ID: Hashable>: Equatable {
@@ -131,6 +136,8 @@ struct RowSurfaceActions<ID: Hashable> {
     var onReorderAutoscroll: (CGPoint) -> Void = { _ in }
     /// The settle overlay with this token has landed; clear it.
     var onReorderSettled: (UUID) -> Void = { _ in }
+    /// iOS: a row is being held and may lift (nil when the hold ends).
+    var onReorderPressHint: (ID?) -> Void = { _ in }
 
     /// Return true when the pinch has crossed the editor's semantic threshold
     /// and should drive edge autoscroll.
@@ -175,10 +182,15 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     /// destination, so the content can animate to its destination styling.
     let liftContent: (ID, CGSize, _ isLanding: Bool) -> LiftContent
 
-    @State private var pinchAutoScrollTask: Task<Void, Never>?
+    @State private var pinchAutoScroll = FrameTicker()
     @State private var pinchAutoScrollVelocity: CGFloat = 0
-    @State private var reorderAutoScrollTask: Task<Void, Never>?
+    @State private var reorderAutoScroll = FrameTicker()
     @State private var reorderAutoScrollVelocity: CGFloat = 0
+    @State private var pressHintID: ID?
+    /// When the last reorder gesture ended. The finger that lifted a row
+    /// also completes a tap when it comes up, so taps in this window belong
+    /// to the reorder, not to a row.
+    @State private var lastReorderEnd: ContinuousClock.Instant?
     @State private var activeReorderLocation: CGPoint?
     @State private var hoveredRowID: ID?
     /// Where the current settle lands, once measured; animating this in
@@ -320,6 +332,10 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
                 },
                 onBegin: { id, location in
                     activeReorderLocation = location
+                    // The lift replaces the hint in the same frame.
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { pressHintID = nil }
                     actions.onReorderBegin(id, location, location)
                     updateReorderAutoScroll(for: location)
                 },
@@ -330,13 +346,21 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
                 },
                 onEnded: { location in
                     activeReorderLocation = nil
+                    lastReorderEnd = .now
                     stopReorderAutoScroll()
                     actions.onReorderEnded(location)
                 },
                 onCancelled: {
                     activeReorderLocation = nil
+                    lastReorderEnd = .now
                     stopReorderAutoScroll()
                     actions.onReorderCancelled()
+                },
+                onPressHint: { id in
+                    actions.onReorderPressHint(id)
+                    withAnimation(id == nil ? ReorderLiftStyle.pressHintOut : ReorderLiftStyle.pressHintIn) {
+                        pressHintID = id
+                    }
                 }
             )
             .iosPagePinch(
@@ -360,6 +384,9 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
             .iosScrollMetrics(scrollMetrics, topOverscrollAction: topOverscrollAction)
         }
         .coordinateSpace(name: PageHoverCoordinateSpace.name)
+        .background(alignment: .topLeading) {
+            pressHintBand
+        }
         .iosPageTextDropTarget(
             onUpdate: actions.onExternalDropUpdate,
             onDrop: actions.onExternalDrop,
@@ -384,6 +411,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
             },
             onEnded: { location in
                 activeReorderLocation = nil
+                lastReorderEnd = .now
                 stopReorderAutoScroll()
                 actions.onReorderEnded(location)
             }
@@ -442,6 +470,19 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
             .accessibilityIdentifier("block-drop-slot-\(rows.count)")
             .accessibilityLabel("Drop before block \(rows.count + 1)")
             .animation(reorderGapAnimation, value: trailingDropHeight)
+    }
+
+    @ViewBuilder
+    private var pressHintBand: some View {
+        if let id = pressHintID, let frame = layoutCache.realizedFrame(of: id) {
+            Rectangle()
+                .fill(ReorderLiftStyle.pressHintFill)
+                .frame(height: frame.height)
+                .frame(maxWidth: .infinity)
+                .offset(y: frame.minY)
+                .transition(.opacity)
+                .allowsHitTesting(false)
+        }
     }
 
     private func rowOpacity(_ row: RowSurfaceRow<ID>) -> Double {
@@ -538,6 +579,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     }
 
     private func handlePageLevelTap(at point: CGPoint) {
+        guard !isTapFromReorderGesture else { return }
         guard !layoutCache.isAccessoryAtY(point.y) else { return }
         if accessoryLaneWidth > 0, point.x > layoutCache.contentOriginX + layoutCache.contentWidth { return }
         if let rowID = layoutCache.realizedBlockIDAtPageY(point.y),
@@ -553,6 +595,14 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
             }
         }
         actions.onTapBelowRows(point)
+    }
+
+    /// The tap recognizer and the reorder long-press see the same touch-up
+    /// in either order: suppress while the reorder runs and briefly after.
+    private var isTapFromReorderGesture: Bool {
+        if activeReorderLocation != nil { return true }
+        guard let lastReorderEnd else { return false }
+        return ContinuousClock.now - lastReorderEnd < .milliseconds(300)
     }
 
     private func applyRowOrder(_ order: RowSurfaceOrder<ID>) {
@@ -639,23 +689,18 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     }
 
     private func startPinchAutoScrollIfNeeded() {
-        guard pinchAutoScrollTask == nil else { return }
-        pinchAutoScrollTask = Task { @MainActor in
-            let frameDuration: TimeInterval = 1.0 / 60.0
-            while !Task.isCancelled {
-                let velocity = pinchAutoScrollVelocity
-                if abs(velocity) <= 1 { break }
-                scrollBy(velocity * frameDuration)
-                try? await Task.sleep(for: .milliseconds(16))
-            }
-            pinchAutoScrollTask = nil
+        guard !pinchAutoScroll.isRunning else { return }
+        pinchAutoScroll.start { elapsed in
+            let velocity = pinchAutoScrollVelocity
+            guard abs(velocity) > 1 else { return false }
+            scrollBy(velocity * elapsed)
+            return true
         }
     }
 
     private func stopPinchAutoScroll() {
         pinchAutoScrollVelocity = 0
-        pinchAutoScrollTask?.cancel()
-        pinchAutoScrollTask = nil
+        pinchAutoScroll.stop()
     }
 
     private func updateReorderAutoScroll(for location: CGPoint) {
@@ -671,26 +716,21 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     }
 
     private func startReorderAutoScrollIfNeeded() {
-        guard reorderAutoScrollTask == nil else { return }
-        reorderAutoScrollTask = Task { @MainActor in
-            let frameDuration: TimeInterval = 1.0 / 60.0
-            while !Task.isCancelled {
-                let velocity = reorderAutoScrollVelocity
-                if abs(velocity) <= 1 { break }
-                scrollBy(velocity * frameDuration)
-                if let location = activeReorderLocation {
-                    actions.onReorderAutoscroll(location)
-                }
-                try? await Task.sleep(for: .milliseconds(16))
+        guard !reorderAutoScroll.isRunning else { return }
+        reorderAutoScroll.start { elapsed in
+            let velocity = reorderAutoScrollVelocity
+            guard abs(velocity) > 1 else { return false }
+            scrollBy(velocity * elapsed)
+            if let location = activeReorderLocation {
+                actions.onReorderAutoscroll(location)
             }
-            reorderAutoScrollTask = nil
+            return true
         }
     }
 
     private func stopReorderAutoScroll() {
         reorderAutoScrollVelocity = 0
-        reorderAutoScrollTask?.cancel()
-        reorderAutoScrollTask = nil
+        reorderAutoScroll.stop()
     }
 
     private func edgeScrollVelocity(for location: CGPoint, threshold: CGFloat, maxVelocity: CGFloat) -> CGFloat {
@@ -710,18 +750,22 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         return 0
     }
 
+    /// One autoscroll step. Steps are sub-point at slow speeds and high
+    /// refresh rates, so none are dropped.
     private func scrollBy(_ deltaY: CGFloat) {
+        #if os(iOS)
+        PageScrollController.shared.scroll(byY: deltaY)
+        #else
         let maxOffset = max(0, scrollMetrics.contentHeight - scrollMetrics.viewportHeight)
         let nextOffset = min(maxOffset, max(0, scrollMetrics.contentOffsetY + deltaY))
-        guard abs(nextOffset - scrollMetrics.contentOffsetY) > 0.5 else { return }
-        #if os(iOS)
-        PageScrollController.shared.scroll(toY: nextOffset)
-        #elseif os(macOS)
+        guard nextOffset != scrollMetrics.contentOffsetY else { return }
+        #if os(macOS)
         if !MacPageScrollController.shared.scroll(toY: nextOffset) {
             scrollPosition.scrollTo(point: CGPoint(x: 0, y: nextOffset))
         }
         #else
         scrollPosition.scrollTo(point: CGPoint(x: 0, y: nextOffset))
+        #endif
         #endif
     }
 }

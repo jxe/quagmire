@@ -205,3 +205,34 @@ private final class TallLiftTestHost: EditorHostDefaults {
     func persistCommit(changes: [DocumentChange], in document: Document) {}
     func flush(_ document: Document) async {}
 }
+
+@Suite("Reorder drop at origin")
+@MainActor
+struct EditorViewReorderOriginTests {
+    @Test func droppingTheLastChildOfASectionInPlaceKeepsItInTheSection() {
+        let first = Block.paragraph(text: AttributedString("first"))
+        let last = Block.paragraph(text: AttributedString("last"))
+        let section = Block.heading(level: .h2, text: AttributedString("Section"), children: [first, last])
+        let next = Block.heading(level: .h2, text: AttributedString("Next"))
+        let document = Document(id: DocumentID("test"), children: [section, next])
+        let state = EditorState()
+        let editor = EditorView(document: document, state: state, host: ReorderOriginTestHost())
+        let ids = [section.id, first.id, last.id, next.id]
+        editor.layoutCache.updateOrder(ids)
+        for id in ids { editor.layoutCache.setHeight(24, for: id) }
+        editor.layoutCache.contentWidth = 320
+
+        editor.preliftReorder(blockID: last.id)
+        #expect(state.currentDropTarget == .insertAt(DropPath(parent: section.id, position: 1)))
+
+        editor.endReorderLift(atY: 60, snapshot: document.children)
+        #expect(document.children.map(\.id) == [section.id, next.id])
+        #expect(document.find(section.id)?.children.map(\.id) == [first.id, last.id])
+    }
+}
+
+@MainActor
+private final class ReorderOriginTestHost: EditorHostDefaults {
+    func persistCommit(changes: [DocumentChange], in document: Document) {}
+    func flush(_ document: Document) async {}
+}

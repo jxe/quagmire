@@ -281,24 +281,46 @@ extension EditorView {
     func seedSourceDropTarget(for lift: ReorderLift, snapshot: [Block]) {
         guard !lift.isCopy else { return }
         let unprojectedRows = rowsBeforeReorderSourceRemoval(snapshot: snapshot)
-        guard let sourceIndex = unprojectedRows.firstIndex(where: { $0.id == lift.block.id }) else {
-            return
-        }
-        let sourceSlot = unprojectedRows[..<sourceIndex].filter {
-            !lift.draggedSubtreeIDs.contains($0.id)
-        }.count
+        guard let sourceSlot = reorderSourceSlot(for: lift, in: unprojectedRows) else { return }
         let rows = visibleRowsRemoving(lift.draggedSubtreeIDs, from: unprojectedRows)
         let path: DropPath?
         if let level = lift.outlineHeadingLevel {
             path = headingDropPath(forOutlineSlot: sourceSlot, rows: rows, level: level)
         } else {
-            path = dropPath(forVisibleSlot: sourceSlot, rows: rows)
+            path = reorderInsertionPath(forVisibleSlot: sourceSlot, rows: rows, unprojectedRows: unprojectedRows, lift: lift)
         }
         if let path, document.canDrop(ids: lift.ids, to: path) {
             state.currentDropTarget = .insertAt(path)
             // Heading outlines map paths to their chosen candidate slot.
             setDropSlotHint(target: .insertAt(path), slot: lift.outlineHeadingLevel == nil ? sourceSlot : nil)
         }
+    }
+
+    /// The visible slot a moving lift came from, in the source-removed rows.
+    func reorderSourceSlot(for lift: ReorderLift, in unprojectedRows: [VisibleRow]) -> Int? {
+        guard let sourceIndex = unprojectedRows.firstIndex(where: { $0.id == lift.block.id }) else {
+            return nil
+        }
+        return unprojectedRows[..<sourceIndex].filter {
+            !lift.draggedSubtreeIDs.contains($0.id)
+        }.count
+    }
+
+    /// Dropping back where the lift came from must not move it. A slot's
+    /// structural path is ambiguous there: the end of a heading's section
+    /// reads as "before the next heading", which would pull the last child
+    /// out of its section. The source slot keeps the source's own path.
+    func reorderInsertionPath(
+        forVisibleSlot slot: Int,
+        rows: [VisibleRow],
+        unprojectedRows: [VisibleRow],
+        lift: ReorderLift?
+    ) -> DropPath {
+        if let lift, !lift.isCopy,
+           slot == reorderSourceSlot(for: lift, in: unprojectedRows) {
+            return DropPath(parent: lift.sourceParentID, position: lift.sourcePositions.lowerBound)
+        }
+        return dropPath(forVisibleSlot: slot, rows: rows)
     }
 
     private func setDropSlotHint(target: DropTarget, slot: Int?) {
@@ -403,6 +425,7 @@ extension EditorView {
             return
         }
         SoundFX.play(.drop, enabled: configuration.isAudioFeedbackEnabled)
+        Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
         let hidden = hiddenBlockIDs(in: snapshot)
         let target = state.currentDropTarget ?? resolveDropTarget(atY: y, snapshot: snapshot)
         let ids = lift.ids
@@ -565,7 +588,15 @@ extension EditorView {
 
         // Between-rows insertion: convert the visible slot to a tree DropPath
         // using the layout's depth + parent metadata.
-        return (.insertAt(dropPath(forVisibleSlot: slot, rows: rows)), slot)
+        return (
+            .insertAt(reorderInsertionPath(
+                forVisibleSlot: slot,
+                rows: rows,
+                unprojectedRows: unprojectedRows,
+                lift: lift
+            )),
+            slot
+        )
     }
 
     /// The y-position that selects an insertion slot. A move resolves against
@@ -874,7 +905,8 @@ extension EditorView {
         }
     }
 
-    /// Haptic on drop-target changes during an active reorder. Two layers of
+    /// Selection tick on drop-target changes during an active reorder,
+    /// after the first. Two layers of
     /// suppression keep this from machine-gunning when the drift gap's
     /// 260ms spring animation makes row frames jitter:
     /// 1. Dedupe on the full `DropTarget` (not just `.insertAt` position), so
@@ -891,6 +923,12 @@ extension EditorView {
             return
         }
         guard lastDropHapticTarget != target else { return }
+        // A drag's first target is where it was picked up, which already
+        // had the pickup impact.
+        guard lastDropHapticTarget != nil else {
+            lastDropHapticTarget = target
+            return
+        }
         let now = Date()
         if let last = lastDropHapticFireAt, now.timeIntervalSince(last) < 0.06 {
             lastDropHapticTarget = target
@@ -898,7 +936,7 @@ extension EditorView {
         }
         lastDropHapticTarget = target
         lastDropHapticFireAt = now
-        Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
+        Haptics.selection(enabled: configuration.isHapticFeedbackEnabled)
         #else
         _ = target
         #endif

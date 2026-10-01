@@ -61,6 +61,38 @@ enum Haptics {
         prepare(.light, enabled: enabled)
     }
 
+    static func prepareMedium(enabled: Bool) {
+        prepare(.medium, enabled: enabled)
+    }
+
+    #if os(iOS)
+    private static var selectionGenerator: UISelectionFeedbackGenerator?
+    #endif
+
+    /// The tick pickers and list reordering use as a value changes. The
+    /// generator stays prepared between ticks, so a run of them is prompt.
+    static func selection(enabled: Bool) {
+        guard enabled else { return }
+        #if os(iOS)
+        let generator = selectionGenerator ?? UISelectionFeedbackGenerator()
+        selectionGenerator = generator
+        generator.selectionChanged()
+        generator.prepare()
+        #endif
+    }
+
+    static func prepareSelection(enabled: Bool) {
+        #if os(iOS)
+        guard enabled else {
+            selectionGenerator = nil
+            return
+        }
+        let generator = selectionGenerator ?? UISelectionFeedbackGenerator()
+        selectionGenerator = generator
+        generator.prepare()
+        #endif
+    }
+
     static func light(enabled: Bool) {
         impact(.light, enabled: enabled)
     }
