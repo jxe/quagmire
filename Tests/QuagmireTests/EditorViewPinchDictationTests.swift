@@ -144,6 +144,18 @@ struct EditorViewPinchDictationTests {
         #expect(edge.phase(after: .none, fraction: 0.97) == .armed)
     }
 
+    @Test func lockProgressFillsFromTheOpeningPointToArming() {
+        let centred = PinchLockZone(origin: 0.5)
+        #expect(centred.progress(fraction: 0.4) == 0)
+        #expect(centred.progress(fraction: 0.5) == 0)
+        #expect(abs(centred.progress(fraction: 0.5875) - 0.5) < 0.0001)
+        #expect(centred.progress(fraction: centred.enter) == 1)
+        #expect(centred.progress(fraction: 0.95) == 1)
+
+        // Opened at the clamp: already in the zone.
+        #expect(PinchLockZone(origin: 0.97).progress(fraction: 0.97) == 1)
+    }
+
     @Test func heldCaptureLayerTellsTapsFromSwipes() {
         #expect(PinchLockZone.release(for: CGSize(width: 3, height: -4)) == .tap)
         #expect(PinchLockZone.release(for: CGSize(width: -120, height: 20)) == .swipe)

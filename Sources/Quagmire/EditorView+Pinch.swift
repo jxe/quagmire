@@ -57,6 +57,13 @@ struct PinchLockZone: Equatable {
         max(origin, enter - Self.hysteresis)
     }
 
+    /// How far a midpoint at `fraction` has slid from the origin toward
+    /// arming, 0…1, for the lock preview shown before it arms.
+    func progress(fraction: CGFloat) -> CGFloat {
+        guard enter > origin else { return 1 }
+        return min(1, max(0, (fraction - origin) / (enter - origin)))
+    }
+
     /// The next finger-down phase for a midpoint at `fraction`. `held` is
     /// never produced here; it only follows a release while `armed`.
     func phase(after current: PinchLockPhase, fraction: CGFloat) -> PinchLockPhase {
@@ -223,7 +230,7 @@ extension EditorView {
             // Pinched back below deadzone after opening — close the preview
             // visually but keep `pinchGestureActive` latched so a re-open
             // doesn't ping-pong the swipe/reorder gates.
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.95)) {
                 state.setPinchPreview(nil)
             }
             clearPinchThresholds()
@@ -237,6 +244,7 @@ extension EditorView {
     private func clearPinchThresholds() {
         pinchPendingInsertIndex = nil
         pinchCrossedInsertThreshold = false
+        pinchLockProgress = 0
         if pinchLock == .armed {
             pinchLock = .none
             pinchInsertStyle = .contextual
@@ -247,16 +255,20 @@ extension EditorView {
     /// Arm or disarm the lock as the finger midpoint moves across the screen.
     private func updatePinchLock(fraction: CGFloat) {
         let zone = pinchLockZone ?? PinchLockZone(origin: fraction)
+        let progress = zone.progress(fraction: fraction)
+        if abs(progress - pinchLockProgress) > 0.01 || (progress == 1) != (pinchLockProgress == 1) {
+            pinchLockProgress = progress
+        }
         let next = zone.phase(after: pinchLock, fraction: fraction)
         guard next != pinchLock else { return }
-        // The badge and the style buttons appear together on arming, with
-        // a firm tap, so the lock is felt before the fingers lift.
-        withAnimation(.spring(response: 0.24, dampingFraction: 0.75)) {
+        // The lock fills and the style buttons appear together on arming,
+        // with a firm tap, so the lock is felt before the fingers lift.
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.9)) {
             pinchLock = next
             if next == .none { pinchInsertStyle = .contextual }
         }
         if next == .armed {
-            Haptics.heavy(enabled: configuration.isHapticFeedbackEnabled)
+            Haptics.medium(enabled: configuration.isHapticFeedbackEnabled)
         } else {
             Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
         }
@@ -286,7 +298,8 @@ extension EditorView {
         } else {
             cancelPinchDictationIfNeeded()
             pinchDictationDraft = nil
-            withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
+            // Collapse without overshoot: a bounce reads as the page wobbling.
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.95)) {
                 state.setPinchPreview(nil)
             }
         }
@@ -305,7 +318,8 @@ extension EditorView {
         } else {
             cancelPinchDictationIfNeeded()
             pinchDictationDraft = nil
-            withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
+            // Collapse without overshoot: a bounce reads as the page wobbling.
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.95)) {
                 state.setPinchPreview(nil)
             }
         }
@@ -457,7 +471,11 @@ extension EditorView {
         .padding(.top, spacing)
         .accessibilityHidden(true)
         .overlay(alignment: .trailing) {
-            PinchLockBadge(phase: pinchLock)
+            // Shown from the insert threshold, so the lock is visible (and
+            // its distance readable) before the slide arms it.
+            if pinchCrossedInsertThreshold || pinchLock != .none {
+                PinchLockBadge(phase: pinchLock, progress: pinchLockProgress)
+            }
         }
     }
 

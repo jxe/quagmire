@@ -116,6 +116,8 @@ public struct EditorView: View {
     @State var pinchLock: PinchLockPhase = .none
     /// Fixed when the gap first opens, from where the fingers were then.
     @State var pinchLockZone: PinchLockZone?
+    /// Slide toward arming the lock, 0…1, while it is not yet armed.
+    @State var pinchLockProgress: CGFloat = 0
     /// Heading / Indent toggles chosen while the pinch is locked.
     @State var pinchInsertStyle: PinchInsertStyle = .contextual
     #if os(iOS)

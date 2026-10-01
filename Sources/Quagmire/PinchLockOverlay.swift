@@ -2,22 +2,39 @@ import SwiftUI
 
 // MARK: - Pinch lock (iOS)
 
-/// Sits at the trailing edge of the pinch's draft row once the lock arms,
-/// appearing together with the style buttons.
+/// Sits at the trailing edge of the pinch's draft row from the moment the
+/// pinch can insert. Before arming it is a faint open lock whose ring fills
+/// as the fingers slide toward it; on arming it becomes the solid lock,
+/// together with the style buttons.
 struct PinchLockBadge: View {
     let phase: PinchLockPhase
+    /// Slide toward arming, 0…1; ignored once armed.
+    let progress: CGFloat
 
     var body: some View {
-        if phase != .none {
-            Image(systemName: "lock.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 34, height: 34)
-                .glassEffect(.regular, in: Circle())
-                .transition(.scale(scale: 0.6).combined(with: .opacity))
-                .accessibilityLabel("Recording locked")
-                .allowsHitTesting(false)
-        }
+        let isLocked = phase != .none
+        Image(systemName: isLocked ? "lock.fill" : "lock.open")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(isLocked ? Color.accentColor : Color.secondary)
+            .contentTransition(.symbolEffect(.replace))
+            .frame(width: 34, height: 34)
+            .glassEffect(.regular, in: Circle())
+            .overlay {
+                Circle()
+                    .trim(from: 0, to: isLocked ? 1 : progress)
+                    .stroke(
+                        Color.accentColor.opacity(isLocked ? 0 : 0.85),
+                        style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .padding(1)
+            }
+            .opacity(isLocked ? 1 : 0.5 + 0.5 * progress)
+            .scaleEffect(isLocked ? 1 : 0.88 + 0.08 * progress)
+            .animation(.spring(response: 0.24, dampingFraction: 0.9), value: isLocked)
+            .transition(.scale(scale: 0.6).combined(with: .opacity))
+            .accessibilityLabel(isLocked ? "Recording locked" : "Slide right to lock recording")
+            .allowsHitTesting(false)
     }
 }
 
