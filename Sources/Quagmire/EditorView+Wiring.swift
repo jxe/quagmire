@@ -286,7 +286,7 @@ extension EditorView {
 #if os(macOS)
         undoController.routeExternalUndo = { redo in
             guard foreignTextInputHasFocus else { return false }
-            let manager = NSApp.keyWindow?.firstResponder?.undoManager
+            let manager = macKeyWindow?.firstResponder?.undoManager
             guard manager !== undoController.undoManager else { return true }
             if redo { manager?.redo() } else { manager?.undo() }
             return true
@@ -353,10 +353,16 @@ extension EditorView {
     /// firstResponder probe so callers don't need their own `#if os(macOS)`.
     #if os(macOS)
     var foreignTextInputHasFocus: Bool {
-        NSApp.keyWindow?.firstResponder is NSTextView && activeContainedTextView() == nil
+        macKeyWindow?.firstResponder is NSTextView && activeContainedTextView() == nil
     }
     func activeContainedTextView() -> ContainedTextView? {
-        NSApp.keyWindow?.firstResponder as? ContainedTextView
+        macKeyWindow?.firstResponder as? ContainedTextView
+    }
+
+    /// `NSApp` is nil until an `NSApplication` exists (for example in a
+    /// `swift test` process), and these probes run from editor commands.
+    private var macKeyWindow: NSWindow? {
+        (NSApp as NSApplication?)?.keyWindow
     }
     #endif
 
