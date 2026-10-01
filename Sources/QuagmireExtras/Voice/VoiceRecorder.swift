@@ -272,18 +272,34 @@ public final class VoiceRecorder: VoiceRecording {
         )
     }
 
+    #if os(iOS)
+    /// Session (de)activation is a synchronous round trip to the media
+    /// server, often tens of milliseconds or more. Deactivation runs here so
+    /// stopping never stalls the main thread (and the UI animating the stop);
+    /// activation drains the queue first, so a quick restart cannot be
+    /// deactivated by a stale request.
+    private static let audioSessionQueue = DispatchQueue(
+        label: "QuagmireExtras.VoiceRecorder.audioSession",
+        qos: .userInitiated
+    )
+    #endif
+
     private func deactivateAudioSession() {
         #if os(iOS)
-        do {
-            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        } catch {
-            logger?.error("audio session deactivation failed: \(String(describing: error), privacy: .public)")
+        let logger = logger
+        Self.audioSessionQueue.async {
+            do {
+                try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            } catch {
+                logger?.error("audio session deactivation failed: \(String(describing: error), privacy: .public)")
+            }
         }
         #endif
     }
 
     private func activateAudioSession() throws {
         #if os(iOS)
+        Self.audioSessionQueue.sync {}
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker])

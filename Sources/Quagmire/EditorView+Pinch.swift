@@ -217,6 +217,9 @@ extension EditorView {
             if gapHeight >= Self.pinchInsertCommitGap, !pinchCrossedInsertThreshold {
                 pinchCrossedInsertThreshold = true
                 Haptics.medium(enabled: configuration.isHapticFeedbackEnabled)
+                // The insert's impact fires as the gap animates closed; a
+                // cold generator would add its setup to that frame.
+                Haptics.prepareHeavy(enabled: configuration.isHapticFeedbackEnabled)
                 SoundFX.play(.pinchOpen, enabled: configuration.isAudioFeedbackEnabled)
                 preparePinchDictationDraft(at: insertIndex)
                 beginPinchDictationIfAvailable()

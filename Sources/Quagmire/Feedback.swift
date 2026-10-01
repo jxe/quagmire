@@ -65,6 +65,10 @@ enum Haptics {
         prepare(.medium, enabled: enabled)
     }
 
+    static func prepareHeavy(enabled: Bool) {
+        prepare(.heavy, enabled: enabled)
+    }
+
     #if os(iOS)
     private static var selectionGenerator: UISelectionFeedbackGenerator?
     #endif
