@@ -148,7 +148,7 @@ public struct EditorView: View {
     /// row swipe and further leading swipes add rows to its targets. On macOS
     /// the ordinary navigation selection remains the source of truth.
     struct BlockActionSheet: Identifiable {
-        let anchorID: BlockID
+        private(set) var anchorID: BlockID
         var selectedIDs: Set<BlockID>
 
         var id: BlockID { anchorID }
@@ -158,8 +158,24 @@ public struct EditorView: View {
             selectedIDs = [id]
         }
 
-        mutating func selectFromBackgroundSwipe(_ blockID: BlockID) {
-            selectedIDs.insert(blockID)
+        /// A swipe on a row while the menu is up toggles that row: others
+        /// join the selection, selected ones leave it. Returns false once
+        /// nothing is left, so the menu closes. Removing the anchor hands
+        /// the menu to the first remaining row in document order.
+        @MainActor
+        mutating func toggleFromBackgroundSwipe(_ blockID: BlockID, in document: Document) -> Bool {
+            guard selectedIDs.contains(blockID) else {
+                selectedIDs.insert(blockID)
+                return true
+            }
+            selectedIDs.remove(blockID)
+            if anchorID == blockID {
+                guard let next = selectedIDs.min(by: { lhs, rhs in
+                    (document.documentOrder(of: lhs) ?? .max) < (document.documentOrder(of: rhs) ?? .max)
+                }) else { return false }
+                anchorID = next
+            }
+            return !selectedIDs.isEmpty
         }
 
         @MainActor
@@ -325,7 +341,7 @@ public struct EditorView: View {
                     }
                     #endif
                     if let block = document.find(id),
-                       block.isHeading,
+                       block.isHeading || iosGutterTogglesDisclosure(block),
                        isCollapsibleSection(block) {
                         #if os(macOS)
                         handleMacHeadingChevronClick(block, modifiers: NSEvent.modifierFlags)
@@ -788,8 +804,8 @@ public struct EditorView: View {
         let isEditing = !readOnly && state.editingBlock == block.id
         #endif
         // The macOS action menu opens in nav mode, where the block is already painted with
-        // the blue nav-selection tint — a second ring would just duplicate it. iOS has no
-        // nav-mode multi-select (always one anchor block), so the ring is the only marker.
+        // the nav-selection tint. iOS has no nav mode, so its menu targets take the same
+        // tint here.
         #if os(iOS)
         let isActionMenuTarget = actionSheet?.selectedIDs.contains(block.id) == true
         #else
@@ -807,8 +823,7 @@ public struct EditorView: View {
         let onShowActionSheet: () -> Void = {
             #if os(iOS)
             if var current = actionSheet {
-                current.selectFromBackgroundSwipe(block.id)
-                actionSheet = current
+                actionSheet = current.toggleFromBackgroundSwipe(block.id, in: document) ? current : nil
             } else {
                 actionSheet = BlockActionSheet(id: block.id)
             }
@@ -883,9 +898,11 @@ public struct EditorView: View {
                 }
             },
             onClickAtPoint: { point in
+                if dismissIOSActionSheetForTap() { return }
                 if !readOnly { transferFocus(to: .editor(block.id, initialCursor: .point(point))) }
             },
             onToggleExpansion: {
+                if dismissIOSActionSheetForTap() { return }
                 toggleSectionExpansion(block)
             },
             onHeadingChevronLongPress: {
@@ -976,6 +993,31 @@ public struct EditorView: View {
         }
     }
     #endif
+
+    /// iOS: while the block menu is up, a tap anywhere outside it only
+    /// dismisses it. Returns true when it did.
+    func dismissIOSActionSheetForTap() -> Bool {
+        #if os(iOS)
+        if actionSheet != nil {
+            actionSheet = nil
+            return true
+        }
+        #endif
+        return false
+    }
+
+    /// iOS: the gutter beside a toggle or template button is part of its
+    /// disclosure's touch target, as it already is for headings.
+    func iosGutterTogglesDisclosure(_ block: Block) -> Bool {
+        #if os(iOS)
+        switch block.kind {
+        case .toggle, .templateButton: return true
+        default: return false
+        }
+        #else
+        return false
+        #endif
+    }
 
     func shouldBeginIOSReorder(on blockID: BlockID, at location: CGPoint) -> Bool {
         if dragIDs(for: blockID).contains(where: isPageTitleID) {

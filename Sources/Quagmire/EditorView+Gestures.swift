@@ -1148,9 +1148,22 @@ struct IOSRowSwipeActions: ViewModifier {
 
     private let trigger: CGFloat = 96
     private let revealCap: CGFloat = 140
+    /// Return to rest without overshoot; a row bouncing past its column
+    /// reads as loose.
+    private let settle = Animation.spring(response: 0.32, dampingFraction: 0.9)
+
+    /// 1:1 up to the trigger, then rubber-banded toward `revealCap`, so the
+    /// row keeps answering the finger past the trigger instead of hitting a
+    /// wall.
+    private func revealOffset(for drag: CGFloat) -> CGFloat {
+        let x = max(0, drag)
+        guard x > trigger else { return x }
+        let range = revealCap - trigger
+        return trigger + range * (1 - 1 / (1 + (x - trigger) / range))
+    }
 
     func body(content: Content) -> some View {
-        let rightOffset = min(revealCap, max(0, dragOffset))
+        let rightOffset = revealOffset(for: dragOffset)
         let revealProgress = min(1, rightOffset / trigger)
         let deleteProgress = min(1, max(0, -dragOffset) / trigger)
 
@@ -1181,7 +1194,7 @@ struct IOSRowSwipeActions: ViewModifier {
                             .font(.system(size: iconSize, weight: .semibold))
                     }
                     .padding(.leading, 4)
-                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: crossed)
+                    .animation(.spring(response: 0.22, dampingFraction: 0.85), value: crossed)
                     .allowsHitTesting(false)
                 }
             }
@@ -1200,8 +1213,11 @@ struct IOSRowSwipeActions: ViewModifier {
                 IOSRowSwipeGestureBridge(
                     isEnabled: isEnabled,
                     onChanged: { h in
+                        // The row keeps tracking the finger after the menu
+                        // opens (never into the delete side, which can no
+                        // longer commit); it returns on release.
+                        dragOffset = triggered ? max(0, h) : h
                         guard !triggered else { return }
-                        dragOffset = h
                         // The menu opens on threshold-crossed mid-gesture so the
                         // user can swipe-and-hold to peek the menu. Delete is
                         // destructive — only commits on release, but fire a haptic
@@ -1223,14 +1239,14 @@ struct IOSRowSwipeActions: ViewModifier {
                             onDelete()
                             SoundFX.play(.delete, enabled: configuration.isAudioFeedbackEnabled)
                         }
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                        withAnimation(settle) {
                             dragOffset = 0
                         }
                         triggered = false
                         crossedDeleteThreshold = false
                     },
                     onCancelled: {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                        withAnimation(settle) {
                             dragOffset = 0
                         }
                         triggered = false
@@ -1243,7 +1259,7 @@ struct IOSRowSwipeActions: ViewModifier {
             // offset row stays offset until the user touches it again.
             .onChange(of: isEnabled) { _, newValue in
                 guard !newValue else { return }
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                withAnimation(settle) {
                     dragOffset = 0
                 }
                 triggered = false
@@ -1255,9 +1271,6 @@ struct IOSRowSwipeActions: ViewModifier {
         triggered = true
         Haptics.medium(enabled: configuration.isHapticFeedbackEnabled)
         action()
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
-            dragOffset = 0
-        }
     }
 
     /// A graphite-style cross-out line drawn in a `Canvas`. Composited from a

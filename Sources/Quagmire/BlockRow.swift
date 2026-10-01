@@ -199,7 +199,7 @@ struct BlockRow: View, Equatable {
                     Color.yellow.opacity(0.34)
                 } else if model.isFindMatch {
                     Color.yellow.opacity(0.14)
-                } else if isSelected && !isEditing {
+                } else if (isSelected || isActionMenuTarget) && !isEditing {
                     theme.selectionBackground
                 } else {
                     Color.clear
@@ -221,18 +221,6 @@ struct BlockRow: View, Equatable {
                         .overlay(
                             RoundedRectangle(cornerRadius: 5)
                                 .stroke(theme.linkForeground.opacity(0.55), lineWidth: 1.5)
-                        )
-                        .padding(.leading, leadingInset)
-                        .padding(.trailing, 4)
-                        .allowsHitTesting(false)
-                } else if isActionMenuTarget {
-                    let leadingInset = CGFloat(depth) * theme.indentStep
-                    let gold = Color(red: 0.83, green: 0.66, blue: 0.18)
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(gold.opacity(0.05))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 5)
-                                .stroke(gold.opacity(0.42), lineWidth: 1)
                         )
                         .padding(.leading, leadingInset)
                         .padding(.trailing, 4)
@@ -567,7 +555,36 @@ struct BlockRow: View, Equatable {
             editableText(font: theme.body(), fontSize: 16, bold: false, lineSpacing: theme.bodyLineSpacing)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .topLeading) { disclosureTouchTarget(titleReach: 18) }
         .padding(.leading, CGFloat(depth) * theme.indentStep)
+    }
+
+    /// iOS: a finger-sized target around the 16pt disclosure triangle. It
+    /// covers the indent just left of the marker, the marker, the gap, and
+    /// `titleReach` points of the title (a letter or two), centered on the
+    /// first line, and sits above the title so those letters toggle instead
+    /// of editing.
+    @ViewBuilder
+    private func disclosureTouchTarget(titleReach: CGFloat) -> some View {
+        #if os(iOS)
+        let leadingReach: CGFloat = 12
+        let height: CGFloat = 40
+        // While editing, the title's letters place the cursor.
+        let titleReach = isEditing ? 0 : titleReach
+        Color.clear
+            .frame(
+                width: leadingReach + theme.bulletMarkerColumnWidth + theme.listMarkerGap + titleReach,
+                height: height
+            )
+            .contentShape(Rectangle())
+            .offset(x: -leadingReach, y: (theme.listMarkerFrameHeight - height) / 2)
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    onToggleExpansion()
+                }
+            }
+            .accessibilityHidden(true)
+        #endif
     }
 
     private func templateButtonRow() -> some View {
@@ -619,6 +636,8 @@ struct BlockRow: View, Equatable {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // The title is the button itself, so the target stops at the gap.
+        .overlay(alignment: .topLeading) { disclosureTouchTarget(titleReach: 0) }
         .padding(.leading, CGFloat(depth) * theme.indentStep)
     }
 
