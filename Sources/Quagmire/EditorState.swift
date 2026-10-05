@@ -36,6 +36,14 @@ public final class EditorState {
     /// "seek to end".
     var pendingInitialCursor: InitialCursorTarget? = nil
 
+    /// A focus change the host asked for, waiting for the mounted editor to
+    /// carry it out (`edit(_:selection:)`, `select(_:)`, `endEditing()`).
+    var hostFocusRequest: HostFocusRequest? = nil
+
+    /// The live editor's last reported caret or selection; read through
+    /// `textSelection`, which ignores it outside edit mode.
+    var liveTextRange: LiveTextRange? = nil
+
     /// Set when `revalidate` repaired the selection (the cursor / editing block
     /// vanished from the document, so it fell back to another block — often the
     /// document's first block). Consumed by `handleModeChange` to skip the

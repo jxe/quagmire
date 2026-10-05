@@ -10,9 +10,18 @@ import UIKit
 /// `.point` is what click-to-edit captures; the editor maps the point to a character
 /// index via NSTextView's `characterIndexForInsertion(at:)`. `.offset` is what split /
 /// programmatic-focus paths use when they already know the desired character index.
+/// `.range` selects text, as a host's `EditorState.edit(_:selection:)` asks.
 enum InitialCursorTarget: Sendable, Equatable {
     case point(CGPoint)
     case offset(Int)
+    case range(Range<Int>)
+}
+
+/// `range` clamped to a text of `length` UTF-16 units.
+func clampedSelection(_ range: Range<Int>, length: Int) -> NSRange {
+    let lower = max(0, min(range.lowerBound, length))
+    let upper = max(lower, min(range.upperBound, length))
+    return NSRange(location: lower, length: upper - lower)
 }
 
 let typingCheckpointDelay = Duration.milliseconds(750)
@@ -218,6 +227,9 @@ struct BlockTextEditor: View {
     /// entries outlive SwiftUI's mounted editor; coordinators instead checkpoint live
     /// text after a short pause into this controller's stable document-level manager.
     @Environment(\.documentUndoController) private var documentUndoController
+    /// The owning EditorView's channel for host-requested selections and the
+    /// live selection it reports back.
+    @Environment(\.liveTextSelection) private var liveTextSelection
     #if os(macOS)
     /// Single-slot handle to the active NSTextView. ContainedTextView assigns itself
     /// when mounted and clears on unmount, so EditorView.transferFocus can grab
@@ -288,7 +300,8 @@ struct BlockTextEditor: View {
             consumeInitialCursor: consumeInitialCursor,
             blockID: blockID,
             documentUndoController: documentUndoController,
-            activeView: macActiveTextView
+            activeView: macActiveTextView,
+            liveSelection: liveTextSelection
         )
         .alignmentGuide(.firstTextBaseline) { _ in
             // NSTextView with textContainerInset=.zero, lineFragmentPadding=0 puts its first
@@ -330,7 +343,8 @@ struct BlockTextEditor: View {
             onCompletionTriggerChange: onCompletionTriggerChange,
             completionActive: completionActive,
             consumeInitialCursor: consumeInitialCursor,
-            documentUndoController: documentUndoController
+            documentUndoController: documentUndoController,
+            liveSelection: liveTextSelection
         )
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
@@ -377,6 +391,7 @@ struct MacBlockTextEditor: NSViewRepresentable {
     let blockID: BlockID
     let documentUndoController: DocumentUndoController?
     let activeView: MacActiveTextView?
+    var liveSelection: LiveTextSelection? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -387,6 +402,7 @@ struct MacBlockTextEditor: NSViewRepresentable {
         view.coordinator = context.coordinator
         view.delegate = context.coordinator
         view.activeView = activeView
+        view.liveSelection = liveSelection
         view.blockID = blockID
         view.isRichText = true
         view.linkTextAttributes = [
@@ -674,9 +690,11 @@ struct MacBlockTextEditor: NSViewRepresentable {
             // SwiftUI's view-update pass.
             let composing = tv.hasMarkedText()
             let plain = tv.string
-            let cursor = tv.selectedRange().location
+            let selected = tv.selectedRange()
+            let cursor = selected.location
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                self.parent.liveSelection?.report(selected, in: self.parent.blockID)
                 if composing {
                     self.parent.onCompletionTriggerChange(nil)
                 } else {
@@ -771,6 +789,9 @@ final class ContainedTextView: NSTextView {
     /// `activeView.view = self` in `viewDidMoveToWindow` and clear it on tear-down so
     /// EditorView.transferFocus can grab us synchronously.
     weak var activeView: MacActiveTextView?
+    /// The owning EditorView's channel for host-requested selections. Attached
+    /// and detached alongside `activeView`.
+    weak var liveSelection: LiveTextSelection?
     /// Set in `makeNSView`; never changes during a view's lifetime (one editor mount
     /// per (BlockID, edit-session)). Used to verify "is this view for the BlockID
     /// transferFocus wants?".
@@ -798,12 +819,14 @@ final class ContainedTextView: NSTextView {
         if newWindow == nil, let activeView, activeView.view === self {
             activeView.view = nil
         }
+        if newWindow == nil { liveSelection?.detach(self) }
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
             activeView?.view = self
+            liveSelection?.attach(self)
         }
         if wantsFocus, let window = window, window.firstResponder !== self {
             // Same reasoning as updateNSView's async grab: the view can detach from
@@ -847,6 +870,9 @@ final class ContainedTextView: NSTextView {
             switch target {
             case .point(let p): idx = characterIndexForInsertion(at: p)
             case .offset(let o): idx = max(0, min(o, len))
+            case .range(let range):
+                setSelectedRange(clampedSelection(range, length: len))
+                return
             }
             setSelectedRange(NSRange(location: idx, length: 0))
         } else {
@@ -1233,6 +1259,7 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
     let completionActive: Bool
     let consumeInitialCursor: () -> InitialCursorTarget?
     let documentUndoController: DocumentUndoController?
+    var liveSelection: LiveTextSelection? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -1240,6 +1267,8 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
         let tv = ContainedTextViewIOS()
         tv.delegate = context.coordinator
         tv.coordinator = context.coordinator
+        tv.liveSelection = liveSelection
+        tv.blockID = blockID
         tv.isEditable = true
         tv.isSelectable = true
         tv.linkTextAttributes = [
@@ -1551,9 +1580,11 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
             // shows up as an AttributeGraph cycle.
             let composing = (textView.markedTextRange != nil)
             let plain = textView.text ?? ""
-            let cursor = textView.selectedRange.location
+            let selected = textView.selectedRange
+            let cursor = selected.location
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                self.parent.liveSelection?.report(selected, in: self.parent.blockID)
                 if composing {
                     self.parent.onCompletionTriggerChange(nil)
                 } else {
@@ -1635,6 +1666,11 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
 /// rather than inserting characters into the row.
 final class ContainedTextViewIOS: UITextView {
     weak var coordinator: IOSBlockTextEditorView.Coordinator?
+    /// The owning EditorView's channel for host-requested selections; attached
+    /// while this view is in a window.
+    weak var liveSelection: LiveTextSelection?
+    /// Set in `makeUIView`; the block this mount edits.
+    var blockID: BlockID?
     /// If non-nil, the cursor is placed at this target on initial focus. Cleared
     /// after consumption so subsequent focus grabs fall through to seek-to-end.
     var pendingInitialCursor: InitialCursorTarget?
@@ -1666,6 +1702,7 @@ final class ContainedTextViewIOS: UITextView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        if window != nil { liveSelection?.attach(self) } else { liveSelection?.detach(self) }
         // Grab focus synchronously inside the same runloop the previous editor
         // resigned in — UIKit only keeps the keyboard alive when first-responder
         // transfer is synchronous. Async dispatch (the obvious-looking choice)
@@ -1785,10 +1822,36 @@ final class ContainedTextViewIOS: UITextView {
             case .offset(let o):
                 selectedRange = NSRange(location: max(0, min(o, len)), length: 0)
                 return
+            case .range(let range):
+                selectedRange = clampedSelection(range, length: len)
+                return
             }
         }
         selectedRange = NSRange(location: len, length: 0)
     }
 }
 
+#endif
+
+#if os(macOS)
+extension ContainedTextView: LiveTextSelectionView {
+    var liveBlockID: BlockID? { blockID }
+
+    func applyLiveSelection(_ range: NSRange) {
+        if let window, window.firstResponder !== self { window.makeFirstResponder(self) }
+        let length = (string as NSString).length
+        setSelectedRange(clampedSelection(range.location..<(range.location + range.length), length: length))
+        scrollRangeToVisible(selectedRange())
+    }
+}
+#elseif os(iOS)
+extension ContainedTextViewIOS: LiveTextSelectionView {
+    var liveBlockID: BlockID? { blockID }
+
+    func applyLiveSelection(_ range: NSRange) {
+        if !isFirstResponder { _ = becomeFirstResponder() }
+        let length = (text as NSString?)?.length ?? 0
+        selectedRange = clampedSelection(range.location..<(range.location + range.length), length: length)
+    }
+}
 #endif

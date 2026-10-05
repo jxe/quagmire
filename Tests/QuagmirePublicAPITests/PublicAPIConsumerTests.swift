@@ -164,4 +164,17 @@ struct PublicAPIConsumerTests {
         _ = readOnlyView
         _ = liveDictation
     }
+
+    @MainActor @Test func hostsDirectFocusAndReadTheTextSelection() {
+        let heading = Block.heading(level: .h1, text: AttributedString("Title"))
+        let state = EditorState()
+        state.edit(heading.id)
+        state.edit(heading.id, selection: .start)
+        state.edit(heading.id, selection: .caret(2))
+        state.edit(heading.id, selection: .range(0..<5))
+        state.select(heading.id)
+        state.endEditing()
+        let selection: Range<Int>? = state.textSelection
+        #expect(selection == nil)
+    }
 }

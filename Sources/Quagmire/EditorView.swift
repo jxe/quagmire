@@ -60,6 +60,9 @@ public struct EditorView: View {
     /// `pageFocused` is already `true` but SwiftUI dropped first-responder
     /// during a layout reset — fires reliably on every bump.
     @State var pageFocusToken: Int = 0
+    /// The live text view's selection channel: host requests reach it, and it
+    /// reports the caret back into `state.textSelection`.
+    @State var liveTextSelection = LiveTextSelection()
     #if os(macOS)
     /// Single-slot weak handle to the currently-mounted NSTextView. Only one editor
     /// mounts at a time (gated by `isEditing`), so `transferFocus(to: .editor(id))`
@@ -554,6 +557,7 @@ public struct EditorView: View {
             .environment(\.documentUndoController, undoController)
             .environment(\.editorHost, host)
             .environment(\.editorDocument, document)
+            .environment(\.liveTextSelection, liveTextSelection)
             #if os(macOS)
             .environment(\.macActiveTextView, macActiveTextView)
             #endif
@@ -607,7 +611,12 @@ public struct EditorView: View {
                 #if os(macOS)
                 if !readOnly { installMacKeyMonitor() }
                 #endif
+                liveTextSelection.onChange = { [state] range, block in
+                    state.noteTextSelection(range.location..<(range.location + range.length), in: block)
+                }
+                performHostFocusRequest()
             }
+            .onChange(of: state.hostFocusRequest) { _, _ in performHostFocusRequest() }
             .onDisappear {
                 finishLockedPinch()
                 blockActionTask?.cancel()
