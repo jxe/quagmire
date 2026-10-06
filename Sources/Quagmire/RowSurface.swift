@@ -270,10 +270,24 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
                         } action: { newHeight in
                             layoutCache.setHeight(newHeight, for: row.id)
                         }
-                        .onGeometryChange(for: CGRect.self) { proxy in
-                            proxy.frame(in: .named(RowSurfaceInternalCoordinateSpace.name))
-                        } action: { frame in
-                            layoutCache.setRealizedInternalFrame(frame, for: row.id)
+                        .background {
+                            GeometryReader { proxy in
+                                let frame = proxy.frame(in: .named(RowSurfaceInternalCoordinateSpace.name))
+                                Color.clear
+                                    // Lazy rows can reappear at the same stack-local
+                                    // frame. Geometry changes alone cannot restore an
+                                    // entry removed when the row disappeared.
+                                    .onAppear {
+                                        layoutCache.setRealizedInternalFrame(frame, for: row.id)
+                                    }
+                                    .onChange(of: frame) { _, frame in
+                                        layoutCache.setRealizedInternalFrame(frame, for: row.id)
+                                    }
+                                    .onDisappear {
+                                        layoutCache.removeRealizedInternalFrame(for: row.id)
+                                    }
+                            }
+                            .allowsHitTesting(false)
                         }
                         .overlay(alignment: .topTrailing) {
                             rowMarker(row.id).frame(width: accessoryLaneWidth).offset(x: accessoryLaneWidth)
@@ -286,9 +300,6 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
                         )
                         .opacity(rowOpacity(row))
                         .animation(reorderGapAnimation, value: row.reorderGap)
-                        .onDisappear {
-                            layoutCache.removeRealizedInternalFrame(for: row.id)
-                        }
                     VStack(spacing: 0) { rowAccessory(row.id) }
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
                             layoutCache.setAccessoryHeight($0, for: row.id)
