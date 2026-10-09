@@ -88,6 +88,38 @@ struct NavKeyBindingTests {
         #expect(state.cursor == second.id)
     }
 
+    @Test func hostNavigationFocusLeavesEditingAndFlushesText() {
+        let block = Block.paragraph(text: AttributedString("text"))
+        let document = Document(id: DocumentID("test"), children: [block])
+        let state = EditorState()
+        state.enterEditMode(on: block.id)
+        let editor = EditorView(document: document, state: state, host: ActionMenuTestHost())
+        editor.installUndoApply()
+        var flushedWhileEditing = false
+        editor.undoController.flushActiveText = {
+            flushedWhileEditing = state.editingBlock == block.id
+        }
+        editor.wireEditorCommands()
+        editor.editorCommands.focusNavigation()
+        #expect(flushedWhileEditing)
+        #expect(state.editingBlock == nil)
+        #expect(state.cursor == block.id)
+        #expect(state.selection == [block.id])
+    }
+
+    @Test func hostNavigationFocusPreservesMultipleSelection() {
+        let first = Block.paragraph(text: AttributedString("first"))
+        let second = Block.paragraph(text: AttributedString("second"))
+        let document = Document(id: DocumentID("test"), children: [first, second])
+        let state = EditorState()
+        state.setNavSelection(blocks: [first.id, second.id], anchor: first.id, cursor: second.id)
+        let editor = EditorView(document: document, state: state, host: ActionMenuTestHost())
+        editor.wireEditorCommands()
+        editor.editorCommands.focusNavigation()
+        #expect(state.selection == [first.id, second.id])
+        #expect(state.cursor == second.id)
+    }
+
     @Test func cmdKMapsToToggleLink() {
         #expect(EditorView.navAction(for: "k", modifiers: .command) == .toggleLinkOrDocument)
     }

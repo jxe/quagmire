@@ -13,6 +13,9 @@ import SwiftUI
 @MainActor
 public final class EditorCommands {
     public var perform: (EditorAction) -> Void = { _ in }
+    /// Return keyboard focus from a host surface to page navigation, retaining
+    /// the current block selection. Unlike Escape, this does not dismiss menus.
+    public var focusNavigation: () -> Void = {}
     /// Validity predicates for menu gray-out — defaults to `true` so menus
     /// stay enabled when no editor is focused (the menu item itself is
     /// disabled when `commands` is nil).

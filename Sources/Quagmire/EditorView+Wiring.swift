@@ -23,6 +23,7 @@ extension EditorView {
     /// Read-only pages keep presentation actions without exposing any command
     /// that can mutate authored blocks or enter text editing.
     func wireReadOnlyCommands() {
+        editorCommands.focusNavigation = { forcePageFocusGrab() }
         editorCommands.perform = { action in
             switch action {
             case .findInPage: presentFind()
@@ -51,6 +52,12 @@ extension EditorView {
     /// helper on `EditorView` (kept there so they read the View's state
     /// directly without an extra parameter pass).
     func wireEditorCommands() {
+        editorCommands.focusNavigation = {
+            if let editingBlock = state.editingBlock {
+                transferFocus(to: .nav(cursor: editingBlock))
+            }
+            forcePageFocusGrab()
+        }
         editorCommands.perform = { action in
 #if os(macOS)
             guard !foreignTextInputHasFocus || action == .escape else { return }
