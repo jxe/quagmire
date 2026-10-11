@@ -987,16 +987,15 @@ private func decoratedText(
         if let preview = externalWithPreview,
            let iconData = preview.iconPNG,
            let iconImage = decodeFavicon(iconData, size: theme.pageIconSize) {
-            output = output + Text(iconImage)
-                .baselineOffset(-2)
-                + Text(" ")
+            let icon = Text(iconImage).baselineOffset(-2)
+            output = Text("\(output)\(icon) ")
         }
 
         var text = Text(attributed)
         if code {
             text = text.customAttribute(InlineCodeChipAttribute())
         }
-        output = output + text
+        output = Text("\(output)\(text)")
     }
     return output
 }

@@ -3,6 +3,9 @@ import Foundation
 import SwiftUI
 import Testing
 
+// SwiftUI also defines Document starting with the macOS 27 SDK.
+private typealias Document = Quagmire.Document
+
 @MainActor
 private final class MinimalHost: EditorHostDefaults {
     func persistCommit(changes: [DocumentChange], in document: Document) {}

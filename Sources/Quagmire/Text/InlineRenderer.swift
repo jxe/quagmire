@@ -53,7 +53,7 @@ enum InlineRenderer {
             if code {
                 text = text.customAttribute(InlineCodeChipAttribute())
             }
-            result = result + text
+            result = Text("\(result)\(text)")
         }
         return result
     }
