@@ -363,6 +363,38 @@ enum InlineMarksBridge {
         return newAttrs
     }
 
+    /// The typing attributes for a caret at `location` in `storage`, with a link
+    /// that ends at the caret left behind. The platform text view types with the
+    /// attributes of the character before the caret, so text typed straight after
+    /// a link (a mention just inserted, or a click at its end) would otherwise join
+    /// the link: `[Values](a)` followed by " and " becomes `[Values and ](a)`, and
+    /// the read-only row then shows only the target's title. Inside a link the
+    /// link continues, as it does for every other mark. Returns nil when `current`
+    /// needs no change.
+    static func typingAttributesLeavingLink(
+        _ current: [NSAttributedString.Key: Any],
+        at location: Int,
+        in storage: NSAttributedString,
+        baseFontSize: CGFloat,
+        baseBold: Bool,
+        theme: EditorTheme = .default
+    ) -> [NSAttributedString.Key: Any]? {
+        guard let link = current[.link] as? NSObject else { return nil }
+        if location < storage.length,
+           let next = storage.attribute(.link, at: location, effectiveRange: nil) as? NSObject,
+           next.isEqual(link) {
+            return nil
+        }
+        var attrs = current
+        attrs.removeValue(forKey: .link)
+        if attrs.removeValue(forKey: .linkPresentationSemibold) != nil {
+            let italic = (current[.font] as? PlatformFont)?.fontDescriptor.symbolicTraits.contains(.italicTrait) ?? false
+            attrs[.font] = bodyFont(size: baseFontSize, bold: baseBold, italic: italic, theme: theme)
+        }
+        attrs[.foregroundColor] = theme.platformForeground
+        return attrs
+    }
+
     // MARK: - Font resolution
 
     static func bodyFont(size: CGFloat, bold: Bool, italic: Bool, theme: EditorTheme = .default) -> PlatformFont {

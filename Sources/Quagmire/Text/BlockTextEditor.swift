@@ -683,6 +683,7 @@ struct MacBlockTextEditor: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
+            leaveLinkAtCaret(in: tv)
             // Cursor moved without a text change — re-evaluate the mention trigger so
             // arrow-keying out of the @-region dismisses the popover. Defer the
             // SwiftUI state write: this delegate also fires synchronously from
@@ -701,6 +702,24 @@ struct MacBlockTextEditor: NSViewRepresentable {
                     self.parent.onCompletionTriggerChange(detectInlineCompletionTrigger(plain: plain, cursor: cursor))
                 }
             }
+        }
+
+        /// Text typed at the end of a link does not extend it; see
+        /// `InlineMarksBridge.typingAttributesLeavingLink`.
+        private func leaveLinkAtCaret(in tv: NSTextView) {
+            let selected = tv.selectedRange()
+            guard selected.length == 0,
+                  !tv.hasMarkedText(),
+                  let storage = tv.textStorage,
+                  let attrs = InlineMarksBridge.typingAttributesLeavingLink(
+                    tv.typingAttributes,
+                    at: selected.location,
+                    in: storage,
+                    baseFontSize: parent.fontSize,
+                    baseBold: parent.bold,
+                    theme: parent.theme
+                  ) else { return }
+            tv.typingAttributes = attrs
         }
 
         private func applyInlineAutotransform(_ result: InlineAutotransformResult, in tv: NSTextView) {
@@ -1578,6 +1597,7 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
             // `applyPendingCursorPositionOrSeekToEnd`. The latter runs inside a
             // SwiftUI view-update pass; writing to `state.mentionMenu` there
             // shows up as an AttributeGraph cycle.
+            leaveLinkAtCaret(in: textView)
             let composing = (textView.markedTextRange != nil)
             let plain = textView.text ?? ""
             let selected = textView.selectedRange
@@ -1591,6 +1611,23 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
                     self.parent.onCompletionTriggerChange(detectInlineCompletionTrigger(plain: plain, cursor: cursor))
                 }
             }
+        }
+
+        /// Text typed at the end of a link does not extend it; see
+        /// `InlineMarksBridge.typingAttributesLeavingLink`.
+        private func leaveLinkAtCaret(in textView: UITextView) {
+            let selected = textView.selectedRange
+            guard selected.length == 0,
+                  textView.markedTextRange == nil,
+                  let attrs = InlineMarksBridge.typingAttributesLeavingLink(
+                    textView.typingAttributes,
+                    at: selected.location,
+                    in: textView.textStorage,
+                    baseFontSize: parent.fontSize,
+                    baseBold: parent.bold,
+                    theme: parent.theme
+                  ) else { return }
+            textView.typingAttributes = attrs
         }
 
         private func applyInlineAutotransform(_ result: InlineAutotransformResult, in textView: UITextView) {
