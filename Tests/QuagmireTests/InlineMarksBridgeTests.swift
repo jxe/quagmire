@@ -202,4 +202,63 @@ struct InlineMarksBridgeSanitizeTests {
         #expect(codeFont?.fontDescriptor.symbolicTraits.contains(.monoSpaceTrait) == true)
         #expect(code[.backgroundColor] as? PlatformColor == EditorTheme.default.platformCodeBackground)
     }
+
+    @Test func typingAtLinkEndLeavesTheLink() throws {
+        var linked = AttributedString("Values")
+        linked.link = URL(string: "values.md")
+        let model = AttributedString("Integrate with ") + linked
+        let storage = InlineMarksBridge.toNS(model, baseFontSize: baseFontSize, baseBold: false, lineSpacing: lineSpacing)
+        let atEnd = storage.attributes(at: storage.length - 1, effectiveRange: nil)
+
+        let typing = try #require(InlineMarksBridge.typingAttributesLeavingLink(
+            atEnd,
+            at: storage.length,
+            in: storage,
+            baseFontSize: baseFontSize,
+            baseBold: false
+        ))
+        #expect(typing[.link] == nil)
+
+        let typed = NSMutableAttributedString(attributedString: storage)
+        typed.append(NSAttributedString(string: " and ", attributes: typing))
+        var expected = AttributedString("Integrate with ") + linked
+        expected += AttributedString(" and ")
+        #expect(InlineMarksBridge.toModel(typed) == expected)
+    }
+
+    @Test func typingInsideLinkKeepsTheLink() {
+        var linked = AttributedString("Values")
+        linked.link = URL(string: "values.md")
+        let storage = InlineMarksBridge.toNS(linked, baseFontSize: baseFontSize, baseBold: false, lineSpacing: lineSpacing)
+        let inside = storage.attributes(at: 2, effectiveRange: nil)
+
+        #expect(InlineMarksBridge.typingAttributesLeavingLink(
+            inside,
+            at: 3,
+            in: storage,
+            baseFontSize: baseFontSize,
+            baseBold: false
+        ) == nil)
+    }
+
+    @Test func typingAfterBoldLinkStaysBold() throws {
+        var linked = AttributedString("Values")
+        linked.link = URL(string: "values.md")
+        linked[InlineAttributes.BoldAttribute.self] = true
+        let storage = InlineMarksBridge.toNS(linked, baseFontSize: baseFontSize, baseBold: false, lineSpacing: lineSpacing)
+        let atEnd = storage.attributes(at: storage.length - 1, effectiveRange: nil)
+
+        let typing = try #require(InlineMarksBridge.typingAttributesLeavingLink(
+            atEnd,
+            at: storage.length,
+            in: storage,
+            baseFontSize: baseFontSize,
+            baseBold: false
+        ))
+        let typed = NSMutableAttributedString(attributedString: storage)
+        typed.append(NSAttributedString(string: "!", attributes: typing))
+        var bang = AttributedString("!")
+        bang[InlineAttributes.BoldAttribute.self] = true
+        #expect(InlineMarksBridge.toModel(typed) == linked + bang)
+    }
 }
