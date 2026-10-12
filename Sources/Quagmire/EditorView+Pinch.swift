@@ -93,6 +93,9 @@ struct PinchLockZone: Equatable {
 struct PinchDictationDraft {
     var block: Block
     var slot: Int
+    /// When the recorder reported it had started, for the recording cue.
+    /// Nil while it is still activating, or when there is no recorder.
+    var recordingSince: Date?
     private var contextualBlock: Block
     private var latestTranscript = ""
     private(set) var style: PinchInsertStyle = .contextual
@@ -394,9 +397,13 @@ extension EditorView {
               pinchDictationCompletionTask == nil,
               let pinchDictation else { return }
         pinchDictationBeginTask = Task { @MainActor in
-            await pinchDictation.begin { draft in
+            let started = await pinchDictation.begin { draft in
                 updatePinchDictationDraft(draft)
             }
+            if started, pinchDictationDraft?.recordingSince == nil {
+                pinchDictationDraft?.recordingSince = .now
+            }
+            return started
         }
     }
 
@@ -475,9 +482,17 @@ extension EditorView {
         .accessibilityHidden(true)
         .overlay(alignment: .trailing) {
             // Shown from the insert threshold, so the lock is visible (and
-            // its distance readable) before the slide arms it.
+            // its distance readable) before the slide arms it. Once held,
+            // the lock gives way to the stop button in the bottom bar.
             if pinchCrossedInsertThreshold || pinchLock != .none {
-                PinchLockBadge(phase: pinchLock, progress: pinchLockProgress)
+                HStack(spacing: 8) {
+                    if let since = draft.recordingSince {
+                        PinchRecordingIndicator(since: since)
+                    }
+                    if pinchLock != .held {
+                        PinchLockBadge(phase: pinchLock, progress: pinchLockProgress)
+                    }
+                }
             }
         }
     }

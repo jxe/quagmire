@@ -38,10 +38,35 @@ struct PinchLockBadge: View {
     }
 }
 
+/// A pulsing red dot and elapsed time beside the draft row, from the moment
+/// the recorder starts until the insert commits.
+struct PinchRecordingIndicator: View {
+    let since: Date
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "circle.fill")
+                .font(.system(size: 8))
+                .foregroundStyle(.red)
+                .symbolEffect(.pulse, options: .repeating)
+            Text(timerInterval: since...Date.distantFuture, countsDown: false)
+                .font(.footnote.weight(.medium).monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 34)
+        .glassEffect(.regular, in: Capsule())
+        .transition(.scale(scale: 0.6).combined(with: .opacity))
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
+    }
+}
+
 /// Shown while a pinch is locked. The floating toggles turn the result into
 /// a heading or an indented bullet; they appear as soon as the lock arms.
-/// Once the fingers lift (`isHeld`), the editor is covered: a tap anywhere
-/// finishes the insert and a horizontal swipe inserts a divider instead.
+/// Once the fingers lift (`isHeld`), the lock becomes a stop button between
+/// them and the editor is covered: a tap on the stop button or anywhere else
+/// finishes the insert, and a horizontal swipe inserts a divider instead.
 struct PinchLockOverlay: View {
     let isHeld: Bool
     let style: PinchInsertStyle
@@ -58,6 +83,9 @@ struct PinchLockOverlay: View {
             GlassEffectContainer(spacing: 12) {
                 HStack(spacing: 12) {
                     toggle("Heading", systemImage: "textformat.size", style: .heading)
+                    if isHeld {
+                        stopButton
+                    }
                     toggle("Indent", systemImage: "increase.indent", style: .indentedBullet)
                 }
             }
@@ -84,6 +112,20 @@ struct PinchLockOverlay: View {
             .accessibilityLabel("Recording")
             .accessibilityAction(named: "Finish", onFinish)
             .accessibilityAction(named: "Insert divider", onDivider)
+    }
+
+    private var stopButton: some View {
+        Button(action: onFinish) {
+            Image(systemName: "stop.fill")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 52, height: 52)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.tint(.red).interactive(), in: Circle())
+        .transition(.scale(scale: 0.6).combined(with: .opacity))
+        .accessibilityLabel("Stop recording")
     }
 
     private func toggle(_ title: String, systemImage: String, style option: PinchInsertStyle) -> some View {
