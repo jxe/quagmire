@@ -18,9 +18,9 @@ enum BlockTurnInto: CaseIterable {
     case paragraph
     case page
     case bullet
+    case toggle
     case numbered
     case todo
-    case toggle
     case heading1
     case heading2
     case heading3
