@@ -121,6 +121,11 @@ public struct EditorView: View {
     @State var pinchLockZone: PinchLockZone?
     /// Slide toward arming the lock, 0…1, while it is not yet armed.
     @State var pinchLockProgress: CGFloat = 0
+    /// Whether an open pinch has been slid into the leading type zone, so its
+    /// release opens the keyboard instead of recording. See `PinchLockZone`.
+    @State var pinchTypeArmed = false
+    /// Slide toward arming typing, 0…1.
+    @State var pinchTypeProgress: CGFloat = 0
     /// Heading / Indent toggles chosen while the pinch is locked.
     @State var pinchInsertStyle: PinchInsertStyle = .contextual
     #if os(iOS)
@@ -138,6 +143,8 @@ public struct EditorView: View {
     /// While transcription is finishing, further pinch inserts are gated so
     /// one shared host recorder cannot be asked to serve two inline drafts.
     @State var pinchDictationCompletionTask: Task<Void, Never>?
+    /// The latest recorder cancellation, which a restarted recording awaits.
+    @State var pinchDictationCancelTask: Task<Void, Never>?
     /// A host's volatile speech results render through the ordinary block row
     /// without entering the authored document. This gives the preview the
     /// eventual row's exact typography and wrapping while keeping partial
@@ -541,8 +548,7 @@ public struct EditorView: View {
                         isHeld: pinchLock == .held,
                         style: pinchInsertStyle,
                         onToggle: togglePinchInsertStyle,
-                        onFinish: { finishLockedPinch() },
-                        onDivider: { finishLockedPinch(style: .divider) }
+                        onFinish: { finishLockedPinch() }
                     )
                 }
             }

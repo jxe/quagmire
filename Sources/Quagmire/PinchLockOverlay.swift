@@ -38,6 +38,40 @@ struct PinchLockBadge: View {
     }
 }
 
+/// The leading-side counterpart of `PinchLockBadge`: a faint keyboard whose
+/// ring fills as the fingers slide toward the leading edge, solid once
+/// armed, when the release will open the keyboard instead of recording.
+struct PinchTypeBadge: View {
+    let isArmed: Bool
+    /// Slide toward arming, 0…1; ignored once armed.
+    let progress: CGFloat
+
+    var body: some View {
+        Image(systemName: "keyboard")
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(isArmed ? Color.accentColor : Color.secondary)
+            .frame(width: 34, height: 34)
+            .glassEffect(.regular, in: Circle())
+            .overlay {
+                Circle()
+                    .trim(from: 0, to: isArmed ? 1 : progress)
+                    .stroke(
+                        Color.accentColor.opacity(isArmed ? 0 : 0.85),
+                        style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .scaleEffect(x: -1, y: 1)
+                    .padding(1)
+            }
+            .opacity(isArmed ? 1 : 0.5 + 0.5 * progress)
+            .scaleEffect(isArmed ? 1 : 0.88 + 0.08 * progress)
+            .animation(.spring(response: 0.24, dampingFraction: 0.9), value: isArmed)
+            .transition(.scale(scale: 0.6).combined(with: .opacity))
+            .accessibilityLabel(isArmed ? "Type instead" : "Slide left to type instead")
+            .allowsHitTesting(false)
+    }
+}
+
 /// A pulsing red dot and elapsed time beside the draft row, from the moment
 /// the recorder starts until the insert commits.
 struct PinchRecordingIndicator: View {
@@ -66,13 +100,12 @@ struct PinchRecordingIndicator: View {
 /// a heading or an indented bullet; they appear as soon as the lock arms.
 /// Once the fingers lift (`isHeld`), the lock becomes a stop button between
 /// them and the editor is covered: a tap on the stop button or anywhere else
-/// finishes the insert, and a horizontal swipe inserts a divider instead.
+/// finishes the insert.
 struct PinchLockOverlay: View {
     let isHeld: Bool
     let style: PinchInsertStyle
     let onToggle: (PinchInsertStyle) -> Void
     let onFinish: () -> Void
-    let onDivider: () -> Void
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -101,17 +134,12 @@ struct PinchLockOverlay: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onEnded { value in
-                        switch PinchLockZone.release(for: value.translation) {
-                        case .tap: onFinish()
-                        case .swipe: onDivider()
-                        case .none: break
-                        }
+                        if PinchLockZone.isTap(value.translation) { onFinish() }
                     }
             )
             .accessibilityElement()
             .accessibilityLabel("Recording")
             .accessibilityAction(named: "Finish", onFinish)
-            .accessibilityAction(named: "Insert divider", onDivider)
     }
 
     private var stopButton: some View {
