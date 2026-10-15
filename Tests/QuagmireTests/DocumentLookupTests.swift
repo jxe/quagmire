@@ -283,6 +283,80 @@ struct PageLookupTests {
         settled.isSearching = false
         #expect(settled.isDefinitivelyEmpty)
     }
+
+    // MARK: - An `@` typed in passing lets go of the sentence
+
+    @Test func aSpaceAfterAQueryThatFoundNothingClosesTheMenu() async {
+        let host = CapabilityTestHost(lookup: .present(title: "T"))
+        let block = Block.paragraph(text: AttributedString("attn @pet"))
+        let doc = Document(id: DocumentID("d"), children: [block])
+        let state = EditorState()
+        let editor = EditorView(document: doc, state: state, host: host)
+        editor.installUndoApply()
+        state.enterEditMode(on: block.id)
+
+        func type(_ query: String) {
+            editor.handleCompletionTriggerChange(
+                .mention(MentionTrigger(nsRange: NSRange(location: 5, length: query.utf16.count + 1), query: query)),
+                blockID: block.id
+            )
+        }
+
+        type("pet")
+        await host.awaitSuggestCompletion()
+        for _ in 0..<10 where state.mentionMenu?.isSearching != false {
+            await Task.yield()
+        }
+        #expect(state.mentionMenu?.emptyQuery == "pet")
+
+        type("pet)")
+        #expect(state.mentionMenu != nil, "punctuation alone keeps the menu")
+        type("pet) ")
+        #expect(state.mentionMenu == nil)
+        type("pet) she")
+        #expect(state.mentionMenu == nil, "a multi-word query never reopens a closed menu")
+    }
+
+    @Test func aMultiWordQueryStaysOpenWhilePagesMatch() async {
+        let host = CapabilityTestHost(lookup: .present(title: "T"))
+        host.suggestions = [MentionItem(id: DocumentReference("r.md"), title: "Roberta Fischli")]
+        let block = Block.paragraph(text: AttributedString("@Roberta"))
+        let doc = Document(id: DocumentID("d"), children: [block])
+        let state = EditorState()
+        let editor = EditorView(document: doc, state: state, host: host)
+        editor.installUndoApply()
+        state.enterEditMode(on: block.id)
+
+        editor.handleCompletionTriggerChange(
+            .mention(MentionTrigger(nsRange: NSRange(location: 0, length: 8), query: "Roberta")),
+            blockID: block.id
+        )
+        await host.awaitSuggestCompletion()
+        for _ in 0..<10 where state.mentionMenu?.isSearching != false {
+            await Task.yield()
+        }
+        editor.handleCompletionTriggerChange(
+            .mention(MentionTrigger(nsRange: NSRange(location: 0, length: 10), query: "Roberta F")),
+            blockID: block.id
+        )
+        #expect(state.mentionMenu?.trigger.query == "Roberta F")
+    }
+
+    @Test func abandonmentNeedsAnEmptyAnswerAndASpaceAfterIt() {
+        var menu = MentionMenuState(
+            blockID: BlockID(),
+            trigger: MentionTrigger(nsRange: NSRange(location: 3, length: 4), query: "pet"),
+            selectedIndex: 0
+        )
+        let spaced = MentionTrigger(nsRange: NSRange(location: 3, length: 6), query: "pet x")
+        #expect(!menu.isAbandoned(by: spaced), "no answer yet")
+
+        menu.emptyQuery = "pet"
+        #expect(menu.isAbandoned(by: spaced))
+        #expect(!menu.isAbandoned(by: MentionTrigger(nsRange: NSRange(location: 3, length: 5), query: "pets")))
+        #expect(!menu.isAbandoned(by: MentionTrigger(nsRange: NSRange(location: 3, length: 3), query: "pe")))
+        #expect(!menu.isAbandoned(by: MentionTrigger(nsRange: NSRange(location: 9, length: 6), query: "pet x")))
+    }
 }
 
 @MainActor

@@ -17,6 +17,10 @@ extension EditorView {
     /// Open (or update) the mention menu for this trigger, then ask the host
     /// for candidates.
     ///
+    /// A closed menu opens only while the query is a single word, so typing
+    /// later in a sentence that once had an `@` doesn't open it; an open one
+    /// closes once a query that found nothing is followed by a space.
+    ///
     /// The menu goes up synchronously so typing never waits on the host. The
     /// previous query's matches stay visible while the new query runs — a host
     /// that answers over a network would otherwise blank the list between every
@@ -25,10 +29,16 @@ extension EditorView {
     /// newer one, and the in-flight query is cancelled when a newer one starts.
     private func handleMentionTriggerChange(_ trigger: MentionTrigger, blockID: BlockID) {
         if var existing = state.mentionMenu, existing.blockID == blockID {
+            if existing.isAbandoned(by: trigger) {
+                mentionSearch.cancel()
+                state.closeMentionMenu(forBlockID: blockID)
+                return
+            }
             existing.trigger = trigger
             existing.isSearching = true
             state.setMentionMenu(existing)
         } else {
+            guard !trigger.query.contains(where: \.isWhitespace) else { return }
             state.setMentionMenu(MentionMenuState(
                 blockID: blockID,
                 trigger: trigger,
@@ -49,6 +59,7 @@ extension EditorView {
                   menu.trigger.query == query else { return }
             menu.matches = matches
             menu.isSearching = false
+            menu.emptyQuery = matches.isEmpty ? query : nil
             if matches.isEmpty {
                 menu.selectedIndex = 0
             } else if menu.selectedIndex >= matches.count {

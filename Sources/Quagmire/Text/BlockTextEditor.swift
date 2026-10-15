@@ -526,6 +526,11 @@ struct MacBlockTextEditor: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: MacBlockTextEditor
+        /// Whether typing last reported an `@` or `:` completion. Caret moves
+        /// only update or close one, so a click after an old `@` doesn't open
+        /// a menu. The editor may close the menu while this is still true; it
+        /// then refuses to reopen on anything but a one-word query.
+        var completionMenuOpen = false
         var lastFontSize: CGFloat?
         var lastBold: Bool?
         var lastLineSpacing: CGFloat?
@@ -696,11 +701,13 @@ struct MacBlockTextEditor: NSViewRepresentable {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.parent.liveSelection?.report(selected, in: self.parent.blockID)
-                if composing {
-                    self.parent.onCompletionTriggerChange(nil)
-                } else {
-                    self.parent.onCompletionTriggerChange(detectInlineCompletionTrigger(plain: plain, cursor: cursor))
-                }
+                // A caret move only keeps or closes a menu that typing
+                // opened; clicking somewhere after an old `@` must not open one.
+                let trigger = composing || !self.completionMenuOpen
+                    ? nil
+                    : detectInlineCompletionTrigger(plain: plain, cursor: cursor)
+                self.completionMenuOpen = trigger != nil
+                self.parent.onCompletionTriggerChange(trigger)
             }
         }
 
@@ -756,12 +763,10 @@ struct MacBlockTextEditor: NSViewRepresentable {
         }
 
         private func reportMentionTrigger(in tv: NSTextView, composing: Bool) {
-            if composing {
-                parent.onCompletionTriggerChange(nil)
-                return
-            }
-            let cursor = tv.selectedRange().location
-            let trigger = detectInlineCompletionTrigger(plain: tv.string, cursor: cursor)
+            let trigger = composing
+                ? nil
+                : detectInlineCompletionTrigger(plain: tv.string, cursor: tv.selectedRange().location)
+            completionMenuOpen = trigger != nil
             parent.onCompletionTriggerChange(trigger)
         }
 
@@ -1456,6 +1461,8 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: IOSBlockTextEditorView
+        /// See `MacBlockTextEditor.Coordinator.completionMenuOpen` — same role on iOS.
+        var completionMenuOpen = false
         /// Retains the SwiftUI accessory bar hosted as the UITextView's
         /// `inputAccessoryView`. UIKit retains the view itself but the
         /// hosting controller needs an owner with the right lifecycle —
@@ -1605,11 +1612,13 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.parent.liveSelection?.report(selected, in: self.parent.blockID)
-                if composing {
-                    self.parent.onCompletionTriggerChange(nil)
-                } else {
-                    self.parent.onCompletionTriggerChange(detectInlineCompletionTrigger(plain: plain, cursor: cursor))
-                }
+                // A caret move only keeps or closes a menu that typing
+                // opened; clicking somewhere after an old `@` must not open one.
+                let trigger = composing || !self.completionMenuOpen
+                    ? nil
+                    : detectInlineCompletionTrigger(plain: plain, cursor: cursor)
+                self.completionMenuOpen = trigger != nil
+                self.parent.onCompletionTriggerChange(trigger)
             }
         }
 
@@ -1663,12 +1672,10 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
         }
 
         private func reportMentionTrigger(in textView: UITextView, composing: Bool) {
-            if composing {
-                parent.onCompletionTriggerChange(nil)
-                return
-            }
-            let cursor = textView.selectedRange.location
-            let trigger = detectInlineCompletionTrigger(plain: textView.text ?? "", cursor: cursor)
+            let trigger = composing
+                ? nil
+                : detectInlineCompletionTrigger(plain: textView.text ?? "", cursor: textView.selectedRange.location)
+            completionMenuOpen = trigger != nil
             parent.onCompletionTriggerChange(trigger)
         }
 
