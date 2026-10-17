@@ -29,6 +29,10 @@ struct BlockRowModel: Equatable {
     let accessibilityLabelText: String
     let documentLookups: [String: DocumentLookup]
     let linkPreviews: [URL: LinkPreview]
+    /// An empty provisional row shows a caret for a pinch sliding toward
+    /// typing: steady at this opacity as it nears arming, then blinking.
+    var provisionalCaretOpacity: Double = 0
+    var provisionalCaretBlinks = false
 }
 
 /// One block in the page editor — content + the full interactive modifier
@@ -695,6 +699,12 @@ struct BlockRow: View, Equatable {
                     .lineSpacing(lineSpacing)
                     .opacity(0)
                     .accessibilityHidden(true)
+                    .overlay(alignment: .leading) {
+                        if model.provisionalCaretOpacity > 0 {
+                            ProvisionalCaret(blinks: model.provisionalCaretBlinks)
+                                .opacity(model.provisionalCaretOpacity)
+                        }
+                    }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                     .gesture(SpatialTapGesture().onEnded { value in

@@ -448,7 +448,7 @@ public struct EditorView: View {
                 pinchPreviewSlot: uncommittedPinchDraft?.slot,
                 pinchPreviewMinimumHeight: state.pinchPreview?.gapHeight ?? 0,
                 pinchPreview: uncommittedPinchDraft.map { draft in
-                    AnyView(pinchDictationDraftRow(draft, visibleRows: visibleRows))
+                    AnyView(pinchDictationDraftRow(draft, visibleRows: visibleRows, pageWidth: geometry.size.width))
                 },
                 footer: pageFooter,
                 header: documentAccessories,
@@ -796,6 +796,8 @@ public struct EditorView: View {
         numberingIndex: Int?,
         selectedIDs: Set<BlockID>,
         isProvisionalText: Bool = false,
+        provisionalCaretOpacity: Double = 0,
+        provisionalCaretBlinks: Bool = false,
         isFindMatch: Bool = false,
         isCurrentFindMatch: Bool = false
     ) -> some View {
@@ -901,7 +903,9 @@ public struct EditorView: View {
             accessibilityID: accessibilityIdentifier(for: block),
             accessibilityLabelText: accessibilityLabel(for: block),
             documentLookups: resolveDocumentLookups(for: block, host: host, in: document),
-            linkPreviews: relevantLinkPreviews
+            linkPreviews: relevantLinkPreviews,
+            provisionalCaretOpacity: provisionalCaretOpacity,
+            provisionalCaretBlinks: provisionalCaretBlinks
         )
         let rowActions = BlockRowActions(
             editor: editing,

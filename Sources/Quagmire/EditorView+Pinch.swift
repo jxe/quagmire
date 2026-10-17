@@ -500,7 +500,8 @@ extension EditorView {
     @ViewBuilder
     func pinchDictationDraftRow(
         _ draft: PinchDictationDraft,
-        visibleRows: [VisibleRow]
+        visibleRows: [VisibleRow],
+        pageWidth: CGFloat
     ) -> some View {
         let path = dropPath(forVisibleSlot: draft.slot, rows: visibleRows)
         let slotDepth = path.parent.flatMap { parent in
@@ -529,27 +530,32 @@ extension EditorView {
             depth: depth,
             numberingIndex: nil,
             selectedIDs: [],
-            isProvisionalText: true
+            isProvisionalText: true,
+            // Fades in with the slide toward typing and blinks once armed.
+            provisionalCaretOpacity: pinchTypeArmed ? 1 : (pinchLock == .none ? Double(pinchTypeProgress) : 0),
+            provisionalCaretBlinks: pinchTypeArmed
         )
+        .overlay {
+            // The slide's progress cue: the screen edge beside this row
+            // lights toward the side being slid to.
+            if pinchCrossedInsertThreshold && pinchLock != .held {
+                PinchEdgeGlow(
+                    typeProgress: pinchLock == .none ? pinchTypeProgress : 0,
+                    typeArmed: pinchTypeArmed,
+                    lockProgress: pinchLockProgress,
+                    lockArmed: pinchLock == .armed
+                )
+                .padding(.leading, -layoutCache.contentOriginX)
+                .padding(.trailing, -max(0, pageWidth - layoutCache.contentOriginX - layoutCache.contentWidth))
+                .padding(.vertical, -6)
+            }
+        }
         .padding(.top, spacing)
         .accessibilityHidden(true)
         .overlay(alignment: .trailing) {
-            // Shown from the insert threshold, so the lock is visible (and
-            // its distance readable) before the slide arms it. Once held,
-            // the lock gives way to the stop button in the bottom bar.
-            if pinchCrossedInsertThreshold || pinchLock != .none {
-                // Left to right, as the slides go: type, then lock.
-                HStack(spacing: 8) {
-                    if pinchLock == .none {
-                        PinchTypeBadge(isArmed: pinchTypeArmed, progress: pinchTypeProgress)
-                    }
-                    if let since = draft.recordingSince {
-                        PinchRecordingIndicator(since: since)
-                    }
-                    if pinchLock != .held && !pinchTypeArmed {
-                        PinchLockBadge(phase: pinchLock, progress: pinchLockProgress)
-                    }
-                }
+            if pinchCrossedInsertThreshold || pinchLock != .none,
+               let since = draft.recordingSince {
+                PinchRecordingIndicator(since: since)
             }
         }
     }
