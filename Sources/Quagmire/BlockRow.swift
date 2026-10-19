@@ -29,6 +29,10 @@ struct BlockRowModel: Equatable {
     let accessibilityLabelText: String
     let documentLookups: [String: DocumentLookup]
     let linkPreviews: [URL: LinkPreview]
+    /// An empty provisional row shows a caret for a pinch sliding toward
+    /// typing: steady at this opacity as it nears arming, then blinking.
+    var provisionalCaretOpacity: Double = 0
+    var provisionalCaretBlinks = false
 }
 
 /// One block in the page editor — content + the full interactive modifier
@@ -259,6 +263,8 @@ struct BlockRow: View, Equatable {
                     if case .documentLink = block.kind,
                        hitsDocumentLinkIconColumn(localX: value.location.x, depth: depth, theme: theme) {
                         onDocumentLinkIconTap()
+                    } else if isPageTitle, value.location.x <= theme.pageTitleIconColumnWidth {
+                        onDocumentLinkIconTap()
                     } else {
                         onTapOutsideText()
                     }
@@ -344,8 +350,11 @@ struct BlockRow: View, Equatable {
                                                           : theme.headingSize(level)
         let font = theme.body(size: size, weight: theme.headingWeight)
         if isPageTitle {
-            editableText(font: font, fontSize: size, bold: true, lineSpacing: theme.headingLineSpacing)
-                .padding(.leading, theme.nonListLeading(depth: depth))
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                pageTitleIcon(font: font)
+                editableText(font: font, fontSize: size, bold: true, lineSpacing: theme.headingLineSpacing, hidesLeadingIcon: true)
+            }
+            .padding(.leading, theme.nonListLeading(depth: depth))
         } else {
 #if os(macOS)
             let textLeading = theme.nonListLeading(depth: depth)
@@ -659,14 +668,30 @@ struct BlockRow: View, Equatable {
             }
     }
 
+    /// The page's icon beside its title: the title's leading emoji, or the
+    /// page symbol when it has none. Tapping it opens the icon picker
+    /// (`EditorView` hit-tests the column, as it does for page-link rows).
+    private func pageTitleIcon(font: Font) -> some View {
+        PageTitleIcon(emoji: TitleIcon.split(block.text).emoji, font: font, theme: theme)
+            .popover(
+                isPresented: Binding(
+                    get: { model.isIconPickerPresented },
+                    set: { if !$0 { onIconPickerDismiss() } }
+                )
+            ) {
+                emojiPickerContent()
+            }
+    }
+
     private func imageRow(source: String, alt: String) -> some View {
         ImageBlockView(source: source, alt: alt, theme: theme)
             .padding(.leading, theme.nonListLeading(depth: depth))
     }
 
     @ViewBuilder
-    private func editableText(font: Font, fontSize: CGFloat, bold: Bool, lineSpacing: CGFloat, strikethrough: Bool = false, muted: Bool = false) -> some View {
+    private func editableText(font: Font, fontSize: CGFloat, bold: Bool, lineSpacing: CGFloat, strikethrough: Bool = false, muted: Bool = false, hidesLeadingIcon: Bool = false) -> some View {
         let usesMutedForeground = muted || model.isProvisionalText
+        let readOnlyText = hidesLeadingIcon ? TitleIcon.split(block.text).rest : block.text
         if let editor {
             BlockTextEditor(
                 text: liveBlockTextBinding(editor.block),
@@ -683,18 +708,25 @@ struct BlockRow: View, Equatable {
                 onOpenLink: editor.onOpenLink,
                 onCompletionTriggerChange: editor.onCompletionTriggerChange,
                 completionActive: editor.completionActive,
-                consumeInitialCursor: editor.consumeInitialCursor
+                consumeInitialCursor: editor.consumeInitialCursor,
+                hidesLeadingIcon: hidesLeadingIcon
             )
             .foregroundStyle(usesMutedForeground ? theme.mutedForeground : theme.foreground)
             .strikethrough(strikethrough)
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            if String(block.text.characters).isEmpty {
+            if String(readOnlyText.characters).isEmpty {
                 Text(" ")
                     .font(font)
                     .lineSpacing(lineSpacing)
                     .opacity(0)
                     .accessibilityHidden(true)
+                    .overlay(alignment: .leading) {
+                        if model.provisionalCaretOpacity > 0 {
+                            ProvisionalCaret(blinks: model.provisionalCaretBlinks)
+                                .opacity(model.provisionalCaretOpacity)
+                        }
+                    }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                     .gesture(SpatialTapGesture().onEnded { value in
@@ -702,7 +734,7 @@ struct BlockRow: View, Equatable {
                     })
             } else {
                 decoratedText(
-                    block.text,
+                    readOnlyText,
                     baseFont: font,
                     boldFont: theme.body(size: fontSize, weight: .semibold),
                     documentLookups: documentLookups,
@@ -930,7 +962,7 @@ func isExternalLinkURL(_ url: URL) -> Bool {
 }
 
 @MainActor
-private func decoratedText(
+func decoratedText(
     _ source: AttributedString,
     baseFont: Font,
     boldFont: Font,
@@ -940,6 +972,7 @@ private func decoratedText(
 ) -> Text {
     var output = Text("")
     let inlineCodePaddingText = "\u{2005}"
+    var previousLink: URL?
     for run in source.runs {
         let segment = source[run.range]
         let runText = String(segment.characters)
@@ -949,10 +982,15 @@ private func decoratedText(
         let strike = run[InlineAttributes.StrikethroughAttribute.self] == true
         let link = run.link
 
+        // A link split into several runs (part of it bold, say) shows its
+        // title and icon once, on its first run.
+        let continuesLink = link != nil && link == previousLink
+        previousLink = link
+
         var displayText = runText
         if let url = link {
             if let resolved = documentLookups[url.absoluteString]?.title {
-                displayText = resolved
+                displayText = continuesLink ? "" : resolved
             } else if isExternalLinkURL(url),
                       let preview = previews[url],
                       let title = preview.title,
@@ -984,6 +1022,12 @@ private func decoratedText(
             attributed.foregroundColor = theme.foreground
         }
 
+        // Every page link, as the live editor draws them (`LinkIcons`).
+        if let url = link, !continuesLink, !isExternalLinkURL(url) {
+            let lookup = documentLookups[url.absoluteString] ?? .pending
+            output = Text("\(output)\(documentLinkInlineIcon(displayText: displayText, lookup: lookup, theme: theme))")
+        }
+
         if let preview = externalWithPreview,
            let iconData = preview.iconPNG,
            let iconImage = decodeFavicon(iconData, size: theme.pageIconSize) {
@@ -998,6 +1042,21 @@ private func decoratedText(
         output = Text("\(output)\(text)")
     }
     return output
+}
+
+/// The icon in front of an inline page link, matching the page icons
+/// elsewhere: nothing when the title already leads with an emoji, the host's
+/// emoji icon when it has one, otherwise the page symbol.
+private func documentLinkInlineIcon(displayText: String, lookup: DocumentLookup, theme: EditorTheme) -> Text {
+    if let first = displayText.trimmingCharacters(in: .whitespaces).first, isEmojiCharacter(first) {
+        return Text("")
+    }
+    if let icon = lookup.icon { return Text("\(icon) ") }
+    let presentation = documentLinkRowPresentation(storedLabel: AttributedString(displayText), lookup: lookup)
+    let symbol = Text(Image(systemName: presentation.symbol))
+        .font(.system(size: theme.pageIconSize))
+        .foregroundColor(theme.mutedForeground)
+    return Text("\(symbol) ")
 }
 
 private func runMatchesURL(_ runText: String, url: URL) -> Bool {
@@ -1287,4 +1346,28 @@ func attributedStringMarksEqual(_ a: AttributedString, _ b: AttributedString) ->
         if ra.link != rb.link { return false }
     }
     return true
+}
+
+/// The icon column beside the page title.
+struct PageTitleIcon: View {
+    let emoji: String?
+    let font: Font
+    let theme: EditorTheme
+
+    var body: some View {
+        Group {
+            if let emoji {
+                Text(emoji).font(font)
+            } else {
+                // Ending where an emoji would, so the gap before the title
+                // matches, and lifted off the baseline to its optical centre.
+                Text(Image(systemName: LinkIcons.symbolName))
+                    .font(.system(size: theme.pageTitleIconSymbolSize))
+                    .baselineOffset(theme.pageTitleSize * 0.06)
+                    .foregroundStyle(theme.mutedForeground)
+                    .frame(width: TitleIcon.emojiAdvance(theme: theme), alignment: .trailing)
+            }
+        }
+        .frame(width: theme.pageTitleIconColumnWidth, alignment: .leading)
+    }
 }

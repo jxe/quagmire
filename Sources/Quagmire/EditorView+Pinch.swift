@@ -12,10 +12,6 @@ enum PinchInsertStyle: Equatable, Sendable {
     case heading
     /// A bullet nested one level under the row above.
     case indentedBullet
-    /// A divider; speech is discarded.
-    case divider
-
-    var acceptsDictation: Bool { self != .divider }
 }
 
 /// Sliding an open pinch into the trailing band of the screen locks it:
@@ -33,11 +29,17 @@ enum PinchLockPhase: Equatable, Sendable {
 /// opened near the leading edge travels further than one opened near the
 /// middle, and one opened near the trailing edge still needs a deliberate
 /// slide rather than locking at once.
+///
+/// The mirror-image slide toward the leading edge arms typing instead: the
+/// recorder stops, and the release inserts the contextual block with the
+/// keyboard up.
 struct PinchLockZone: Equatable {
     /// Share of the remaining distance to the trailing edge that arms.
     static let travel: CGFloat = 0.35
     /// Keep the zone reachable for a pinch opened hard against the edge.
     static let maximumEnter: CGFloat = 0.92
+    /// The leading-edge counterpart of `maximumEnter`, for typing.
+    static let minimumTypeEnter: CGFloat = 0.08
     /// Arming releases this far short of `enter`, so a hand resting on the
     /// boundary doesn't flicker in and out.
     static let hysteresis: CGFloat = 0.05
@@ -74,19 +76,34 @@ struct PinchLockZone: Equatable {
         }
     }
 
-    /// A drag on the held capture layer: a clear horizontal swipe inserts a
-    /// divider, a near-stationary touch is a tap that finishes, and anything
-    /// else (a vertical drag) is ignored.
-    enum Release: Equatable { case tap, swipe, none }
+    /// Midpoint fraction of the visible width that arms typing.
+    var typeEnter: CGFloat {
+        max(Self.minimumTypeEnter, origin - origin * Self.travel)
+    }
 
+    var typeExit: CGFloat {
+        min(origin, typeEnter + Self.hysteresis)
+    }
+
+    /// How far a midpoint at `fraction` has slid from the origin toward
+    /// arming typing, 0…1.
+    func typeProgress(fraction: CGFloat) -> CGFloat {
+        guard typeEnter < origin else { return 1 }
+        return min(1, max(0, (origin - fraction) / (origin - typeEnter)))
+    }
+
+    /// Whether typing is armed for a midpoint at `fraction`, given whether
+    /// it was armed before.
+    func isTyping(after current: Bool, fraction: CGFloat) -> Bool {
+        current ? fraction <= typeExit : fraction <= typeEnter
+    }
+
+    /// A drag on the held capture layer finishes only when it is a
+    /// near-stationary tap, so a stray drag doesn't end the recording.
     static let tapSlop: CGFloat = 12
-    static let swipeDistance: CGFloat = 80
 
-    static func release(for translation: CGSize) -> Release {
-        let dx = abs(translation.width), dy = abs(translation.height)
-        if dx >= swipeDistance && dx > dy * 2 { return .swipe }
-        if hypot(dx, dy) <= tapSlop { return .tap }
-        return .none
+    static func isTap(_ translation: CGSize) -> Bool {
+        hypot(translation.width, translation.height) <= tapSlop
     }
 }
 
@@ -130,8 +147,6 @@ struct PinchDictationDraft {
             .heading(level: .h1, text: AttributedString(), id: block.id)
         case .indentedBullet:
             .bullet(text: AttributedString(), id: block.id)
-        case .divider:
-            .divider(id: block.id)
         }
     }
 
@@ -144,8 +159,6 @@ struct PinchDictationDraft {
             block = .heading(level: .h1, text: AttributedString(text), id: block.id)
         case .indentedBullet:
             block = .bullet(text: AttributedString(latestTranscript), id: block.id)
-        case .divider:
-            block = .divider(id: block.id)
         }
     }
 }
@@ -230,6 +243,7 @@ extension EditorView {
             }
             if pinchCrossedInsertThreshold {
                 updatePinchLock(fraction: value.horizontalFraction)
+                updatePinchTyping(fraction: value.horizontalFraction)
             }
             return true
         } else if state.pinchPreview != nil {
@@ -251,6 +265,8 @@ extension EditorView {
         pinchPendingInsertIndex = nil
         pinchCrossedInsertThreshold = false
         pinchLockProgress = 0
+        pinchTypeArmed = false
+        pinchTypeProgress = 0
         if pinchLock == .armed {
             pinchLock = .none
             pinchInsertStyle = .contextual
@@ -283,6 +299,37 @@ extension EditorView {
         )
     }
 
+    /// Arm or disarm typing as the finger midpoint slides toward the leading
+    /// edge. Arming stops the recorder at once, so nothing is captured while
+    /// the fingers are there; sliding back out starts it again.
+    private func updatePinchTyping(fraction: CGFloat) {
+        guard pinchLock == .none else { return }
+        let zone = pinchLockZone ?? PinchLockZone(origin: fraction)
+        let progress = zone.typeProgress(fraction: fraction)
+        if abs(progress - pinchTypeProgress) > 0.01 || (progress == 1) != (pinchTypeProgress == 1) {
+            pinchTypeProgress = progress
+        }
+        let next = zone.isTyping(after: pinchTypeArmed, fraction: fraction)
+        guard next != pinchTypeArmed else { return }
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.9)) {
+            pinchTypeArmed = next
+            if next {
+                pinchDictationDraft?.recordingSince = nil
+                pinchDictationDraft = pinchDictationDraft?.replacingText(with: "")
+            }
+        }
+        if next {
+            cancelPinchDictationIfNeeded()
+            Haptics.medium(enabled: configuration.isHapticFeedbackEnabled)
+        } else {
+            beginPinchDictationIfAvailable()
+            Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
+        }
+        configuration.diagnostics.pinch.debug(
+            "pinch typing \(next, privacy: .public)"
+        )
+    }
+
     func handlePinchCommit(_ value: PagePinchValue) {
         let preview = state.pinchPreview
         let gap = preview?.gapHeight ?? pinchRubberBand(max(0, value.spreadDelta))
@@ -293,14 +340,14 @@ extension EditorView {
                 ?? pinchInsertIndex(for: value.startLocation)
             if pinchLock == .armed {
                 // Released inside the lock zone: keep the gap and the recorder
-                // open. A tap (or swipe) on the held overlay finishes.
+                // open. A tap on the held overlay finishes.
                 pinchPendingInsertIndex = slot
                 Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
                 pinchLock = .held
                 configuration.diagnostics.pinch.debug("pinch held open")
                 return
             }
-            commitPinchInsert(at: slot, style: .contextual)
+            commitPinchInsert(at: slot, style: .contextual, typing: pinchTypeArmed)
         } else {
             cancelPinchDictationIfNeeded()
             pinchDictationDraft = nil
@@ -312,15 +359,14 @@ extension EditorView {
         resetPinchGesture()
     }
 
-    /// Finish a held pinch: insert the block in the chosen style. A tap
-    /// passes the toggled style; a horizontal swipe passes `.divider`.
-    func finishLockedPinch(style: PinchInsertStyle? = nil) {
+    /// Finish a held pinch: insert the block in the toggled style.
+    func finishLockedPinch() {
         guard pinchLock == .held else { return }
         let slot = pinchPendingInsertIndex
             ?? state.pinchPreview?.insertIndex
             ?? pinchDictationDraft?.slot
         if let slot, state.editingBlock == nil {
-            commitPinchInsert(at: slot, style: style ?? pinchInsertStyle)
+            commitPinchInsert(at: slot, style: pinchInsertStyle)
         } else {
             cancelPinchDictationIfNeeded()
             pinchDictationDraft = nil
@@ -351,7 +397,9 @@ extension EditorView {
         pinchGestureActive = false
     }
 
-    private func commitPinchInsert(at slot: Int, style: PinchInsertStyle) {
+    /// `typing` inserts without dictation and opens the keyboard on the new
+    /// block, for a pinch released in the leading type zone.
+    private func commitPinchInsert(at slot: Int, style: PinchInsertStyle, typing: Bool = false) {
         // Resolve the visible slot to a tree DropPath, with the visible-row
         // above/below at that slot as neighbour context for kind inference.
         let (rows, _) = layoutCache.currentVisibleRows(
@@ -362,13 +410,14 @@ extension EditorView {
         let below: VisibleRowKind? = (slot >= 0 && slot < rows.count) ? rows[slot].kind : nil
         let draft = pinchDictationDraft?.withStyle(style)
         let newBlock = draft?.committedBlock ?? smartInsertBlock(above: above, below: below)
-        let usesDictation = style.acceptsDictation && pinchDictation != nil
-        // Without a recorder the pinch is a plain insert, so a text block
-        // opens the keyboard. With one, the block waits in navigation mode
-        // for the transcript (or becomes a blank paragraph on silence).
-        let focusesTextBlock = style.acceptsDictation && !usesDictation
+        let usesDictation = !typing && pinchDictation != nil
+        // Without a recorder (or when typing was chosen) the pinch is a plain
+        // insert that opens the keyboard. With one, the block waits in
+        // navigation mode for the transcript (or becomes a blank paragraph
+        // on silence).
+        let focusesTextBlock = !usesDictation
         configuration.diagnostics.pinch.debug(
-            "pinch committed style=\(String(describing: style), privacy: .public) dictation=\(usesDictation, privacy: .public)"
+            "pinch committed style=\(String(describing: style), privacy: .public) dictation=\(usesDictation, privacy: .public) typing=\(typing, privacy: .public)"
         )
         // Bundle the structural insert and the gap collapse into the same
         // spring transaction so the new row appears inside the opened gap
@@ -396,7 +445,11 @@ extension EditorView {
         guard pinchDictationBeginTask == nil,
               pinchDictationCompletionTask == nil,
               let pinchDictation else { return }
+        let pendingCancel = pinchDictationCancelTask
         pinchDictationBeginTask = Task { @MainActor in
+            // A recorder stopped by sliding into the type zone may still be
+            // shutting down; the shared recorder refuses a second begin.
+            await pendingCancel?.value
             let started = await pinchDictation.begin { draft in
                 updatePinchDictationDraft(draft)
             }
@@ -447,7 +500,8 @@ extension EditorView {
     @ViewBuilder
     func pinchDictationDraftRow(
         _ draft: PinchDictationDraft,
-        visibleRows: [VisibleRow]
+        visibleRows: [VisibleRow],
+        pageWidth: CGFloat
     ) -> some View {
         let path = dropPath(forVisibleSlot: draft.slot, rows: visibleRows)
         let slotDepth = path.parent.flatMap { parent in
@@ -476,23 +530,32 @@ extension EditorView {
             depth: depth,
             numberingIndex: nil,
             selectedIDs: [],
-            isProvisionalText: true
+            isProvisionalText: true,
+            // Fades in with the slide toward typing and blinks once armed.
+            provisionalCaretOpacity: pinchTypeArmed ? 1 : (pinchLock == .none ? Double(pinchTypeProgress) : 0),
+            provisionalCaretBlinks: pinchTypeArmed
         )
+        .overlay {
+            // The slide's progress cue: the screen edge beside this row
+            // lights toward the side being slid to.
+            if pinchCrossedInsertThreshold && pinchLock != .held {
+                PinchEdgeGlow(
+                    typeProgress: pinchLock == .none ? pinchTypeProgress : 0,
+                    typeArmed: pinchTypeArmed,
+                    lockProgress: pinchLockProgress,
+                    lockArmed: pinchLock == .armed
+                )
+                .padding(.leading, -layoutCache.contentOriginX)
+                .padding(.trailing, -max(0, pageWidth - layoutCache.contentOriginX - layoutCache.contentWidth))
+                .padding(.vertical, -6)
+            }
+        }
         .padding(.top, spacing)
         .accessibilityHidden(true)
         .overlay(alignment: .trailing) {
-            // Shown from the insert threshold, so the lock is visible (and
-            // its distance readable) before the slide arms it. Once held,
-            // the lock gives way to the stop button in the bottom bar.
-            if pinchCrossedInsertThreshold || pinchLock != .none {
-                HStack(spacing: 8) {
-                    if let since = draft.recordingSince {
-                        PinchRecordingIndicator(since: since)
-                    }
-                    if pinchLock != .held {
-                        PinchLockBadge(phase: pinchLock, progress: pinchLockProgress)
-                    }
-                }
+            if pinchCrossedInsertThreshold || pinchLock != .none,
+               let since = draft.recordingSince {
+                PinchRecordingIndicator(since: since)
             }
         }
     }
@@ -501,7 +564,7 @@ extension EditorView {
         guard let beginTask = pinchDictationBeginTask,
               let pinchDictation else { return }
         pinchDictationBeginTask = nil
-        Task { @MainActor in
+        pinchDictationCancelTask = Task { @MainActor in
             if await beginTask.value {
                 pinchDictation.cancel()
             }

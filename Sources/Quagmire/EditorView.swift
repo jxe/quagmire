@@ -121,6 +121,11 @@ public struct EditorView: View {
     @State var pinchLockZone: PinchLockZone?
     /// Slide toward arming the lock, 0…1, while it is not yet armed.
     @State var pinchLockProgress: CGFloat = 0
+    /// Whether an open pinch has been slid into the leading type zone, so its
+    /// release opens the keyboard instead of recording. See `PinchLockZone`.
+    @State var pinchTypeArmed = false
+    /// Slide toward arming typing, 0…1.
+    @State var pinchTypeProgress: CGFloat = 0
     /// Heading / Indent toggles chosen while the pinch is locked.
     @State var pinchInsertStyle: PinchInsertStyle = .contextual
     #if os(iOS)
@@ -138,6 +143,8 @@ public struct EditorView: View {
     /// While transcription is finishing, further pinch inserts are gated so
     /// one shared host recorder cannot be asked to serve two inline drafts.
     @State var pinchDictationCompletionTask: Task<Void, Never>?
+    /// The latest recorder cancellation, which a restarted recording awaits.
+    @State var pinchDictationCancelTask: Task<Void, Never>?
     /// A host's volatile speech results render through the ordinary block row
     /// without entering the authored document. This gives the preview the
     /// eventual row's exact typography and wrapping while keeping partial
@@ -334,6 +341,9 @@ public struct EditorView: View {
                        host.lookupDocument(reference).can(.setIcon),
                        hitsDocumentLinkIconColumn(point: point, rowFrame: frame, depth: row.depth, theme: theme) {
                         openDocumentIconPicker(for: id)
+                    } else if isPageTitleBlock(block),
+                              point.x - frame.minX <= theme.pageTitleIconColumnWidth {
+                        openDocumentIconPicker(for: id)
                     } else {
                         handleRowClick(blockID: id)
                     }
@@ -462,7 +472,7 @@ public struct EditorView: View {
                 pinchPreviewSlot: uncommittedPinchDraft?.slot,
                 pinchPreviewMinimumHeight: state.pinchPreview?.gapHeight ?? 0,
                 pinchPreview: uncommittedPinchDraft.map { draft in
-                    AnyView(pinchDictationDraftRow(draft, visibleRows: visibleRows))
+                    AnyView(pinchDictationDraftRow(draft, visibleRows: visibleRows, pageWidth: geometry.size.width))
                 },
                 footer: pageFooter,
                 header: documentAccessories,
@@ -562,8 +572,7 @@ public struct EditorView: View {
                         isHeld: pinchLock == .held,
                         style: pinchInsertStyle,
                         onToggle: togglePinchInsertStyle,
-                        onFinish: { finishLockedPinch() },
-                        onDivider: { finishLockedPinch(style: .divider) }
+                        onFinish: { finishLockedPinch() }
                     )
                 }
             }
@@ -811,6 +820,8 @@ public struct EditorView: View {
         numberingIndex: Int?,
         selectedIDs: Set<BlockID>,
         isProvisionalText: Bool = false,
+        provisionalCaretOpacity: Double = 0,
+        provisionalCaretBlinks: Bool = false,
         isFindMatch: Bool = false,
         isCurrentFindMatch: Bool = false
     ) -> some View {
@@ -916,7 +927,9 @@ public struct EditorView: View {
             accessibilityID: accessibilityIdentifier(for: block),
             accessibilityLabelText: accessibilityLabel(for: block),
             documentLookups: resolveDocumentLookups(for: block, host: host, in: document),
-            linkPreviews: relevantLinkPreviews
+            linkPreviews: relevantLinkPreviews,
+            provisionalCaretOpacity: provisionalCaretOpacity,
+            provisionalCaretBlinks: provisionalCaretBlinks
         )
         let rowActions = BlockRowActions(
             editor: editing,
@@ -1290,6 +1303,14 @@ public struct EditorView: View {
     }
 
     private func selectDocumentIcon(_ emoji: String, fromDocumentLinkBlock blockID: BlockID) {
+        // The page's own title holds its icon as its leading emoji.
+        if let block = document.find(blockID), isPageTitleBlock(block) {
+            iconPickerBlockID = nil
+            mutate("Set Icon") {
+                document.mutate(blockID) { $0 = $0.withText(TitleIcon.setting(emoji, in: $0.text)) }
+            }
+            return
+        }
         // Re-checked rather than trusted from when the picker opened: the
         // target can go missing, or go read-only, while it is up.
         guard let block = document.find(blockID),
@@ -1305,6 +1326,11 @@ public struct EditorView: View {
     }
 
     private func openDocumentIconPicker(for blockID: BlockID) {
+        if !readOnly, let block = document.find(blockID), isPageTitleBlock(block) {
+            transferFocus(to: .nav(cursor: blockID))
+            iconPickerBlockID = blockID
+            return
+        }
         guard let block = document.find(blockID),
               case .documentLink(_, let reference) = block.kind,
               host.lookupDocument(reference).can(.setIcon) else { return }

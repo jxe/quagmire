@@ -2,39 +2,68 @@ import SwiftUI
 
 // MARK: - Pinch lock (iOS)
 
-/// Sits at the trailing edge of the pinch's draft row from the moment the
-/// pinch can insert. Before arming it is a faint open lock whose ring fills
-/// as the fingers slide toward it; on arming it becomes the solid lock,
-/// together with the style buttons.
-struct PinchLockBadge: View {
-    let phase: PinchLockPhase
-    /// Slide toward arming, 0…1; ignored once armed.
-    let progress: CGFloat
+/// A text caret in an empty provisional row, standing in for the keyboard a
+/// typing pinch will open. Steady while the slide approaches, blinking once
+/// typing is armed.
+struct ProvisionalCaret: View {
+    let blinks: Bool
+    /// Blinking starts on the visible beat, so arming never reads as the
+    /// caret vanishing.
+    @State private var blinkStart = Date.now
 
     var body: some View {
-        let isLocked = phase != .none
-        Image(systemName: isLocked ? "lock.fill" : "lock.open")
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(isLocked ? Color.accentColor : Color.secondary)
-            .contentTransition(.symbolEffect(.replace))
-            .frame(width: 34, height: 34)
-            .glassEffect(.regular, in: Circle())
-            .overlay {
-                Circle()
-                    .trim(from: 0, to: isLocked ? 1 : progress)
-                    .stroke(
-                        Color.accentColor.opacity(isLocked ? 0 : 0.85),
-                        style: StrokeStyle(lineWidth: 2, lineCap: .round)
-                    )
-                    .rotationEffect(.degrees(-90))
-                    .padding(1)
+        TimelineView(.periodic(from: blinkStart, by: 0.5)) { context in
+            let beat = Int(context.date.timeIntervalSince(blinkStart) * 2)
+            let visible = !blinks || beat % 2 == 0
+            RoundedRectangle(cornerRadius: 1)
+                .fill(Color.accentColor)
+                .frame(width: 2)
+                .padding(.vertical, 2)
+                .opacity(visible ? 1 : 0)
+        }
+        .onChange(of: blinks) { blinkStart = .now }
+        .transition(.opacity)
+        .allowsHitTesting(false)
+    }
+}
+
+/// A bar on the screen edge beside the pinch's draft row, on the side an
+/// open pinch is sliding toward: faint and thin as the slide begins, growing
+/// brighter, then snapping thick and full-colour, with no in-between, once
+/// that side arms. Leading is typing, in the accent colour of the caret it
+/// brings; trailing is the lock, red like the recording it keeps going.
+struct PinchEdgeGlow: View {
+    let typeProgress: CGFloat
+    let typeArmed: Bool
+    let lockProgress: CGFloat
+    let lockArmed: Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            bar(progress: typeProgress, armed: typeArmed, color: .accentColor, leading: true)
+            Spacer(minLength: 0)
+            bar(progress: lockProgress, armed: lockArmed, color: .red, leading: false)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func bar(progress: CGFloat, armed: Bool, color: Color, leading: Bool) -> some View {
+        let eased = 1 - (1 - progress) * (1 - progress)
+        // Visible width; the capsule is twice this, half past the edge, so
+        // only its rounded inner side shows.
+        let width: CGFloat = armed ? 7 : 3
+        return Capsule()
+            .fill(color)
+            .background {
+                Capsule().fill(color).blur(radius: 8).opacity(armed ? 0.8 : 0)
             }
-            .opacity(isLocked ? 1 : 0.5 + 0.5 * progress)
-            .scaleEffect(isLocked ? 1 : 0.88 + 0.08 * progress)
-            .animation(.spring(response: 0.24, dampingFraction: 0.9), value: isLocked)
-            .transition(.scale(scale: 0.6).combined(with: .opacity))
-            .accessibilityLabel(isLocked ? "Recording locked" : "Slide right to lock recording")
-            .allowsHitTesting(false)
+            .saturation(armed ? 1 : 0.4)
+            .opacity(armed ? 1 : 0.7 * eased)
+            .frame(width: width * 2)
+            .offset(x: leading ? -width : width)
+            // Arming is a step, not a tween.
+            .transaction { $0.animation = nil }
     }
 }
 
@@ -66,13 +95,12 @@ struct PinchRecordingIndicator: View {
 /// a heading or an indented bullet; they appear as soon as the lock arms.
 /// Once the fingers lift (`isHeld`), the lock becomes a stop button between
 /// them and the editor is covered: a tap on the stop button or anywhere else
-/// finishes the insert, and a horizontal swipe inserts a divider instead.
+/// finishes the insert.
 struct PinchLockOverlay: View {
     let isHeld: Bool
     let style: PinchInsertStyle
     let onToggle: (PinchInsertStyle) -> Void
     let onFinish: () -> Void
-    let onDivider: () -> Void
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -101,17 +129,12 @@ struct PinchLockOverlay: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onEnded { value in
-                        switch PinchLockZone.release(for: value.translation) {
-                        case .tap: onFinish()
-                        case .swipe: onDivider()
-                        case .none: break
-                        }
+                        if PinchLockZone.isTap(value.translation) { onFinish() }
                     }
             )
             .accessibilityElement()
             .accessibilityLabel("Recording")
             .accessibilityAction(named: "Finish", onFinish)
-            .accessibilityAction(named: "Insert divider", onDivider)
     }
 
     private var stopButton: some View {

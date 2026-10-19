@@ -104,11 +104,6 @@ struct EditorViewPinchDictationTests {
         #expect(draft.block.kind == .bullet(text: AttributedString("spoken text")))
         #expect(draft.committedBlock.kind == .bullet(text: AttributedString()))
 
-        draft = draft.withStyle(.divider)
-        #expect(!draft.style.acceptsDictation)
-        #expect(draft.block.kind == .divider)
-        #expect(draft.committedBlock.kind == .divider)
-
         draft = draft.withStyle(.contextual)
         #expect(draft.block.kind == .bullet(text: AttributedString("spoken text")))
         #expect(draft.committedBlock.id == contextual.id)
@@ -156,11 +151,36 @@ struct EditorViewPinchDictationTests {
         #expect(PinchLockZone(origin: 0.97).progress(fraction: 0.97) == 1)
     }
 
-    @Test func heldCaptureLayerTellsTapsFromSwipes() {
-        #expect(PinchLockZone.release(for: CGSize(width: 3, height: -4)) == .tap)
-        #expect(PinchLockZone.release(for: CGSize(width: -120, height: 20)) == .swipe)
-        #expect(PinchLockZone.release(for: CGSize(width: 120, height: 90)) == .none)
-        #expect(PinchLockZone.release(for: CGSize(width: 10, height: 140)) == .none)
+    @Test func typingArmsPartWayFromTheOpeningPointToTheLeadingEdge() {
+        // Centred: 0.5 − 0.5 × 0.35 = 0.325, releasing above 0.375.
+        let centred = PinchLockZone(origin: 0.5)
+        #expect(!centred.isTyping(after: false, fraction: 0.33))
+        #expect(centred.isTyping(after: false, fraction: 0.32))
+        #expect(centred.isTyping(after: true, fraction: 0.37))
+        #expect(!centred.isTyping(after: true, fraction: 0.4))
+        #expect(centred.typeProgress(fraction: 0.6) == 0)
+        #expect(abs(centred.typeProgress(fraction: 0.4125) - 0.5) < 0.0001)
+        #expect(centred.typeProgress(fraction: centred.typeEnter) == 1)
+
+        // Trailing: 0.8 − 0.8 × 0.35 = 0.52, a longer slide.
+        let trailing = PinchLockZone(origin: 0.8)
+        #expect(!trailing.isTyping(after: false, fraction: 0.53))
+        #expect(trailing.isTyping(after: false, fraction: 0.51))
+
+        // The type and lock zones never overlap.
+        for origin in stride(from: 0.1, through: 0.9, by: 0.1) {
+            let zone = PinchLockZone(origin: origin)
+            #expect(zone.typeExit < zone.exit)
+        }
+
+        let edge = PinchLockZone(origin: 0.03)
+        #expect(edge.typeEnter == PinchLockZone.minimumTypeEnter)
+    }
+
+    @Test func heldCaptureLayerFinishesOnlyOnATap() {
+        #expect(PinchLockZone.isTap(CGSize(width: 3, height: -4)))
+        #expect(!PinchLockZone.isTap(CGSize(width: -120, height: 20)))
+        #expect(!PinchLockZone.isTap(CGSize(width: 10, height: 140)))
     }
 
     @Test func slotBelowTheLastNestedBulletContinuesTheSubList() {

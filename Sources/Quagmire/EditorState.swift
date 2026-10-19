@@ -256,6 +256,9 @@ struct MentionMenuState: Equatable, Sendable {
     /// while it runs: replacing them with an empty list would flash "no
     /// results" between every keystroke on a host that answers slowly.
     var isSearching: Bool
+    /// The latest query the host answered with no pages, or nil once a
+    /// query finds some. A longer query is taken to find none either.
+    var emptyQuery: String?
 
     init(
         blockID: BlockID,
@@ -274,6 +277,17 @@ struct MentionMenuState: Equatable, Sendable {
     /// Whether the menu has nothing to show and nothing on the way — the only
     /// state in which "No pages" is the truth rather than a race.
     var isDefinitivelyEmpty: Bool { matches.isEmpty && !isSearching }
+
+    /// Whether `next` gives up on this mention: it extends a query that found
+    /// no pages with a space. Spaces stay part of the query while pages
+    /// match, so a multi-word title can be searched, but an `@` typed in
+    /// passing stops capturing the sentence that follows it.
+    func isAbandoned(by next: MentionTrigger) -> Bool {
+        guard next.nsRange.location == trigger.nsRange.location,
+              let emptyQuery,
+              next.query.hasPrefix(emptyQuery) else { return false }
+        return next.query.dropFirst(emptyQuery.count).contains(where: \.isWhitespace)
+    }
 }
 
 struct EmojiMenuState: Equatable, Sendable {
