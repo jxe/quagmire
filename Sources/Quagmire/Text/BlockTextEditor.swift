@@ -830,6 +830,57 @@ struct MacBlockTextEditor: NSViewRepresentable {
 /// keys our coordinator wants to consume.
 final class ContainedTextView: NSTextView {
     weak var coordinator: MacBlockTextEditor.Coordinator?
+
+    // MARK: Block drags from another window
+
+    /// A block dragged from another window is a block drop on the page, not
+    /// text for this view: hand it to the nearest enclosing view that takes
+    /// drops (the editor page's drop target), which places it by the pointer.
+    private func blockDropTarget(for sender: NSDraggingInfo) -> NSView? {
+        guard sender.draggingPasteboard.availableType(from: [MacExternalBlockDrag.pasteboardType]) != nil else { return nil }
+        var view = superview
+        while let candidate = view {
+            if !(candidate is NSTextView), !candidate.registeredDraggedTypes.isEmpty { return candidate }
+            view = candidate.superview
+        }
+        return self
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let target = blockDropTarget(for: sender) else { return super.draggingEntered(sender) }
+        return target === self ? [] : target.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let target = blockDropTarget(for: sender) else { return super.draggingUpdated(sender) }
+        return target === self ? [] : target.draggingUpdated(sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        if let sender, let target = blockDropTarget(for: sender) {
+            if target !== self { target.draggingExited(sender) }
+            return
+        }
+        super.draggingExited(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let target = blockDropTarget(for: sender) else { return super.prepareForDragOperation(sender) }
+        return target !== self && target.prepareForDragOperation(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let target = blockDropTarget(for: sender) else { return super.performDragOperation(sender) }
+        return target !== self && target.performDragOperation(sender)
+    }
+
+    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        if let sender, let target = blockDropTarget(for: sender) {
+            if target !== self { target.concludeDragOperation(sender) }
+            return
+        }
+        super.concludeDragOperation(sender)
+    }
     /// Single-slot active-NSTextView handle on the owning EditorView. We assign
     /// `activeView.view = self` in `viewDidMoveToWindow` and clear it on tear-down so
     /// EditorView.transferFocus can grab us synchronously.
