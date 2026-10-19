@@ -32,7 +32,7 @@ enum TitleIcon {
     /// How wide an emoji is at the title's size, so the page symbol can sit
     /// where emojis do.
     static func emojiAdvance(theme: EditorTheme) -> CGFloat {
-        let font = InlineMarksBridge.bodyFont(size: theme.pageTitleSize, bold: true, theme: theme)
+        let font = InlineMarksBridge.bodyFont(size: theme.pageTitleSize, bold: true, italic: false, theme: theme)
         return NSAttributedString(string: "📄", attributes: [.font: font]).size().width
     }
 

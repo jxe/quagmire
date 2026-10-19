@@ -1359,13 +1359,13 @@ struct PageTitleIcon: View {
             if let emoji {
                 Text(emoji).font(font)
             } else {
-                // Centred on the space an emoji takes, and lifted off the
-                // baseline to the emoji's optical centre.
+                // Ending where an emoji would, so the gap before the title
+                // matches, and lifted off the baseline to its optical centre.
                 Text(Image(systemName: LinkIcons.symbolName))
                     .font(.system(size: theme.pageTitleIconSymbolSize))
                     .baselineOffset(theme.pageTitleSize * 0.06)
                     .foregroundStyle(theme.mutedForeground)
-                    .frame(width: TitleIcon.emojiAdvance(theme: theme))
+                    .frame(width: TitleIcon.emojiAdvance(theme: theme), alignment: .trailing)
             }
         }
         .frame(width: theme.pageTitleIconColumnWidth, alignment: .leading)
