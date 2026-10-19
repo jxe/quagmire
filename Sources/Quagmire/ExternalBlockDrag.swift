@@ -49,6 +49,11 @@ final class ExternalBlockDrag {
     /// Removes the roots from the source editor after a cross-document move
     /// has landed: an undoable edit there, like Move to Document.
     let finishMove: @MainActor () -> Void
+    /// The lifted row's size, for the gap a destination opens.
+    var size: CGSize = .zero
+    #if os(macOS)
+    var panel: MacBlockDragPanel?
+    #endif
 
     init(document: Document, host: any EditorHost, ids: [BlockID], roots: [Block], finishMove: @escaping @MainActor () -> Void) {
         self.document = document
@@ -64,7 +69,11 @@ final class ExternalBlockDrag {
 enum MacExternalBlockDrag {
     static let identifier = "com.github.jxe.quagmire.block-drag"
     static let pasteboardType = NSPasteboard.PasteboardType(identifier)
-    static let contentType = UTType(importedAs: identifier)
+    /// The page drop target accepts the drag by its plain text, which
+    /// SwiftUI matches reliably, and recognizes it by the drag in flight in
+    /// this process. The text is the blocks' own, so a text field that takes
+    /// the drop gets their text.
+    static let dropTypes: [UTType] = [.utf8PlainText, .plainText]
 
     /// A lift becomes a system drag once the pointer is over another of this
     /// app's windows, or over this window's tab bar. Outside every window it
@@ -84,23 +93,78 @@ enum MacExternalBlockDrag {
     }
 
     /// Start a system drag for `drag` from the mouse event that left the
-    /// window. `image` is drawn under the pointer at `imageOffset`.
-    static func begin(_ drag: ExternalBlockDrag, event: NSEvent, image: NSImage?, imageOffset: CGSize) -> Bool {
+    /// window. The lifted row keeps following the pointer as `lift`, drawn
+    /// with `anchor` under the pointer; the system's drag image is empty.
+    static func begin(_ drag: ExternalBlockDrag, event: NSEvent, text: String, lift: AnyView, size: CGSize, anchor: CGSize) -> Bool {
         guard let view = event.window?.contentView else { return false }
         let item = NSPasteboardItem()
         item.setString(drag.token, forType: pasteboardType)
+        item.setString(text, forType: .string)
         let draggingItem = NSDraggingItem(pasteboardWriter: item)
-        let image = image ?? NSImage(size: CGSize(width: 1, height: 1))
         let point = view.convert(event.locationInWindow, from: nil)
         let origin = CGPoint(
-            x: point.x - imageOffset.width,
-            y: view.isFlipped ? point.y - imageOffset.height : point.y - (image.size.height - imageOffset.height)
+            x: point.x - anchor.width,
+            y: view.isFlipped ? point.y - anchor.height : point.y - (size.height - anchor.height)
         )
-        draggingItem.setDraggingFrame(CGRect(origin: origin, size: image.size), contents: image)
+        let blank = NSImage(size: size, flipped: false) { _ in true }
+        draggingItem.setDraggingFrame(CGRect(origin: origin, size: size), contents: blank)
+        drag.panel = MacBlockDragPanel(content: lift, size: size, anchor: anchor)
+        drag.panel?.show(at: NSEvent.mouseLocation)
         ExternalBlockDrag.active = drag
         let session = view.beginDraggingSession(with: [draggingItem], event: event, source: MacBlockDraggingSource.shared)
-        session.animatesToStartingPositionsOnCancelOrFail = true
+        session.animatesToStartingPositionsOnCancelOrFail = false
         return true
+    }
+}
+
+/// The lifted row, drawn above every window while it is dragged between
+/// them, so it looks the same as the in-window lift the whole way.
+@MainActor
+final class MacBlockDragPanel {
+    private static let margin: CGFloat = 32
+    private let panel: NSPanel
+    private let size: CGSize
+    private let anchor: CGSize
+
+    init(content: AnyView, size: CGSize, anchor: CGSize) {
+        self.size = size
+        self.anchor = anchor
+        let margin = Self.margin
+        panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: size.width + 2 * margin, height: size.height + 2 * margin),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.level = .popUpMenu
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        panel.contentView = NSHostingView(rootView: content
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .shadow(color: .black.opacity(ReorderLiftStyle.shadowOpacity), radius: ReorderLiftStyle.shadowRadius, y: ReorderLiftStyle.shadowY)
+            .scaleEffect(ReorderLiftStyle.liftedScale, anchor: UnitPoint(x: anchor.width / max(size.width, 1), y: anchor.height / max(size.height, 1)))
+            .padding(margin))
+    }
+
+    /// Put the row's anchor under `point` (screen coordinates).
+    func move(to point: NSPoint) {
+        let margin = Self.margin
+        panel.setFrameOrigin(NSPoint(
+            x: point.x - anchor.width - margin,
+            y: point.y + anchor.height - size.height - margin
+        ))
+    }
+
+    func show(at point: NSPoint) {
+        move(to: point)
+        panel.orderFrontRegardless()
+    }
+
+    func close() {
+        panel.orderOut(nil)
     }
 }
 
@@ -113,9 +177,16 @@ private final class MacBlockDraggingSource: NSObject, NSDraggingSource {
         context == .withinApplication ? [.move, .copy, .generic] : []
     }
 
+    func draggingSession(_: NSDraggingSession, movedTo screenPoint: NSPoint) {
+        MainActor.assumeIsolated { ExternalBlockDrag.active?.panel?.move(to: screenPoint) }
+    }
+
     func draggingSession(_: NSDraggingSession, endedAt _: NSPoint, operation _: NSDragOperation) {
         // The destination has already taken what it needs from the drag.
-        MainActor.assumeIsolated { ExternalBlockDrag.active = nil }
+        MainActor.assumeIsolated {
+            ExternalBlockDrag.active?.panel?.close()
+            ExternalBlockDrag.active = nil
+        }
     }
 }
 
@@ -125,8 +196,8 @@ struct MacBlockDropDelegate: DropDelegate {
     let onDrop: (CGPoint) -> Bool
     let onCancel: () -> Void
 
-    func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [MacExternalBlockDrag.contentType])
+    func validateDrop(info _: DropInfo) -> Bool {
+        MainActor.assumeIsolated { ExternalBlockDrag.active != nil }
     }
 
     func dropEntered(info: DropInfo) {

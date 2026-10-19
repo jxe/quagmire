@@ -23,7 +23,11 @@ extension EditorView {
     ) -> CGFloat {
         guard hoverSlot == slot else { return 0 }
         if let f = liftFootprint, f.contains(slot) || slot == f.upperBound + 1 { return 0 }
-        guard let lift = state.reorderLift, let sourceRow else { return 42 }
+        guard let lift = state.reorderLift, let sourceRow else {
+            // Another window's lift: open room for it, as its own window does.
+            if let height = ExternalBlockDrag.active?.size.height, height > 0 { return height + 12 }
+            return 42
+        }
 
         let previous = slot > 0 ? rows[slot - 1] : nil
         let next = slot < rows.count ? rows[slot] : nil
@@ -926,20 +930,20 @@ extension EditorView {
             removeBlocksAfterTransfer(rootIDs)
         }
         let size = lift.sourceFrame.size
-        let renderer = ImageRenderer(content:
-            BlockRowPreview(
-                block: lift.block,
-                depth: 0,
-                documentLookups: resolveDocumentLookups(for: lift.block, host: host, in: document),
-                theme: configuration.theme
-            )
-            .frame(width: size.width, height: size.height, alignment: .leading)
-            .background(configuration.theme.background)
-            .environment(\.editorHost, host)
-            .environment(\.editorDocument, document)
+        drag.size = size
+        let preview = BlockRowPreview(
+            block: lift.block,
+            depth: lift.sourceDepth,
+            documentLookups: resolveDocumentLookups(for: lift.block, host: host, in: document),
+            theme: configuration.theme
         )
-        renderer.scale = event.window?.backingScaleFactor ?? 2
-        guard MacExternalBlockDrag.begin(drag, event: event, image: renderer.nsImage, imageOffset: lift.touchOffset) else {
+        .frame(width: size.width, height: size.height, alignment: .leading)
+        .background(configuration.theme.background)
+        .environment(\.editorHost, host)
+        .environment(\.editorDocument, document)
+        let text = host.serializeBlocksForPasteboard(roots)
+        guard MacExternalBlockDrag.begin(drag, event: event, text: text, lift: AnyView(preview),
+                                         size: size, anchor: lift.touchOffset) else {
             return false
         }
         cancelReorderLift()

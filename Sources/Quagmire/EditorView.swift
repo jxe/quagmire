@@ -423,6 +423,7 @@ public struct EditorView: View {
                     if state.dropSlotHint != nil {
                         state.dropSlotHint = nil
                     }
+                    if state.reorderLift == nil { layoutCache.endReorderFrameSnapshot() }
                 },
                 onReorderHandOff: { event in
                     #if os(macOS)
@@ -432,7 +433,11 @@ public struct EditorView: View {
                     #endif
                 },
                 onExternalBlockDropUpdate: { y in
-                    if !readOnly { applyDropTarget(at: y, snapshot: document.children) }
+                    guard !readOnly else { return }
+                    // Hold the rows where they are drawn while the gap opens
+                    // under the pointer, as a lift in this window does.
+                    if state.reorderLift == nil { layoutCache.beginReorderFrameSnapshot() }
+                    applyDropTarget(at: y, snapshot: document.children)
                 },
                 onExternalBlockDrop: { y in
                     !readOnly && performExternalBlockDrop(atY: y)

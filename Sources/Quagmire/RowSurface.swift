@@ -59,7 +59,7 @@ struct RowSurfaceSettle<ID: Hashable>: Equatable {
 
 /// Lift-time scale and shadow: enough to read as the row picked up off the
 /// page, not a separate card.
-private enum ReorderLiftStyle {
+enum ReorderLiftStyle {
     static let liftedScale: CGFloat = 1.03
     static let shadowOpacity: Double = 0.10
     static let shadowRadius: CGFloat = 14
@@ -440,7 +440,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
             }
         )
         .onDrop(
-            of: [MacExternalBlockDrag.contentType],
+            of: MacExternalBlockDrag.dropTypes,
             delegate: MacBlockDropDelegate(
                 onUpdate: { location in
                     activeReorderLocation = location
