@@ -704,6 +704,25 @@ struct MacBlockTextEditor: NSViewRepresentable {
             }
         }
 
+        /// The caret steps over page links; see `AtomicLinks`.
+        func textView(
+            _ textView: NSTextView,
+            willChangeSelectionFromCharacterRange oldSelectedCharRange: NSRange,
+            toCharacterRange newSelectedCharRange: NSRange
+        ) -> NSRange {
+            guard !textView.hasMarkedText(), let storage = textView.textStorage else { return newSelectedCharRange }
+            return AtomicLinks.snapSelection(from: oldSelectedCharRange, to: newSelectedCharRange, in: storage)
+        }
+
+        /// A delete that reaches into a page link removes the whole link.
+        func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            guard let replacementString, !textView.hasMarkedText(), let storage = textView.textStorage else { return true }
+            let expanded = AtomicLinks.expandEdit(affectedCharRange, in: storage)
+            guard expanded != affectedCharRange else { return true }
+            textView.insertText(replacementString, replacementRange: expanded)
+            return false
+        }
+
         /// Text typed at the end of a link does not extend it; see
         /// `InlineMarksBridge.typingAttributesLeavingLink`.
         private func leaveLinkAtCaret(in tv: NSTextView) {
@@ -1465,6 +1484,9 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
         var lastKnownBindingPlain: String?
         /// See `MacBlockTextEditor.Coordinator.textStorageDirty` — same role on iOS.
         var textStorageDirty: Bool = false
+        /// The selection before the latest change, so `AtomicLinks` can tell
+        /// which way the caret moved.
+        private var lastSelection = NSRange(location: 0, length: 0)
         private var checkpointTask: Task<Void, Never>?
 
         init(parent: IOSBlockTextEditorView) {
@@ -1597,6 +1619,8 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
             // `applyPendingCursorPositionOrSeekToEnd`. The latter runs inside a
             // SwiftUI view-update pass; writing to `state.mentionMenu` there
             // shows up as an AttributeGraph cycle.
+            // Snapping sets the selection again, which re-enters this method.
+            if snapSelectionOutOfLinks(in: textView) { return }
             leaveLinkAtCaret(in: textView)
             let composing = (textView.markedTextRange != nil)
             let plain = textView.text ?? ""
@@ -1611,6 +1635,30 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
                     self.parent.onCompletionTriggerChange(detectInlineCompletionTrigger(plain: plain, cursor: cursor))
                 }
             }
+        }
+
+        /// A delete that reaches into a page link removes the whole link; see
+        /// `AtomicLinks`. Re-issued through the text view so the replacement
+        /// takes the ordinary edit path.
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            guard textView.markedTextRange == nil else { return true }
+            let expanded = AtomicLinks.expandEdit(range, in: textView.textStorage)
+            guard expanded != range else { return true }
+            textView.selectedRange = expanded
+            textView.insertText(text)
+            return false
+        }
+
+        /// The caret steps over page links. UITextView has no will-change hook,
+        /// so the snapped selection is applied after the fact.
+        private func snapSelectionOutOfLinks(in textView: UITextView) -> Bool {
+            let selected = textView.selectedRange
+            defer { lastSelection = textView.selectedRange }
+            guard textView.markedTextRange == nil else { return false }
+            let snapped = AtomicLinks.snapSelection(from: lastSelection, to: selected, in: textView.textStorage)
+            guard snapped != selected else { return false }
+            textView.selectedRange = snapped
+            return true
         }
 
         /// Text typed at the end of a link does not extend it; see
