@@ -327,7 +327,7 @@ public struct EditorView: View {
                           let frame = layoutCache.frame(of: id),
                           let block = document.find(id) else { return }
                     if readOnly {
-                        if case .documentLink = block.kind { _ = navigateIntoDocumentLink(id) }
+                        if case .documentLink = block.kind { _ = navigateIntoDocumentLink(id, at: clickOpenTarget()) }
                         return
                     }
                     if case .documentLink(_, let reference) = block.kind,
@@ -661,7 +661,7 @@ public struct EditorView: View {
             // handling — this only catches read-only body text.
             .environment(\.openURL, OpenURLAction { [host, document] url in
                 guard let reference = host.resolveReference(from: url, in: document) else { return .systemAction }
-                host.openDocument(reference)
+                Self.open(reference, at: Self.clickOpenTarget(for: host), host: host)
                 return .handled
             })
             .onChange(of: state.currentDropTarget) { _, newValue in
@@ -876,7 +876,7 @@ public struct EditorView: View {
                 },
                 onOpenLink: { url in
                     guard let reference = host.resolveReference(from: url, in: document) else { return false }
-                    host.openDocument(reference)
+                    Self.open(reference, at: clickOpenTarget(), host: host)
                     return true
                 },
                 onCompletionTriggerChange: { trigger in
@@ -994,8 +994,19 @@ public struct EditorView: View {
                 })
             }
         )
+        #if os(macOS)
+        // Applied whether or not the row has links, so adding one never
+        // remounts the row (and its live text view).
+        let links = host.documentOpenTargets.isEmpty ? [] : openableLinks(in: block)
         BlockRow(model: rowModel, state: state, actions: rowActions, configuration: configuration)
         .equatable()
+        .contextMenu {
+            if !links.isEmpty { linkContextMenu(links) }
+        }
+        #else
+        BlockRow(model: rowModel, state: state, actions: rowActions, configuration: configuration)
+        .equatable()
+        #endif
     }
 
     func handleHeadingChevronLongPress(_ block: Block) {
@@ -1267,7 +1278,7 @@ public struct EditorView: View {
     private func handleRowClick(blockID: BlockID) {
         guard let block = document.find(blockID) else { return }
         if case .documentLink = block.kind {
-            _ = navigateIntoDocumentLink(blockID)
+            _ = navigateIntoDocumentLink(blockID, at: clickOpenTarget())
             return
         }
         transferFocus(to: .editor(blockID, initialCursor: nil))
@@ -2810,7 +2821,7 @@ public struct EditorView: View {
         return .handled
     }
 
-    func navigateIntoDocumentLink(_ blockID: BlockID) -> Bool {
+    func navigateIntoDocumentLink(_ blockID: BlockID, at target: DocumentOpenTarget = .current) -> Bool {
         guard let block = document.find(blockID),
               case .documentLink(_, let path) = block.kind else {
             return false
@@ -2822,7 +2833,7 @@ public struct EditorView: View {
         // fall through to something else.
         guard host.lookupDocument(path).can(.navigate) else { return true }
         transferFocus(to: .nav(cursor: blockID))
-        host.openDocument(path)
+        Self.open(path, at: target, host: host)
         return true
     }
 

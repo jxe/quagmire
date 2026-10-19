@@ -466,6 +466,8 @@ struct MacBlockTextEditor: NSViewRepresentable {
 
     func updateNSView(_ view: ContainedTextView, context: Context) {
         context.coordinator.parent = self
+        context.coordinator.linkHost = context.environment.editorHost
+        context.coordinator.linkDocument = context.environment.editorDocument
         // Reload from the binding only when (a) the binding actually changed since we
         // last touched it (external mutation: undo, autotransform replacement, etc.) or
         // (b) base font props changed (paragraph → heading). The "binding lagging
@@ -740,6 +742,30 @@ struct MacBlockTextEditor: NSViewRepresentable {
             )
             textStorageDirty = true
             tv.invalidateIntrinsicContentSize()
+        }
+
+        /// Resolve page links for the context menu, as the editor does for clicks.
+        weak var linkHost: (any EditorHost)?
+        weak var linkDocument: Document?
+
+        /// A page link under the pointer leads the menu with ways to open it.
+        func textView(_ textView: NSTextView, menu: NSMenu, for _: NSEvent, at charIndex: Int) -> NSMenu? {
+            guard let host = linkHost, let document = linkDocument, !host.documentOpenTargets.isEmpty,
+                  let storage = textView.textStorage, charIndex >= 0, charIndex < storage.length else { return menu }
+            let value = storage.attribute(.link, at: charIndex, effectiveRange: nil)
+            guard let url = (value as? URL) ?? (value as? String).flatMap(URL.init(string:)),
+                  let reference = host.resolveReference(from: url, in: document),
+                  host.lookupDocument(reference).can(.navigate) else { return menu }
+            var items: [NSMenuItem] = [LinkMenuItem("Open Link") { host.openDocument(reference) }]
+            if host.documentOpenTargets.contains(.newTab) {
+                items.append(LinkMenuItem("Open Link in New Tab") { host.openDocument(reference, at: .newTab(selecting: true)) })
+            }
+            if host.documentOpenTargets.contains(.newWindow) {
+                items.append(LinkMenuItem("Open Link in New Window") { host.openDocument(reference, at: .newWindow) })
+            }
+            items.append(.separator())
+            for (index, item) in items.enumerated() { menu.insertItem(item, at: index) }
+            return menu
         }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
@@ -1890,5 +1916,22 @@ extension ContainedTextViewIOS: LiveTextSelectionView {
         let length = (text as NSString?)?.length ?? 0
         selectedRange = clampedSelection(range.location..<(range.location + range.length), length: length)
     }
+}
+#endif
+
+#if os(macOS)
+/// A menu item that runs a closure.
+private final class LinkMenuItem: NSMenuItem {
+    private let run: () -> Void
+
+    init(_ title: String, run: @escaping () -> Void) {
+        self.run = run
+        super.init(title: title, action: #selector(runAction), keyEquivalent: "")
+        target = self
+    }
+
+    required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    @objc private func runAction() { run() }
 }
 #endif

@@ -32,6 +32,25 @@ public struct DocumentCapabilities: OptionSet, Hashable, Sendable {
     public static let all: DocumentCapabilities = [.navigate, .receiveBlocks, .inline, .setIcon, .relocate]
 }
 
+/// Where a document opens, besides in place of the current one.
+public enum DocumentOpenTarget: Hashable, Sendable {
+    /// In place of the current document, as an ordinary link click.
+    case current
+    /// In a new tab: behind the current one (⌘-click), or selected (⌘⇧-click).
+    case newTab(selecting: Bool)
+    /// In a new window.
+    case newWindow
+}
+
+/// The places other than in place that a host can open a document.
+public struct DocumentOpenTargets: OptionSet, Hashable, Sendable {
+    public let rawValue: Int
+    public init(rawValue: Int) { self.rawValue = rawValue }
+
+    public static let newTab = DocumentOpenTargets(rawValue: 1 << 0)
+    public static let newWindow = DocumentOpenTargets(rawValue: 1 << 1)
+}
+
 /// Everything the editor needs to draw a reference row and decide what it may
 /// offer, for a target that currently exists.
 public struct DocumentPresentation: Equatable, Hashable, Sendable {
@@ -152,6 +171,15 @@ public protocol EditorHost: AnyObject {
     /// `resolveReference(from:)`. External URLs never reach this method —
     /// they fall through to the system handler at the OpenURLAction site.
     func openDocument(_ reference: DocumentReference)
+
+    /// Where else this host can open a document. The editor offers these in
+    /// a link's context menu, and opens a new tab on ⌘-click (in the
+    /// background) or ⌘⇧-click (selected) when `.newTab` is among them.
+    var documentOpenTargets: DocumentOpenTargets { get }
+
+    /// Open the document `reference` names at `target`. `.current` is
+    /// `openDocument(_:)`.
+    func openDocument(_ reference: DocumentReference, at target: DocumentOpenTarget)
 
     /// Set the page-level icon for the referenced page. A host may represent
     /// the icon as the leading emoji of the page title or project
@@ -566,6 +594,15 @@ public extension EditorHost {
     /// Existing hosts can still append; provenance-aware hosts receive original IDs.
     func copyToDocument(_ reference: DocumentReference, blocks: [Block], from document: Document) async -> Bool {
         await appendToDocument(reference, blocks.map { $0.withFreshIDs() })
+    }
+}
+
+public extension EditorHost {
+    /// Hosts without tabs or windows open every link in place.
+    var documentOpenTargets: DocumentOpenTargets { [] }
+
+    func openDocument(_ reference: DocumentReference, at _: DocumentOpenTarget) {
+        openDocument(reference)
     }
 }
 
