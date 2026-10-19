@@ -828,6 +828,15 @@ public final class Document: @MainActor Identifiable {
         return true
     }
 
+    /// Can these subtrees, which are not in this document, be inserted at
+    /// `path`? The parent must be a container that accepts each root.
+    public func canInsert(_ blocks: [Block], at path: DropPath) -> Bool {
+        guard !blocks.isEmpty else { return false }
+        guard let parentID = path.parent else { return true }
+        guard let parent = find(parentID), parent.isContainer else { return false }
+        return blocks.allSatisfy(parent.canContain)
+    }
+
     // MARK: - Indent / outdent / slide
 
     /// Move `blockID` to be the last child of its previous sibling under the

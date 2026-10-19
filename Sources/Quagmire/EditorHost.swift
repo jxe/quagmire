@@ -242,6 +242,18 @@ public protocol EditorHost: AnyObject {
     func copyToDocument(_ reference: DocumentReference, blocks: [Block], from document: Document) async -> Bool
     func appendToDocument(_ reference: DocumentReference, _ blocks: [Block]) async -> Bool
 
+    /// Blocks dragged out of another editor (another window's document) are
+    /// landing in `document` at `path`. Return the blocks the editor should
+    /// insert there, or nil to refuse the drop. The editor then inserts them
+    /// as one undoable edit and, for a move, removes the originals from the
+    /// source editor as another, each persisted through its own host's
+    /// `persistCommit`. A host that states both documents' change itself
+    /// (as one transfer, say) does so here before returning; the returned
+    /// blocks must keep the shape of `transfer.blocks`, and may differ in
+    /// text, such as links rewritten for this document. Called on the
+    /// destination's host, which can recognize its own source host.
+    func receiveBlocks(_ transfer: EditorBlockTransfer, at path: DropPath, in document: Document) async -> [Block]?
+
     /// Give the host a synchronous chance to transform subtrees immediately
     /// before a user move or copy inserts them. The editor applies the returned
     /// values inside the same undoable transaction as an in-document transfer;
@@ -554,6 +566,14 @@ public extension EditorHost {
     /// Existing hosts can still append; provenance-aware hosts receive original IDs.
     func copyToDocument(_ reference: DocumentReference, blocks: [Block], from document: Document) async -> Bool {
         await appendToDocument(reference, blocks.map { $0.withFreshIDs() })
+    }
+}
+
+public extension EditorHost {
+    /// Hosts that persist each document's commits need nothing more: the
+    /// destination's insertion and the source's removal are both commits.
+    func receiveBlocks(_ transfer: EditorBlockTransfer, at _: DropPath, in _: Document) async -> [Block]? {
+        transfer.blocks
     }
 }
 

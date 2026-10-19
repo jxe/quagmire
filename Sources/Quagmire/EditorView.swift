@@ -420,6 +420,22 @@ public struct EditorView: View {
                     if state.currentDropTarget != nil {
                         state.currentDropTarget = nil
                     }
+                    if state.dropSlotHint != nil {
+                        state.dropSlotHint = nil
+                    }
+                },
+                onReorderHandOff: { event in
+                    #if os(macOS)
+                    return !readOnly && beginExternalBlockDrag(with: event)
+                    #else
+                    return false
+                    #endif
+                },
+                onExternalBlockDropUpdate: { y in
+                    if !readOnly { applyDropTarget(at: y, snapshot: document.children) }
+                },
+                onExternalBlockDrop: { y in
+                    !readOnly && performExternalBlockDrop(atY: y)
                 }
             )
 

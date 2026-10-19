@@ -556,7 +556,7 @@ extension EditorView {
         // sticky target keeps a run of short link rows from flickering.
         let linkRows: [(row: VisibleRow, frame: ReorderDropFrame)] = rows.indices.compactMap { index in
             let row = rows[index]
-            guard !liftIDs.contains(row.id),
+            guard !liftIDs.contains(row.id), !isReceivingForeignBlocks,
                   case .documentLink(let reference) = row.kind,
                   host.lookupDocument(reference).can(.receiveBlocks),
                   let frame = displayedFrame(of: index)
@@ -903,6 +903,131 @@ extension EditorView {
         case .intoDocument(_, let reference):
             Task { await moveBlocks(ids: payload.ids, intoDocument: reference) }
         }
+    }
+
+    /// Blocks dragged from another document are hovering here. Its links are
+    /// not drop-onto targets: a reference names its page from this
+    /// document, which the source's host cannot resolve.
+    var isReceivingForeignBlocks: Bool {
+        guard state.reorderLift == nil, let drag = ExternalBlockDrag.active else { return false }
+        return drag.document !== document
+    }
+
+    #if os(macOS)
+    /// The lift reached another window: hand it to a system drag carrying
+    /// this editor's blocks, and settle the in-window lift back in place.
+    /// The blocks leave this document only when another editor accepts them.
+    func beginExternalBlockDrag(with event: NSEvent) -> Bool {
+        guard let lift = state.reorderLift else { return false }
+        let roots = preparedBlocksForTransfer(ids: lift.ids)
+        guard !roots.isEmpty else { return false }
+        let rootIDs = roots.map(\.id)
+        let drag = ExternalBlockDrag(document: document, host: host, ids: lift.ids, roots: roots) {
+            removeBlocksAfterTransfer(rootIDs)
+        }
+        let size = lift.sourceFrame.size
+        let renderer = ImageRenderer(content:
+            BlockRowPreview(
+                block: lift.block,
+                depth: 0,
+                documentLookups: resolveDocumentLookups(for: lift.block, host: host, in: document),
+                theme: configuration.theme
+            )
+            .frame(width: size.width, height: size.height, alignment: .leading)
+            .background(configuration.theme.background)
+            .environment(\.editorHost, host)
+            .environment(\.editorDocument, document)
+        )
+        renderer.scale = event.window?.backingScaleFactor ?? 2
+        guard MacExternalBlockDrag.begin(drag, event: event, image: renderer.nsImage, imageOffset: lift.touchOffset) else {
+            return false
+        }
+        cancelReorderLift()
+        return true
+    }
+    #endif
+
+    /// A cross-document move landed: remove its blocks here as one undoable
+    /// edit, as Move to Document does.
+    func removeBlocksAfterTransfer(_ ids: [BlockID]) {
+        let present = ids.filter { document.find($0) != nil }
+        guard !present.isEmpty else { return }
+        let cursorTarget = nearestCursorAfterRemoval(of: present)
+        mutate("Move Blocks") {
+            for id in present { document.removeSubtree(id) }
+        }
+        if let id = cursorTarget { setCursor(id) }
+        showActionToast("Moved")
+    }
+
+    /// Blocks dragged from another editor window were dropped at `y`. Back
+    /// in their own document (its own window, or another showing it) this is
+    /// an ordinary move or duplicate; from another document they land at the
+    /// drop path through `receiveExternalBlocks`. Option copies.
+    func performExternalBlockDrop(atY y: CGFloat) -> Bool {
+        guard let drag = ExternalBlockDrag.active, let source = drag.document else { return false }
+        let snapshot = document.children
+        let hidden = hiddenBlockIDs(in: snapshot)
+        let target = state.currentDropTarget ?? resolveDropTarget(atY: y, snapshot: snapshot)
+        let isCopy = currentReorderCopyIntent()
+        state.currentDropTarget = nil
+        state.dropSlotHint = nil
+        if source === document {
+            switch target {
+            case .insertAt(let path):
+                if isCopy { copyBlocks(ids: drag.ids, to: path, snapshot: snapshot) } else { moveBlocks(ids: drag.ids, to: path) }
+            case .asLastChildOf(let parentID):
+                if isCopy {
+                    copyBlocks(ids: drag.ids, asChildrenOf: parentID, snapshot: snapshot, hidden: hidden)
+                } else {
+                    moveBlocks(ids: drag.ids, asChildrenOf: parentID, snapshot: snapshot, hidden: hidden)
+                }
+            case .intoDocument(_, let reference):
+                let ids = drag.ids
+                if isCopy {
+                    Task { await copyBlocks(ids: ids, intoDocument: reference) }
+                } else {
+                    Task { await moveBlocks(ids: ids, intoDocument: reference) }
+                }
+            }
+            SoundFX.play(.drop, enabled: configuration.isAudioFeedbackEnabled)
+            return true
+        }
+        let path: DropPath
+        switch target {
+        case .insertAt(let value):
+            path = value
+        case .asLastChildOf(let parentID):
+            guard let parent = document.find(parentID) else { return false }
+            path = DropPath(parent: parentID, position: parent.children.count)
+        case .intoDocument:
+            return false
+        }
+        guard document.canInsert(drag.roots, at: path) else { return false }
+        SoundFX.play(.drop, enabled: configuration.isAudioFeedbackEnabled)
+        Task { await receiveExternalBlocks(drag, at: path, isCopy: isCopy) }
+        return true
+    }
+
+    /// Land another document's dragged blocks at `path`. This document's host
+    /// performs the durable side first (`receiveBlocks`); the blocks it
+    /// returns are then inserted here as one undoable edit and, for a move,
+    /// removed from the source editor as another.
+    func receiveExternalBlocks(_ drag: ExternalBlockDrag, at path: DropPath, isCopy: Bool) async {
+        guard let source = drag.document, source !== document else { return }
+        let originals = drag.roots
+        var present = Set<BlockID>()
+        document.walk { block, _, _ in present.insert(block.id) }
+        func collides(_ block: Block) -> Bool { present.contains(block.id) || block.children.contains(where: collides) }
+        let landing = isCopy || originals.contains(where: collides) ? originals.map { $0.withFreshIDs() } : originals
+        let transfer = EditorBlockTransfer(blocks: landing, originals: originals, source: source, sourceHost: drag.host, isCopy: isCopy)
+        guard let received = await host.receiveBlocks(transfer, at: path, in: document), !received.isEmpty else { return }
+        mutate(isCopy ? (received.count > 1 ? "Copy Blocks" : "Copy Block") : "Move Blocks") {
+            _ = document.insertSubtrees(received, at: path)
+        }
+        selectAfterCopy(received)
+        if !isCopy { drag.finishMove() }
+        showActionToast(isCopy ? "Copied" : "Moved")
     }
 
     /// Selection tick on drop-target changes during an active reorder,

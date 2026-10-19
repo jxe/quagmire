@@ -147,6 +147,11 @@ struct RowSurfaceActions<ID: Hashable> {
     var onExternalDropUpdate: (CGFloat) -> Void = { _ in }
     var onExternalDrop: (_ plainTextPayload: String, _ y: CGFloat) -> Void = { _, _ in }
     var onExternalDropCancel: () -> Void = {}
+    /// macOS: the lift reached another window. True when it became a system drag.
+    var onReorderHandOff: (PlatformDragEvent) -> Bool = { _ in false }
+    /// macOS: blocks dragged from another editor window hover or land here.
+    var onExternalBlockDropUpdate: (CGFloat) -> Void = { _ in }
+    var onExternalBlockDrop: (CGFloat) -> Bool = { _ in false }
 }
 
 /// Bare row surface: scroll container, row measurement, page-level gestures,
@@ -425,7 +430,35 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
                 lastReorderEnd = .now
                 stopReorderAutoScroll()
                 actions.onReorderEnded(location)
+            },
+            onHandOff: { event in
+                guard actions.onReorderHandOff(event) else { return false }
+                activeReorderLocation = nil
+                lastReorderEnd = .now
+                stopReorderAutoScroll()
+                return true
             }
+        )
+        .onDrop(
+            of: [MacExternalBlockDrag.contentType],
+            delegate: MacBlockDropDelegate(
+                onUpdate: { location in
+                    activeReorderLocation = location
+                    actions.onExternalBlockDropUpdate(location.y)
+                    updateReorderAutoScroll(for: location)
+                },
+                onDrop: { location in
+                    actions.onExternalBlockDrop(location.y)
+                },
+                onCancel: {
+                    if activeReorderLocation != nil {
+                        activeReorderLocation = nil
+                        lastReorderEnd = .now
+                    }
+                    stopReorderAutoScroll()
+                    actions.onExternalDropCancel()
+                }
+            )
         )
         .onContinuousHover { phase in
             switch phase {

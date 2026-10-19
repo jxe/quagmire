@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 // MARK: - macOS page-level drag-reorder
 
@@ -34,7 +37,8 @@ extension View {
         isReorderEnabled: Bool,
         onBegan: @escaping (ID, _ location: CGPoint, _ anchor: CGPoint) -> Void,
         onChanged: @escaping (_ location: CGPoint, _ anchor: CGPoint) -> Void,
-        onEnded: @escaping (CGPoint) -> Void
+        onEnded: @escaping (CGPoint) -> Void,
+        onHandOff: @escaping (PlatformDragEvent) -> Bool
     ) -> some View {
         #if os(macOS)
         self.modifier(
@@ -44,7 +48,8 @@ extension View {
                 isReorderEnabled: isReorderEnabled,
                 onBegan: onBegan,
                 onChanged: onChanged,
-                onEnded: onEnded
+                onEnded: onEnded,
+                onHandOff: onHandOff
             )
         )
         #else
@@ -52,6 +57,12 @@ extension View {
         #endif
     }
 }
+
+#if os(macOS)
+typealias PlatformDragEvent = NSEvent
+#else
+typealias PlatformDragEvent = Never
+#endif
 
 #if os(macOS)
 
@@ -66,8 +77,15 @@ private struct MacPageDragReorder<ID: Hashable>: ViewModifier {
     let onBegan: (ID, CGPoint, CGPoint) -> Void
     let onChanged: (CGPoint, CGPoint) -> Void
     let onEnded: (CGPoint) -> Void
+    /// The pointer reached another of this app's windows (or this window's
+    /// tab bar). True when the lift became a system drag; the rest of this
+    /// gesture is then ignored, since AppKit's drag session owns the mouse.
+    let onHandOff: (NSEvent) -> Bool
 
     @State private var activeBlockID: ID?
+    /// Start of a gesture handed to a system drag. AppKit may never deliver
+    /// its mouse-up here, so a new gesture is recognized by its start point.
+    @State private var handedOffStart: CGPoint?
 
     func body(content: Content) -> some View {
         // `.simultaneousGesture` so inner gestures (the text content's
@@ -80,7 +98,18 @@ private struct MacPageDragReorder<ID: Hashable>: ViewModifier {
             DragGesture(minimumDistance: 4, coordinateSpace: .named(PageHoverCoordinateSpace.name))
                 .onChanged { value in
                     guard isReorderEnabled else { return }
+                    if let start = handedOffStart {
+                        if start == value.startLocation { return }
+                        // The handed-off gesture never ended here.
+                        handedOffStart = nil
+                        activeBlockID = nil
+                    }
                     if let id = activeBlockID {
+                        if let event = NSApp.currentEvent, MacExternalBlockDrag.shouldHandOff(event), onHandOff(event) {
+                            activeBlockID = nil
+                            handedOffStart = value.startLocation
+                            return
+                        }
                         onChanged(value.location, value.startLocation)
                         _ = id
                     } else {
@@ -98,6 +127,11 @@ private struct MacPageDragReorder<ID: Hashable>: ViewModifier {
                     }
                 }
                 .onEnded { value in
+                    if handedOffStart != nil {
+                        handedOffStart = nil
+                        activeBlockID = nil
+                        return
+                    }
                     guard isReorderEnabled, activeBlockID != nil else {
                         activeBlockID = nil
                         return
