@@ -60,11 +60,15 @@ public struct DocumentPresentation: Equatable, Hashable, Sendable {
     /// A leading emoji or short glyph for the row. Hosts with no icon concept
     /// leave this nil; the row derives one from the title instead.
     public var icon: String?
+    /// A short muted line under the title, such as where the target lives or
+    /// who can see it. Nil draws the row on one line.
+    public var subtitle: String?
     public var capabilities: DocumentCapabilities
 
-    public init(title: String? = nil, icon: String? = nil, capabilities: DocumentCapabilities = .all) {
+    public init(title: String? = nil, icon: String? = nil, subtitle: String? = nil, capabilities: DocumentCapabilities = .all) {
         self.title = title
         self.icon = icon
+        self.subtitle = subtitle
         self.capabilities = capabilities
     }
 }
@@ -107,6 +111,11 @@ extension DocumentLookup {
 
     public var icon: String? {
         if case .present(let presentation) = self { return presentation.icon }
+        return nil
+    }
+
+    public var subtitle: String? {
+        if case .present(let presentation) = self { return presentation.subtitle }
         return nil
     }
 

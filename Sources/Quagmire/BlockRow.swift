@@ -829,6 +829,8 @@ struct DocumentLinkRowPresentation: Equatable {
     /// Trailing parenthetical, e.g. "(missing)". Nil when the row needs no
     /// explanation.
     var annotation: String?
+    /// The host's second line under the title; only a present target has one.
+    var subtitle: String? = nil
 }
 
 func documentLinkRowPresentation(storedLabel: AttributedString, lookup: DocumentLookup) -> DocumentLinkRowPresentation {
@@ -846,7 +848,7 @@ func documentLinkRowPresentation(storedLabel: AttributedString, lookup: Document
     case .present:
         return DocumentLinkRowPresentation(
             title: displayTitle, emoji: emoji, symbol: "doc.text",
-            muted: false, annotation: nil
+            muted: false, annotation: nil, subtitle: lookup.subtitle
         )
     case .pending:
         // Draw it as an ordinary row. We don't know anything is wrong, and
@@ -896,15 +898,23 @@ func documentLinkRowBody(storedLabel: AttributedString, lookup: DocumentLookup, 
         .alignmentGuide(.firstTextBaseline) { dimensions in
             dimensions[VerticalAlignment.center] + theme.bulletMarkerBaselineOffset
         }
-        HStack(spacing: 6) {
-            Text(presentation.title)
-                .font(theme.body(weight: .semibold))
-                .foregroundStyle(presentation.muted ? theme.mutedForeground : theme.foreground)
-                .lineSpacing(theme.bodyLineSpacing)
-            if let annotation = presentation.annotation {
-                Text(annotation)
-                    .font(theme.body())
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                Text(presentation.title)
+                    .font(theme.body(weight: .semibold))
+                    .foregroundStyle(presentation.muted ? theme.mutedForeground : theme.foreground)
+                    .lineSpacing(theme.bodyLineSpacing)
+                if let annotation = presentation.annotation {
+                    Text(annotation)
+                        .font(theme.body())
+                        .foregroundStyle(theme.mutedForeground)
+                }
+            }
+            if let subtitle = presentation.subtitle {
+                Text(subtitle)
+                    .font(theme.body(size: theme.typography.bodySize * 0.8))
                     .foregroundStyle(theme.mutedForeground)
+                    .lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

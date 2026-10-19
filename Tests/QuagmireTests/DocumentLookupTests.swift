@@ -95,6 +95,15 @@ struct PageLookupTests {
         #expect(row.title == "Apples")
     }
 
+    @Test func aPresentTargetCarriesTheHostsSubtitle() {
+        let present = documentLinkRowPresentation(
+            storedLabel: AttributedString("story"),
+            lookup: .present(DocumentPresentation(title: "Story", subtitle: "Tree · Private · On this Mac"))
+        )
+        #expect(present.subtitle == "Tree · Private · On this Mac")
+        #expect(documentLinkRowPresentation(storedLabel: AttributedString("story"), lookup: .pending).subtitle == nil)
+    }
+
     @Test func aLeadingEmojiBecomesTheIconWhenTheHostHasNone() {
         let row = documentLinkRowPresentation(storedLabel: AttributedString("x"), lookup: .present(title: "🍎 Apples"))
         #expect(row.emoji == "🍎")
