@@ -672,24 +672,15 @@ struct BlockRow: View, Equatable {
     /// page symbol when it has none. Tapping it opens the icon picker
     /// (`EditorView` hit-tests the column, as it does for page-link rows).
     private func pageTitleIcon(font: Font) -> some View {
-        Group {
-            if let emoji = TitleIcon.split(block.text).emoji {
-                Text(emoji).font(font)
-            } else {
-                Text(Image(systemName: LinkIcons.symbolName))
-                    .font(.system(size: theme.pageTitleIconSymbolSize))
-                    .foregroundStyle(theme.mutedForeground)
+        PageTitleIcon(emoji: TitleIcon.split(block.text).emoji, font: font, theme: theme)
+            .popover(
+                isPresented: Binding(
+                    get: { model.isIconPickerPresented },
+                    set: { if !$0 { onIconPickerDismiss() } }
+                )
+            ) {
+                emojiPickerContent()
             }
-        }
-        .frame(width: theme.pageTitleIconColumnWidth, alignment: .leading)
-        .popover(
-            isPresented: Binding(
-                get: { model.isIconPickerPresented },
-                set: { if !$0 { onIconPickerDismiss() } }
-            )
-        ) {
-            emojiPickerContent()
-        }
     }
 
     private func imageRow(source: String, alt: String) -> some View {
@@ -1355,4 +1346,28 @@ func attributedStringMarksEqual(_ a: AttributedString, _ b: AttributedString) ->
         if ra.link != rb.link { return false }
     }
     return true
+}
+
+/// The icon column beside the page title.
+struct PageTitleIcon: View {
+    let emoji: String?
+    let font: Font
+    let theme: EditorTheme
+
+    var body: some View {
+        Group {
+            if let emoji {
+                Text(emoji).font(font)
+            } else {
+                // Centred where an emoji would sit, and lifted off the
+                // baseline to the emoji's optical centre.
+                Text(Image(systemName: LinkIcons.symbolName))
+                    .font(.system(size: theme.pageTitleIconSymbolSize))
+                    .baselineOffset(theme.pageTitleSize * 0.06)
+                    .foregroundStyle(theme.mutedForeground)
+                    .frame(width: theme.pageTitleEmojiWidth)
+            }
+        }
+        .frame(width: theme.pageTitleIconColumnWidth, alignment: .leading)
+    }
 }
