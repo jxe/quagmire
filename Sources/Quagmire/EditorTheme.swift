@@ -331,8 +331,6 @@ public struct EditorTheme: Equatable, Sendable {
     /// The page title's icon column: its emoji, or the page symbol.
     var pageTitleIconColumnWidth: CGFloat { pageTitleSize * 1.3 }
     var pageTitleIconSymbolSize: CGFloat { pageTitleSize * 0.9 }
-    /// The symbol is centred in this width, under the centre of a title-size emoji.
-    var pageTitleEmojiWidth: CGFloat { pageTitleSize * 1.03 }
     /// A title emoji standing in for the page icon reads small next to the
     /// SF Symbol at the same point size; render it a touch larger. It sits
     /// in the same fixed-height marker frame, so the row height is unchanged.

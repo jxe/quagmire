@@ -29,6 +29,13 @@ enum TitleIcon {
         return index < string.endIndex ? length : 0
     }
 
+    /// How wide an emoji is at the title's size, so the page symbol can sit
+    /// where emojis do.
+    static func emojiAdvance(theme: EditorTheme) -> CGFloat {
+        let font = InlineMarksBridge.bodyFont(size: theme.pageTitleSize, bold: true, theme: theme)
+        return NSAttributedString(string: "📄", attributes: [.font: font]).size().width
+    }
+
     /// The title's icon and the text drawn after it.
     static func split(_ text: AttributedString) -> (emoji: String?, rest: AttributedString) {
         let plain = String(text.characters)
