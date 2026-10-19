@@ -950,6 +950,7 @@ private func decoratedText(
 ) -> Text {
     var output = Text("")
     let inlineCodePaddingText = "\u{2005}"
+    var previousLink: URL?
     for run in source.runs {
         let segment = source[run.range]
         let runText = String(segment.characters)
@@ -959,10 +960,15 @@ private func decoratedText(
         let strike = run[InlineAttributes.StrikethroughAttribute.self] == true
         let link = run.link
 
+        // A link split into several runs (part of it bold, say) shows its
+        // title and icon once, on its first run.
+        let continuesLink = link != nil && link == previousLink
+        previousLink = link
+
         var displayText = runText
         if let url = link {
             if let resolved = documentLookups[url.absoluteString]?.title {
-                displayText = resolved
+                displayText = continuesLink ? "" : resolved
             } else if isExternalLinkURL(url),
                       let preview = previews[url],
                       let title = preview.title,
@@ -994,6 +1000,11 @@ private func decoratedText(
             attributed.foregroundColor = theme.foreground
         }
 
+        if let url = link, !continuesLink,
+           let lookup = documentLookups[url.absoluteString] {
+            output = Text("\(output)\(documentLinkInlineIcon(displayText: displayText, lookup: lookup, theme: theme))")
+        }
+
         if let preview = externalWithPreview,
            let iconData = preview.iconPNG,
            let iconImage = decodeFavicon(iconData, size: theme.pageIconSize) {
@@ -1008,6 +1019,21 @@ private func decoratedText(
         output = Text("\(output)\(text)")
     }
     return output
+}
+
+/// The icon in front of an inline page link, matching the page icons
+/// elsewhere: nothing when the title already leads with an emoji, the host's
+/// emoji icon when it has one, otherwise the page symbol.
+private func documentLinkInlineIcon(displayText: String, lookup: DocumentLookup, theme: EditorTheme) -> Text {
+    if let first = displayText.trimmingCharacters(in: .whitespaces).first, isEmojiCharacter(first) {
+        return Text("")
+    }
+    if let icon = lookup.icon { return Text("\(icon) ") }
+    let presentation = documentLinkRowPresentation(storedLabel: AttributedString(displayText), lookup: lookup)
+    let symbol = Text(Image(systemName: presentation.symbol))
+        .font(.system(size: theme.pageIconSize))
+        .foregroundColor(theme.mutedForeground)
+    return Text("\(symbol) ")
 }
 
 private func runMatchesURL(_ runText: String, url: URL) -> Bool {
