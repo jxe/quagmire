@@ -223,6 +223,9 @@ struct BlockTextEditor: View {
     /// pending-cursor channel inside the closure, so a second mount of the same
     /// block (e.g. nav-mode Enter back into it) sees nil and seeks to end.
     let consumeInitialCursor: () -> InitialCursorTarget?
+    /// The page title: its leading emoji is drawn by the row, so the editor
+    /// keeps it hidden; see `TitleIcon`.
+    var hidesLeadingIcon: Bool = false
     /// Document-level undo controller. Native text-view undo stays disabled because its
     /// entries outlive SwiftUI's mounted editor; coordinators instead checkpoint live
     /// text after a short pause into this controller's stable document-level manager.
@@ -252,7 +255,8 @@ struct BlockTextEditor: View {
         onOpenLink: @escaping (URL) -> Bool = { _ in false },
         onCompletionTriggerChange: @escaping (InlineCompletionTrigger?) -> Void = { _ in },
         completionActive: Bool = false,
-        consumeInitialCursor: @escaping () -> InitialCursorTarget? = { nil }
+        consumeInitialCursor: @escaping () -> InitialCursorTarget? = { nil },
+        hidesLeadingIcon: Bool = false
     ) {
         self._text = text
         self.font = font
@@ -269,6 +273,7 @@ struct BlockTextEditor: View {
         self.onCompletionTriggerChange = onCompletionTriggerChange
         self.completionActive = completionActive
         self.consumeInitialCursor = consumeInitialCursor
+        self.hidesLeadingIcon = hidesLeadingIcon
     }
 
     var body: some View {
@@ -301,7 +306,8 @@ struct BlockTextEditor: View {
             blockID: blockID,
             documentUndoController: documentUndoController,
             activeView: macActiveTextView,
-            liveSelection: liveTextSelection
+            liveSelection: liveTextSelection,
+            hidesLeadingIcon: hidesLeadingIcon
         )
         .alignmentGuide(.firstTextBaseline) { _ in
             // NSTextView with textContainerInset=.zero, lineFragmentPadding=0 puts its first
@@ -344,7 +350,8 @@ struct BlockTextEditor: View {
             completionActive: completionActive,
             consumeInitialCursor: consumeInitialCursor,
             documentUndoController: documentUndoController,
-            liveSelection: liveTextSelection
+            liveSelection: liveTextSelection,
+            hidesLeadingIcon: hidesLeadingIcon
         )
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
@@ -392,6 +399,7 @@ struct MacBlockTextEditor: NSViewRepresentable {
     let documentUndoController: DocumentUndoController?
     let activeView: MacActiveTextView?
     var liveSelection: LiveTextSelection? = nil
+    var hidesLeadingIcon = false
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -404,6 +412,7 @@ struct MacBlockTextEditor: NSViewRepresentable {
         view.activeView = activeView
         view.liveSelection = liveSelection
         view.blockID = blockID
+        view.hidesLeadingIcon = hidesLeadingIcon
         view.isRichText = true
         view.linkTextAttributes = [
             .foregroundColor: theme.platformForeground,
@@ -508,6 +517,7 @@ struct MacBlockTextEditor: NSViewRepresentable {
     private func loadAttributedString(into view: ContainedTextView) {
         let ns = InlineMarksBridge.toNS(text, baseFontSize: fontSize, baseBold: bold, lineSpacing: lineSpacing, theme: theme)
         view.textStorage?.setAttributedString(ns)
+        view.hideTitleIcon()
     }
 
     private func applyTypingAttributes(to view: ContainedTextView) {
@@ -676,6 +686,7 @@ struct MacBlockTextEditor: NSViewRepresentable {
             theme: parent.theme
             )
             tv.textStorage?.setAttributedString(restored)
+            (tv as? ContainedTextView)?.hideTitleIcon()
             tv.setSelectedRange(selection)
             tv.typingAttributes = InlineMarksBridge.baseTypingAttributes(
                 baseFontSize: parent.fontSize,
@@ -690,6 +701,7 @@ struct MacBlockTextEditor: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
+            leaveTitleIconAtCaret(in: tv)
             leaveLinkAtCaret(in: tv)
             // Cursor moved without a text change — re-evaluate the mention trigger so
             // arrow-keying out of the @-region dismisses the popover. Defer the
@@ -713,6 +725,20 @@ struct MacBlockTextEditor: NSViewRepresentable {
             }
         }
 
+        /// Text typed after the hidden title icon takes the row's own typing
+        /// attributes, not the icon's invisible ones.
+        private func leaveTitleIconAtCaret(in tv: NSTextView) {
+            let selected = tv.selectedRange()
+            guard let prefix = (tv as? ContainedTextView)?.titleIconPrefixLength, prefix > 0,
+                  selected.location == prefix, selected.length == 0 else { return }
+            tv.typingAttributes = InlineMarksBridge.baseTypingAttributes(
+                baseFontSize: parent.fontSize,
+                baseBold: parent.bold,
+                lineSpacing: parent.lineSpacing,
+                theme: parent.theme
+            )
+        }
+
         /// The caret steps over page links; see `AtomicLinks`.
         func textView(
             _ textView: NSTextView,
@@ -720,13 +746,19 @@ struct MacBlockTextEditor: NSViewRepresentable {
             toCharacterRange newSelectedCharRange: NSRange
         ) -> NSRange {
             guard !textView.hasMarkedText(), let storage = textView.textStorage else { return newSelectedCharRange }
-            return AtomicLinks.snapSelection(from: oldSelectedCharRange, to: newSelectedCharRange, in: storage)
+            let snapped = AtomicLinks.snapSelection(from: oldSelectedCharRange, to: newSelectedCharRange, in: storage)
+            return TitleIcon.clampSelection(snapped, prefixLength: (textView as? ContainedTextView)?.titleIconPrefixLength ?? 0)
         }
 
         /// A delete that reaches into a page link removes the whole link.
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
             guard let replacementString, !textView.hasMarkedText(), let storage = textView.textStorage else { return true }
-            let expanded = AtomicLinks.expandEdit(affectedCharRange, in: storage)
+            guard let clamped = TitleIcon.clampEdit(
+                affectedCharRange,
+                replacement: replacementString,
+                prefixLength: (textView as? ContainedTextView)?.titleIconPrefixLength ?? 0
+            ) else { return false }
+            let expanded = AtomicLinks.expandEdit(clamped, in: storage)
             guard expanded != affectedCharRange else { return true }
             textView.insertText(replacementString, replacementRange: expanded)
             return false
@@ -759,6 +791,7 @@ struct MacBlockTextEditor: NSViewRepresentable {
             theme: parent.theme
             )
             tv.textStorage?.setAttributedString(ns)
+            (tv as? ContainedTextView)?.hideTitleIcon()
             tv.setSelectedRange(NSRange(location: result.cursor, length: 0))
             tv.typingAttributes = InlineMarksBridge.baseTypingAttributes(
                 baseFontSize: parent.fontSize,
@@ -1132,7 +1165,26 @@ final class ContainedTextView: NSTextView {
     func refreshLinkIconSpacing() {
         guard let storage = textStorage, !hasMarkedText() else { return }
         LinkIcons.applySpacing(to: storage, advance: linkIconAdvance)
+        TitleIcon.hide(prefixLength: titleIconPrefixLength, in: storage)
         needsDisplay = true
+    }
+
+    // MARK: Page-title icon
+
+    /// Set for the page title; see `TitleIcon`.
+    var hidesLeadingIcon = false
+    /// Length of the hidden icon at the start of the text. Fixed for a loaded
+    /// text: edits can't reach it, and an emoji typed at the start stays text
+    /// until the title reloads.
+    private(set) var titleIconPrefixLength = 0
+
+    func hideTitleIcon() {
+        guard hidesLeadingIcon, let storage = textStorage else {
+            titleIconPrefixLength = 0
+            return
+        }
+        titleIconPrefixLength = TitleIcon.prefixLength(of: storage.string)
+        TitleIcon.hide(prefixLength: titleIconPrefixLength, in: storage)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -1360,11 +1412,13 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
     let consumeInitialCursor: () -> InitialCursorTarget?
     let documentUndoController: DocumentUndoController?
     var liveSelection: LiveTextSelection? = nil
+    var hidesLeadingIcon = false
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
     func makeUIView(context: Context) -> ContainedTextViewIOS {
         let tv = ContainedTextViewIOS()
+        tv.hidesLeadingIcon = hidesLeadingIcon
         tv.delegate = context.coordinator
         tv.coordinator = context.coordinator
         tv.liveSelection = liveSelection
@@ -1523,6 +1577,7 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
     private func loadAttributedString(into tv: ContainedTextViewIOS) {
         let ns = InlineMarksBridge.toNS(text, baseFontSize: fontSize, baseBold: bold, lineSpacing: lineSpacing, theme: theme)
         tv.textStorage.setAttributedString(ns)
+        tv.hideTitleIcon()
     }
 
     private func applyTypingAttributes(to tv: ContainedTextViewIOS) {
@@ -1668,6 +1723,7 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
             theme: parent.theme
             )
             textView.textStorage.setAttributedString(restored)
+            (textView as? ContainedTextViewIOS)?.hideTitleIcon()
             textView.selectedRange = selection
             textView.typingAttributes = InlineMarksBridge.baseTypingAttributes(
                 baseFontSize: parent.fontSize,
@@ -1688,6 +1744,16 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
             // shows up as an AttributeGraph cycle.
             // Snapping sets the selection again, which re-enters this method.
             if snapSelectionOutOfLinks(in: textView) { return }
+            if let prefix = (textView as? ContainedTextViewIOS)?.titleIconPrefixLength, prefix > 0,
+               textView.selectedRange == NSRange(location: prefix, length: 0) {
+                // Typed text takes the row's attributes, not the hidden icon's.
+                textView.typingAttributes = InlineMarksBridge.baseTypingAttributes(
+                    baseFontSize: parent.fontSize,
+                    baseBold: parent.bold,
+                    lineSpacing: parent.lineSpacing,
+                    theme: parent.theme
+                )
+            }
             leaveLinkAtCaret(in: textView)
             let composing = (textView.markedTextRange != nil)
             let plain = textView.text ?? ""
@@ -1711,7 +1777,12 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
         /// takes the ordinary edit path.
         func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
             guard textView.markedTextRange == nil else { return true }
-            let expanded = AtomicLinks.expandEdit(range, in: textView.textStorage)
+            guard let clamped = TitleIcon.clampEdit(
+                range,
+                replacement: text,
+                prefixLength: (textView as? ContainedTextViewIOS)?.titleIconPrefixLength ?? 0
+            ) else { return false }
+            let expanded = AtomicLinks.expandEdit(clamped, in: textView.textStorage)
             guard expanded != range else { return true }
             textView.selectedRange = expanded
             textView.insertText(text)
@@ -1724,7 +1795,10 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
             let selected = textView.selectedRange
             defer { lastSelection = textView.selectedRange }
             guard textView.markedTextRange == nil else { return false }
-            let snapped = AtomicLinks.snapSelection(from: lastSelection, to: selected, in: textView.textStorage)
+            let snapped = TitleIcon.clampSelection(
+                AtomicLinks.snapSelection(from: lastSelection, to: selected, in: textView.textStorage),
+                prefixLength: (textView as? ContainedTextViewIOS)?.titleIconPrefixLength ?? 0
+            )
             guard snapped != selected else { return false }
             textView.selectedRange = snapped
             return true
@@ -1756,6 +1830,7 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
             theme: parent.theme
             )
             textView.textStorage.setAttributedString(ns)
+            (textView as? ContainedTextViewIOS)?.hideTitleIcon()
             textView.selectedRange = NSRange(location: result.cursor, length: 0)
             textView.typingAttributes = InlineMarksBridge.baseTypingAttributes(
                 baseFontSize: parent.fontSize,
@@ -1876,7 +1951,23 @@ final class ContainedTextViewIOS: UITextView {
     func refreshLinkIconSpacing() {
         guard markedTextRange == nil else { return }
         LinkIcons.applySpacing(to: textStorage, advance: linkIconAdvance)
+        TitleIcon.hide(prefixLength: titleIconPrefixLength, in: textStorage)
         setNeedsDisplay()
+    }
+
+    // MARK: Page-title icon
+
+    /// See `ContainedTextView.hidesLeadingIcon`.
+    var hidesLeadingIcon = false
+    private(set) var titleIconPrefixLength = 0
+
+    func hideTitleIcon() {
+        guard hidesLeadingIcon else {
+            titleIconPrefixLength = 0
+            return
+        }
+        titleIconPrefixLength = TitleIcon.prefixLength(of: textStorage.string)
+        TitleIcon.hide(prefixLength: titleIconPrefixLength, in: textStorage)
     }
 
     override func layoutSubviews() {

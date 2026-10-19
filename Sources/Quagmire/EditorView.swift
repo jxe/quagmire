@@ -341,6 +341,9 @@ public struct EditorView: View {
                        host.lookupDocument(reference).can(.setIcon),
                        hitsDocumentLinkIconColumn(point: point, rowFrame: frame, depth: row.depth, theme: theme) {
                         openDocumentIconPicker(for: id)
+                    } else if isPageTitleBlock(block),
+                              point.x - frame.minX <= theme.pageTitleIconColumnWidth {
+                        openDocumentIconPicker(for: id)
                     } else {
                         handleRowClick(blockID: id)
                     }
@@ -1268,6 +1271,14 @@ public struct EditorView: View {
     }
 
     private func selectDocumentIcon(_ emoji: String, fromDocumentLinkBlock blockID: BlockID) {
+        // The page's own title holds its icon as its leading emoji.
+        if let block = document.find(blockID), isPageTitleBlock(block) {
+            iconPickerBlockID = nil
+            mutate("Set Icon") {
+                document.mutate(blockID) { $0 = $0.withText(TitleIcon.setting(emoji, in: $0.text)) }
+            }
+            return
+        }
         // Re-checked rather than trusted from when the picker opened: the
         // target can go missing, or go read-only, while it is up.
         guard let block = document.find(blockID),
@@ -1283,6 +1294,11 @@ public struct EditorView: View {
     }
 
     private func openDocumentIconPicker(for blockID: BlockID) {
+        if !readOnly, let block = document.find(blockID), isPageTitleBlock(block) {
+            transferFocus(to: .nav(cursor: blockID))
+            iconPickerBlockID = blockID
+            return
+        }
         guard let block = document.find(blockID),
               case .documentLink(_, let reference) = block.kind,
               host.lookupDocument(reference).can(.setIcon) else { return }

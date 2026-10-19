@@ -263,6 +263,8 @@ struct BlockRow: View, Equatable {
                     if case .documentLink = block.kind,
                        hitsDocumentLinkIconColumn(localX: value.location.x, depth: depth, theme: theme) {
                         onDocumentLinkIconTap()
+                    } else if isPageTitle, value.location.x <= theme.pageTitleIconColumnWidth {
+                        onDocumentLinkIconTap()
                     } else {
                         onTapOutsideText()
                     }
@@ -348,8 +350,11 @@ struct BlockRow: View, Equatable {
                                                           : theme.headingSize(level)
         let font = theme.body(size: size, weight: theme.headingWeight)
         if isPageTitle {
-            editableText(font: font, fontSize: size, bold: true, lineSpacing: theme.headingLineSpacing)
-                .padding(.leading, theme.nonListLeading(depth: depth))
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                pageTitleIcon(font: font)
+                editableText(font: font, fontSize: size, bold: true, lineSpacing: theme.headingLineSpacing, hidesLeadingIcon: true)
+            }
+            .padding(.leading, theme.nonListLeading(depth: depth))
         } else {
 #if os(macOS)
             let textLeading = theme.nonListLeading(depth: depth)
@@ -663,14 +668,39 @@ struct BlockRow: View, Equatable {
             }
     }
 
+    /// The page's icon beside its title: the title's leading emoji, or the
+    /// page symbol when it has none. Tapping it opens the icon picker
+    /// (`EditorView` hit-tests the column, as it does for page-link rows).
+    private func pageTitleIcon(font: Font) -> some View {
+        Group {
+            if let emoji = TitleIcon.split(block.text).emoji {
+                Text(emoji).font(font)
+            } else {
+                Text(Image(systemName: LinkIcons.symbolName))
+                    .font(.system(size: theme.pageTitleIconSymbolSize))
+                    .foregroundStyle(theme.mutedForeground)
+            }
+        }
+        .frame(width: theme.pageTitleIconColumnWidth, alignment: .leading)
+        .popover(
+            isPresented: Binding(
+                get: { model.isIconPickerPresented },
+                set: { if !$0 { onIconPickerDismiss() } }
+            )
+        ) {
+            emojiPickerContent()
+        }
+    }
+
     private func imageRow(source: String, alt: String) -> some View {
         ImageBlockView(source: source, alt: alt, theme: theme)
             .padding(.leading, theme.nonListLeading(depth: depth))
     }
 
     @ViewBuilder
-    private func editableText(font: Font, fontSize: CGFloat, bold: Bool, lineSpacing: CGFloat, strikethrough: Bool = false, muted: Bool = false) -> some View {
+    private func editableText(font: Font, fontSize: CGFloat, bold: Bool, lineSpacing: CGFloat, strikethrough: Bool = false, muted: Bool = false, hidesLeadingIcon: Bool = false) -> some View {
         let usesMutedForeground = muted || model.isProvisionalText
+        let readOnlyText = hidesLeadingIcon ? TitleIcon.split(block.text).rest : block.text
         if let editor {
             BlockTextEditor(
                 text: liveBlockTextBinding(editor.block),
@@ -687,13 +717,14 @@ struct BlockRow: View, Equatable {
                 onOpenLink: editor.onOpenLink,
                 onCompletionTriggerChange: editor.onCompletionTriggerChange,
                 completionActive: editor.completionActive,
-                consumeInitialCursor: editor.consumeInitialCursor
+                consumeInitialCursor: editor.consumeInitialCursor,
+                hidesLeadingIcon: hidesLeadingIcon
             )
             .foregroundStyle(usesMutedForeground ? theme.mutedForeground : theme.foreground)
             .strikethrough(strikethrough)
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            if String(block.text.characters).isEmpty {
+            if String(readOnlyText.characters).isEmpty {
                 Text(" ")
                     .font(font)
                     .lineSpacing(lineSpacing)
@@ -712,7 +743,7 @@ struct BlockRow: View, Equatable {
                     })
             } else {
                 decoratedText(
-                    block.text,
+                    readOnlyText,
                     baseFont: font,
                     boldFont: theme.body(size: fontSize, weight: .semibold),
                     documentLookups: documentLookups,

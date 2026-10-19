@@ -17,7 +17,7 @@ enum LinkIcons {
     static let symbolName = "doc.text"
     /// How far below the text baseline the symbol's image extends, as a
     /// fraction of its height. UIImage reports this; NSImage doesn't.
-    static let macSymbolBaselineFraction: CGFloat = 0.17
+    static let macSymbolBaselineFraction: CGFloat = 0.2
 
     /// Start offsets of the page links that get an icon: every page link
     /// whose label doesn't already lead with an emoji.
