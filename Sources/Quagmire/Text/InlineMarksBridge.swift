@@ -138,6 +138,9 @@ enum InlineMarksBridge {
             }
             result.append(NSAttributedString(string: plain, attributes: attrs))
         }
+        if !LinkIcons.iconStarts(in: result).isEmpty {
+            LinkIcons.applySpacing(to: result, advance: LinkIcons.advance(baseFontSize: baseFontSize, baseBold: baseBold, theme: theme))
+        }
         return result
     }
 

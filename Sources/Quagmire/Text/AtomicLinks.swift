@@ -80,7 +80,7 @@ enum AtomicLinks {
         return NSRange(location: start, length: end - start)
     }
 
-    private static func atomicLink(at index: Int, in storage: NSAttributedString) -> NSObject? {
+    static func atomicLink(at index: Int, in storage: NSAttributedString) -> NSObject? {
         let value = storage.attribute(.link, at: index, effectiveRange: nil)
         let url: URL?
         if let value = value as? URL {

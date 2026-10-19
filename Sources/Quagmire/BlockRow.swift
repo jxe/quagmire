@@ -940,7 +940,7 @@ func isExternalLinkURL(_ url: URL) -> Bool {
 }
 
 @MainActor
-private func decoratedText(
+func decoratedText(
     _ source: AttributedString,
     baseFont: Font,
     boldFont: Font,
@@ -1000,8 +1000,9 @@ private func decoratedText(
             attributed.foregroundColor = theme.foreground
         }
 
-        if let url = link, !continuesLink,
-           let lookup = documentLookups[url.absoluteString] {
+        // Every page link, as the live editor draws them (`LinkIcons`).
+        if let url = link, !continuesLink, !isExternalLinkURL(url) {
+            let lookup = documentLookups[url.absoluteString] ?? .pending
             output = Text("\(output)\(documentLinkInlineIcon(displayText: displayText, lookup: lookup, theme: theme))")
         }
 

@@ -510,7 +510,9 @@ struct MacBlockTextEditor: NSViewRepresentable {
         view.textStorage?.setAttributedString(ns)
     }
 
-    private func applyTypingAttributes(to view: NSTextView) {
+    private func applyTypingAttributes(to view: ContainedTextView) {
+        view.linkIconAdvance = LinkIcons.advance(baseFontSize: fontSize, baseBold: bold, theme: theme)
+        view.linkIconImage = LinkIcons.image(theme: theme)
         // NB: don't write `view.font =` here. NSTextView's font setter applies across the
         // entire text storage, which would stomp the per-range bold/italic font traits
         // that `InlineMarksBridge.toggleMark` writes. The base font is already applied per-
@@ -1115,8 +1117,63 @@ final class ContainedTextView: NSTextView {
     }
 
     override func didChangeText() {
+        refreshLinkIconSpacing()
         super.didChangeText()
         invalidateIntrinsicContentSize()
+    }
+
+    // MARK: Page-link icons
+
+    /// Set from the row's typography; see `LinkIcons`.
+    var linkIconAdvance: CGFloat = 0
+    var linkIconImage: NSImage?
+
+    /// Re-reserve the icon gaps after an edit moved, made or removed a link start.
+    func refreshLinkIconSpacing() {
+        guard let storage = textStorage, !hasMarkedText() else { return }
+        LinkIcons.applySpacing(to: storage, advance: linkIconAdvance)
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        drawLinkIcons()
+    }
+
+    private func drawLinkIcons() {
+        guard let image = linkIconImage, let storage = textStorage, let window else { return }
+        let text = storage.string as NSString
+        for start in LinkIcons.iconStarts(in: storage) {
+            // A link that wrapped to the start of a line leaves its gap at the
+            // end of the line above, on the character in front of it.
+            guard var origin = characterOrigin(at: start, in: window) else { continue }
+            if start > 0, text.character(at: start - 1) != 0x0A,
+               origin.x < linkIconAdvance - 0.5,
+               let before = characterOrigin(at: start - 1, in: window) {
+                origin = (before.x + before.width, before.baseline, 0)
+            }
+            let rect = LinkIcons.iconRect(
+                linkMinX: origin.x,
+                baseline: origin.baseline,
+                advance: linkIconAdvance,
+                imageSize: image.size,
+                baselineOffsetFromBottom: image.size.height * LinkIcons.macSymbolBaselineFraction
+            )
+            image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
+    }
+
+    /// The leading edge (x), baseline (y) and width of the character at `index`,
+    /// in view coordinates.
+    private func characterOrigin(at index: Int, in window: NSWindow) -> (x: CGFloat, baseline: CGFloat, width: CGFloat)? {
+        var actual = NSRange()
+        let screenRect = firstRect(forCharacterRange: NSRange(location: index, length: 1), actualRange: &actual)
+        guard screenRect.width > 0 || screenRect.height > 0 else { return nil }
+        let delta = baselineDeltaForCharacter(at: index)
+        let windowRect = window.convertFromScreen(screenRect)
+        let rect = convert(windowRect, from: nil)
+        // `baselineDelta` is measured down from the top of the line.
+        return (rect.minX, rect.minY + delta, rect.width)
     }
 
     /// NSTextView's default paste validation rejects pasteboards that carry only
@@ -1469,6 +1526,8 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
     }
 
     private func applyTypingAttributes(to tv: ContainedTextViewIOS) {
+        tv.linkIconAdvance = LinkIcons.advance(baseFontSize: fontSize, baseBold: bold, theme: theme)
+        tv.linkIconImage = LinkIcons.image(theme: theme)
         let font = Self.resolveUIFont(size: fontSize, bold: bold, theme: theme)
         tv.font = font
         tv.typingAttributes = InlineMarksBridge.baseTypingAttributes(baseFontSize: fontSize, baseBold: bold, lineSpacing: lineSpacing, theme: theme)
@@ -1505,6 +1564,7 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            (textView as? ContainedTextViewIOS)?.refreshLinkIconSpacing()
             parent.documentUndoController?.noteEditingActivity()
             textStorageDirty = true
             // IME composition: skip autotransform. Live text remains in textStorage and
@@ -1804,6 +1864,60 @@ final class ContainedTextViewIOS: UITextView {
             _ = becomeFirstResponder()
             applyPendingCursorPositionOrSeekToEnd()
         }
+    }
+
+    // MARK: Page-link icons
+
+    /// Set from the row's typography; see `LinkIcons`.
+    var linkIconAdvance: CGFloat = 0
+    var linkIconImage: UIImage?
+
+    /// Re-reserve the icon gaps after an edit moved, made or removed a link start.
+    func refreshLinkIconSpacing() {
+        guard markedTextRange == nil else { return }
+        LinkIcons.applySpacing(to: textStorage, advance: linkIconAdvance)
+        setNeedsDisplay()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        setNeedsDisplay()
+    }
+
+    override func draw(_ rect: CGRect) {
+        super.draw(rect)
+        guard let image = linkIconImage else { return }
+        let text = textStorage.string as NSString
+        for start in LinkIcons.iconStarts(in: textStorage) {
+            // A link that wrapped to the start of a line leaves its gap at the
+            // end of the line above, on the character in front of it.
+            guard var origin = characterOrigin(at: start) else { continue }
+            if start > 0, text.character(at: start - 1) != 0x0A,
+               origin.x < linkIconAdvance - 0.5,
+               let before = characterOrigin(at: start - 1) {
+                origin = (before.x + before.width, before.baseline, 0)
+            }
+            image.draw(in: LinkIcons.iconRect(
+                linkMinX: origin.x,
+                baseline: origin.baseline,
+                advance: linkIconAdvance,
+                imageSize: image.size,
+                baselineOffsetFromBottom: image.baselineOffsetFromBottom ?? 0
+            ))
+        }
+    }
+
+    /// The leading edge (x), baseline (y) and width of the character at `index`.
+    private func characterOrigin(at index: Int) -> (x: CGFloat, baseline: CGFloat, width: CGFloat)? {
+        guard let from = position(from: beginningOfDocument, offset: index),
+              let to = position(from: from, offset: 1),
+              let range = textRange(from: from, to: to) else { return nil }
+        let rect = firstRect(for: range)
+        guard !rect.isNull, !rect.isInfinite else { return nil }
+        let caret = caretRect(for: from)
+        let font = textStorage.attribute(.font, at: index, effectiveRange: nil) as? UIFont
+            ?? UIFont.systemFont(ofSize: UIFont.systemFontSize)
+        return (rect.minX, caret.minY + font.ascender, rect.width)
     }
 
     override func deleteBackward() {
