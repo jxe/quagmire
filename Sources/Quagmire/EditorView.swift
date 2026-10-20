@@ -39,6 +39,7 @@ public struct EditorView: View {
     var editorAccessories: [EditorAccessory] = []
     var accessoryReveal: EditorAccessoryReveal?
     var unavailableAccessories: ([String]) -> Void = { _ in }
+    var mutedBlock: (Block) -> Bool = { _ in false }
 
     // View-shaped @State that doesn't move into EditorState because it's tied to
     // SwiftUI/UIKit lifecycle (FocusState must live on a View; row-frame cache
@@ -929,7 +930,8 @@ public struct EditorView: View {
             documentLookups: resolveDocumentLookups(for: block, host: host, in: document),
             linkPreviews: relevantLinkPreviews,
             provisionalCaretOpacity: provisionalCaretOpacity,
-            provisionalCaretBlinks: provisionalCaretBlinks
+            provisionalCaretBlinks: provisionalCaretBlinks,
+            isMuted: mutedBlock(block)
         )
         let rowActions = BlockRowActions(
             editor: editing,

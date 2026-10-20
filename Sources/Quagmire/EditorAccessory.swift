@@ -46,6 +46,14 @@ public extension EditorView {
         copy.unavailableAccessories = onUnavailable
         return copy
     }
+
+    /// Fade the rows of blocks the host derived rather than the reader wrote,
+    /// such as generated links. A muted row reads at full strength while it is edited.
+    func mutedBlocks(_ isMuted: @escaping (Block) -> Bool) -> Self {
+        var copy = self
+        copy.mutedBlock = isMuted
+        return copy
+    }
 }
 
 extension EditorView {

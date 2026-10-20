@@ -33,6 +33,9 @@ struct BlockRowModel: Equatable {
     /// typing: steady at this opacity as it nears arming, then blinking.
     var provisionalCaretOpacity: Double = 0
     var provisionalCaretBlinks = false
+    /// The host marks this block as derived rather than written; it reads
+    /// faded until it is edited.
+    var isMuted = false
 }
 
 /// One block in the page editor — content + the full interactive modifier
@@ -247,7 +250,7 @@ struct BlockRow: View, Equatable {
             ) {
                 completionMenuContent()
             }
-            .opacity(reorderSourceOpacity)
+            .opacity(reorderSourceOpacity * (model.isMuted && !isEditing ? 0.5 : 1))
             .contentShape(Rectangle())
             #if os(iOS)
             .iosBlockTouchActions(
