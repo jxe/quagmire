@@ -542,9 +542,9 @@ extension EditorView {
             numberingIndex: nil,
             selectedIDs: [],
             isProvisionalText: true,
-            // Fades in with the slide toward typing and blinks once armed.
+            // Fades in with the slide toward typing and pops big once armed.
             provisionalCaretOpacity: pinchTypeArmed ? 1 : (pinchLock == .none ? Double(pinchTypeProgress) : 0),
-            provisionalCaretBlinks: pinchTypeArmed
+            provisionalCaretArmed: pinchTypeArmed
         )
         .overlay {
             // The lock slide's progress cue: the screen edge beside this

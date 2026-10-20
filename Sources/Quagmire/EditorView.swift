@@ -825,7 +825,7 @@ public struct EditorView: View {
         selectedIDs: Set<BlockID>,
         isProvisionalText: Bool = false,
         provisionalCaretOpacity: Double = 0,
-        provisionalCaretBlinks: Bool = false,
+        provisionalCaretArmed: Bool = false,
         landsPinchCaret: Bool = false,
         isFindMatch: Bool = false,
         isCurrentFindMatch: Bool = false
@@ -937,7 +937,7 @@ public struct EditorView: View {
             documentLookups: resolveDocumentLookups(for: block, host: host, in: document),
             linkPreviews: relevantLinkPreviews,
             provisionalCaretOpacity: provisionalCaretOpacity,
-            provisionalCaretBlinks: provisionalCaretBlinks,
+            provisionalCaretArmed: provisionalCaretArmed,
             landsPinchCaret: landsPinchCaret,
             isMuted: mutedBlock(block)
         )

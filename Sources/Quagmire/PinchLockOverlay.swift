@@ -5,31 +5,22 @@ import SwiftUI
 /// A text caret in an empty provisional row, standing in for the keyboard a
 /// typing pinch will open, and the slide's only cue on that side. Steady
 /// while the slide approaches; once typing arms it pops big, overshooting,
-/// and stays big and blinking until the pinch lets go (`PinchLandingCaret`
-/// then shrinks it into the real caret) or slides back.
+/// and holds there until the pinch lets go (`PinchLandingCaret` then
+/// shrinks it into the real caret) or slides back.
 struct ProvisionalCaret: View {
-    let blinks: Bool
-    /// Blinking starts on the visible beat, so arming never reads as the
-    /// caret vanishing.
-    @State private var blinkStart = Date.now
+    let armed: Bool
 
     var body: some View {
-        TimelineView(.periodic(from: blinkStart, by: 0.5)) { context in
-            let beat = Int(context.date.timeIntervalSince(blinkStart) * 2)
-            let visible = !blinks || beat % 2 == 0
-            PinchCaretShape()
-                .opacity(visible ? 1 : 0)
-        }
-        .scaleEffect(
-            x: blinks ? PinchCaretShape.armedWidthScale : 1,
-            y: blinks ? PinchCaretShape.armedHeightScale : 1
-        )
-        .shadow(color: Color.accentColor.opacity(blinks ? 0.6 : 0), radius: 8)
-        // Underdamped, so arming overshoots: the pop.
-        .animation(.spring(response: 0.3, dampingFraction: 0.42), value: blinks)
-        .onChange(of: blinks) { blinkStart = .now }
-        .transition(.opacity)
-        .allowsHitTesting(false)
+        PinchCaretShape()
+            .scaleEffect(
+                x: armed ? PinchCaretShape.armedWidthScale : 1,
+                y: armed ? PinchCaretShape.armedHeightScale : 1
+            )
+            .shadow(color: Color.accentColor.opacity(armed ? 0.6 : 0), radius: 8)
+            // Underdamped, so arming overshoots: the pop.
+            .animation(.spring(response: 0.3, dampingFraction: 0.42), value: armed)
+            .transition(.opacity)
+            .allowsHitTesting(false)
     }
 }
 

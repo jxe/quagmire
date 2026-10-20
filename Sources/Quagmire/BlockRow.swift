@@ -30,9 +30,9 @@ struct BlockRowModel: Equatable {
     let documentLookups: [String: DocumentLookup]
     let linkPreviews: [URL: LinkPreview]
     /// An empty provisional row shows a caret for a pinch sliding toward
-    /// typing: steady at this opacity as it nears arming, then blinking.
+    /// typing: steady at this opacity as it nears arming, then big once armed.
     var provisionalCaretOpacity: Double = 0
-    var provisionalCaretBlinks = false
+    var provisionalCaretArmed = false
     /// A typing pinch just landed here: its big caret shrinks into the
     /// editor's as the keyboard opens.
     var landsPinchCaret = false
@@ -734,7 +734,7 @@ struct BlockRow: View, Equatable {
                     .accessibilityHidden(true)
                     .overlay(alignment: .leading) {
                         if model.provisionalCaretOpacity > 0 {
-                            ProvisionalCaret(blinks: model.provisionalCaretBlinks)
+                            ProvisionalCaret(armed: model.provisionalCaretArmed)
                                 .opacity(model.provisionalCaretOpacity)
                         }
                     }
