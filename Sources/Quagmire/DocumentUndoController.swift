@@ -80,6 +80,9 @@ public final class DocumentUndoController {
     /// Inserts text through the mounted native editor so its caret, selection,
     /// typing attributes, and ordinary typing checkpoint behavior are retained.
     var insertTextIntoActiveEditor: ((String) -> Bool)?
+    /// Shows text at the mounted native editor's caret as a provisional
+    /// preview that the block doesn't hold; empty text removes it.
+    var previewTextInActiveEditor: ((String) -> Bool)?
 
     public init() {
         self.undoManager = UndoManager()

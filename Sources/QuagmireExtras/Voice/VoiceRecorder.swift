@@ -530,13 +530,25 @@ private final class LiveAudioFileWriter: @unchecked Sendable {
     init?(url: URL, format: AVAudioFormat, logger: Logger?) {
         self.logger = logger
         do {
-            file = try AVAudioFile(
-                forWriting: url,
-                settings: [
+            // An .m4a is compressed for keeping; anything else (a recovery
+            // store's .caf) is 16-bit PCM, like the toolbar recorder writes.
+            let settings: [String: Any] = url.pathExtension == "m4a"
+                ? [
                     AVFormatIDKey: kAudioFormatMPEG4AAC,
                     AVSampleRateKey: format.sampleRate,
                     AVNumberOfChannelsKey: format.channelCount
-                ],
+                ]
+                : [
+                    AVFormatIDKey: kAudioFormatLinearPCM,
+                    AVSampleRateKey: format.sampleRate,
+                    AVNumberOfChannelsKey: format.channelCount,
+                    AVLinearPCMBitDepthKey: 16,
+                    AVLinearPCMIsFloatKey: false,
+                    AVLinearPCMIsBigEndianKey: false
+                ]
+            file = try AVAudioFile(
+                forWriting: url,
+                settings: settings,
                 commonFormat: format.commonFormat,
                 interleaved: format.isInterleaved
             )

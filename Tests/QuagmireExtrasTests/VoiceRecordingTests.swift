@@ -81,6 +81,48 @@ struct VoiceRecordingTests {
     }
 
     @MainActor
+    @Test func liveSessionStreamsDraftsThenDeliversAndEndsTheDraft() async throws {
+        let directory = temporaryDirectory("voice-live-session")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PendingVoiceRecordingStore<String>(directoryURL: directory)
+        var deliveries: [String] = []
+        var drafts: [String] = []
+        let session = VoiceRecordingSession(
+            recorder: StubVoiceRecorder(transcript: "hello there"),
+            recoveryStore: store,
+            recoveryDelivery: { transcript, _ in deliveries.append(transcript) }
+        )
+
+        await session.start(destination: "inbox", onDraft: { drafts.append($0) })
+        #expect(drafts == ["draft words"])
+        #expect(try store.pendingRecordings().map(\.destination) == ["inbox"])
+        await session.stopAndDeliver()
+
+        #expect(deliveries == ["hello there"])
+        #expect(drafts == ["draft words", ""])
+        #expect(try store.pendingRecordings().isEmpty)
+    }
+
+    @MainActor
+    @Test func liveSessionDeliveryFailureKeepsItsAudioForRecovery() async throws {
+        let directory = temporaryDirectory("voice-live-retry")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PendingVoiceRecordingStore<String>(directoryURL: directory)
+        var drafts: [String] = []
+        let session = VoiceRecordingSession(
+            recorder: StubVoiceRecorder(transcript: "hello"),
+            recoveryStore: store,
+            recoveryDelivery: { _, _ in throw StubError.delivery }
+        )
+
+        await session.start(destination: "inbox", onDraft: { drafts.append($0) })
+        await session.stopAndDeliver()
+
+        #expect(session.pendingRecovery?.destination == "inbox")
+        #expect(drafts.last == "")
+    }
+
+    @MainActor
     @Test func deliveryFailurePreservesAudioForRecovery() async throws {
         let directory = temporaryDirectory("voice-retry")
         defer { try? FileManager.default.removeItem(at: directory) }

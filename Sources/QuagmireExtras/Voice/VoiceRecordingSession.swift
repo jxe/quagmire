@@ -23,6 +23,7 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
     private var activeDelivery: VoiceTranscriptDelivery<Destination>?
     private var activeRecording: PendingVoiceRecording<Destination>?
     private var activeLiveAudioURL: URL?
+    private var activeDraftHandler: (@MainActor @Sendable (String) -> Void)?
     private var deferredRecoveryIDs: Set<UUID> = []
 
     public private(set) var isTransitioning = false
@@ -64,9 +65,15 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
         finishInitialization()
     }
 
+    /// Starts a recording for `destination`. With `onDraft`, it is
+    /// transcribed live and `onDraft` receives the transcript so far as it
+    /// grows, then an empty string once the recording ends, delivered or not.
+    /// Either way its audio is written to the recovery store first, so a
+    /// failed transcription can be recovered later.
     public func start(
         destination: Destination,
-        delivery: VoiceTranscriptDelivery<Destination>? = nil
+        delivery: VoiceTranscriptDelivery<Destination>? = nil,
+        onDraft: (@MainActor @Sendable (String) -> Void)? = nil
     ) async {
         guard !isTransitioning, state == .idle else { return }
         isTransitioning = true
@@ -76,14 +83,22 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
             let recording = try recoveryStore.begin(destination: destination)
             activeRecording = recording
             activeDelivery = delivery ?? recoveryDelivery
-            try await recorder.start(recordingAt: recoveryStore.audioURL(for: recording))
+            let audioURL = recoveryStore.audioURL(for: recording)
+            if let onDraft {
+                activeDraftHandler = onDraft
+                try await recorder.startLiveTranscription(savingAudioTo: audioURL, onDraft: onDraft)
+            } else {
+                try await recorder.start(recordingAt: audioURL)
+            }
         } catch {
             recorder.cancel(discardingAudio: true)
             if let activeRecording {
+                try? FileManager.default.removeItem(at: recoveryStore.audioURL(for: activeRecording))
                 try? recoveryStore.remove(activeRecording)
             }
             activeRecording = nil
             activeDelivery = nil
+            endDraft()
             errorMessage = error.localizedDescription
         }
     }
@@ -126,7 +141,10 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
         let recording = activeRecording
         let delivery = activeDelivery ?? recoveryDelivery
         activeDelivery = nil
-        defer { isTransitioning = false }
+        defer {
+            endDraft()
+            isTransitioning = false
+        }
 
         do {
             guard let recording else { throw VoiceRecordingSessionError.missingDestination }
@@ -211,6 +229,7 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
     public func cancel() {
         recorder.cancel(discardingAudio: true)
         discardLiveAudio()
+        endDraft()
         if let activeRecording {
             try? recoveryStore.remove(activeRecording)
         }
@@ -294,8 +313,17 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
         activeLiveAudioURL = nil
     }
 
+    /// Tells the live draft's owner the recording is over, so it can take
+    /// down its preview.
+    private func endDraft() {
+        let handler = activeDraftHandler
+        activeDraftHandler = nil
+        handler?("")
+    }
+
     private func handleUnexpectedStop(_ message: String) {
         discardLiveAudio()
+        endDraft()
         activeRecording = nil
         activeDelivery = nil
         isTransitioning = false

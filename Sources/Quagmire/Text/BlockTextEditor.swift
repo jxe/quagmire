@@ -464,10 +464,16 @@ struct MacBlockTextEditor: NSViewRepresentable {
         }
         documentUndoController?.insertTextIntoActiveEditor = { [weak coordinator = context.coordinator, weak view] text in
             guard let coordinator, let view else { return false }
+            view.clearVoicePreview()
             let insertion = inlineDictationInsertion(text, in: view.string, replacing: view.selectedRange())
             guard !insertion.isEmpty else { return false }
             view.insertText(insertion, replacementRange: view.selectedRange())
             coordinator.commitLiveText(view)
+            return true
+        }
+        documentUndoController?.previewTextInActiveEditor = { [weak view] text in
+            guard let view else { return false }
+            if text.isEmpty { view.clearVoicePreview() } else { view.showVoicePreview(text) }
             return true
         }
         return view
@@ -622,7 +628,9 @@ struct MacBlockTextEditor: NSViewRepresentable {
             // Cmd-K, where the frozen textBinding would otherwise re-write stale
             // textStorage back over the freshly-mutated model.
             if !textStorageDirty { return }
-            let nsAttr = tv.textStorage ?? NSTextStorage()
+            // A voice preview is marked text the block doesn't hold yet.
+            let nsAttr = (tv as? ContainedTextView)?.textStorageExcludingVoicePreview
+                ?? tv.textStorage ?? NSTextStorage()
             let newText = InlineMarksBridge.toModel(nsAttr, baseBold: parent.bold)
             let oldText = parent.text
             let oldPlain = String(oldText.characters)
@@ -889,6 +897,15 @@ struct MacBlockTextEditor: NSViewRepresentable {
 /// keys our coordinator wants to consume.
 final class ContainedTextView: NSTextView {
     weak var coordinator: MacBlockTextEditor.Coordinator?
+    /// Whether the marked text is a live voice transcript; see
+    /// `showVoicePreview(_:)`.
+    var showsVoicePreview = false
+
+    override func resignFirstResponder() -> Bool {
+        // Resigning would commit the preview as typed text.
+        clearVoicePreview()
+        return super.resignFirstResponder()
+    }
 
     // MARK: Block drags from another window
 
@@ -1542,10 +1559,16 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
         }
         documentUndoController?.insertTextIntoActiveEditor = { [weak coordinator = context.coordinator, weak tv] text in
             guard let coordinator, let tv else { return false }
+            tv.clearVoicePreview()
             let insertion = inlineDictationInsertion(text, in: tv.text ?? "", replacing: tv.selectedRange)
             guard !insertion.isEmpty else { return false }
             tv.insertText(insertion)
             coordinator.commitLiveText(tv)
+            return true
+        }
+        documentUndoController?.previewTextInActiveEditor = { [weak tv] text in
+            guard let tv else { return false }
+            if text.isEmpty { tv.clearVoicePreview() } else { tv.showVoicePreview(text) }
             return true
         }
         // Build the keyboard accessory bar and host it on the UITextView. UIKit
@@ -1740,7 +1763,11 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
             cancelCheckpoint()
             // See macOS twin — early return when textStorage hasn't changed.
             if !textStorageDirty { return }
-            let newText = InlineMarksBridge.toModel(textView.textStorage, baseBold: parent.bold)
+            // A voice preview is marked text the block doesn't hold yet.
+            let newText = InlineMarksBridge.toModel(
+                (textView as? ContainedTextViewIOS)?.textStorageExcludingVoicePreview ?? textView.textStorage,
+                baseBold: parent.bold
+            )
             let oldText = parent.text
             let oldPlain = String(oldText.characters)
             // See MacBlockTextEditor.Coordinator.commitLiveText — same teardown race:
@@ -1970,6 +1997,16 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
 /// rather than inserting characters into the row.
 final class ContainedTextViewIOS: UITextView {
     weak var coordinator: IOSBlockTextEditorView.Coordinator?
+    /// Whether the marked text is a live voice transcript; see
+    /// `showVoicePreview(_:)`.
+    var showsVoicePreview = false
+
+    @discardableResult
+    override func resignFirstResponder() -> Bool {
+        // Resigning would commit the preview as typed text.
+        clearVoicePreview()
+        return super.resignFirstResponder()
+    }
     /// The owning EditorView's channel for host-requested selections; attached
     /// while this view is in a window.
     weak var liveSelection: LiveTextSelection?

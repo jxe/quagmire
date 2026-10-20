@@ -44,6 +44,7 @@ extension EditorView {
         editorCommands.canPerformBlockAction = { _ in false }
         editorCommands.activeEditingBlock = { nil }
         editorCommands.insertText = { _, _ in false }
+        editorCommands.previewText = { _, _ in false }
         editorCommands.moveDraggedBlocks = { _, _ in }
     }
 
@@ -237,6 +238,10 @@ extension EditorView {
         editorCommands.activeEditingBlock = { state.editingBlock }
         editorCommands.insertText = { text, target in
             insertExternalText(text, into: target)
+        }
+        editorCommands.previewText = { text, target in
+            guard !readOnly, state.editingBlock == target else { return false }
+            return undoController.previewTextInActiveEditor?(text) == true
         }
         editorCommands.moveDraggedBlocks = { ids, destination in
             Task { @MainActor in
