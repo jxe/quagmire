@@ -162,6 +162,88 @@ struct VoiceRecordingTests {
         #expect(!FileManager.default.fileExists(atPath: directory.path))
     }
 
+    @MainActor
+    @Test func sessionKeepsTranscribedAudio() async throws {
+        let directory = temporaryDirectory("voice-keep")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PendingVoiceRecordingStore<String>(directoryURL: directory.appending(path: "pending"))
+        let kept = TranscribedVoiceRecordingStore(directoryURL: directory.appending(path: "kept"))
+        let session = VoiceRecordingSession(
+            recorder: StubVoiceRecorder(transcript: " hello there "),
+            recoveryStore: store,
+            transcribedStore: kept,
+            pageKey: { "page-\($0)" },
+            recoveryDelivery: { _, _ in }
+        )
+
+        await session.start(destination: "inbox")
+        await session.stopAndDeliver()
+        _ = await session.startLiveTranscription { _ in }
+        _ = await session.stopAndReturnTranscript(pageKey: "pinch-page")
+
+        #expect(try store.pendingRecordings().isEmpty)
+        let transcripts = Set(kept.recordings().map(\.transcript))
+        #expect(transcripts == ["hello there"])
+        #expect(Set(kept.recordings().map(\.pageKey)) == ["page-inbox", "pinch-page"])
+        #expect(kept.recordings().count == 2)
+        for recording in kept.recordings() {
+            #expect(FileManager.default.fileExists(atPath: kept.audioURL(for: recording).path))
+        }
+    }
+
+    @MainActor
+    @Test func keptRecordingsMatchTheirTranscriptsInOrderOnTheirPage() throws {
+        let directory = temporaryDirectory("voice-match")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let kept = TranscribedVoiceRecordingStore(directoryURL: directory)
+        func keep(_ transcript: String, on page: String?) throws {
+            let url = try kept.newAudioURL(fileExtension: "caf")
+            try Data([1]).write(to: url)
+            try kept.keep(audioAt: url, transcript: transcript, pageKey: page)
+        }
+        try keep("Um so I think we should, uh, ship the release on Friday.", on: "page")
+        try keep("Buy eggs and milk today.", on: "page")
+        try keep(
+            "First we planned the trip to the coast. Then we booked a small cabin near the water for a week.",
+            on: "page"
+        )
+        try keep("Call the plumber about the leak.", on: nil)
+
+        #expect(kept.recording(matching: "I think we should ship the release on Friday.", onPage: "page") != nil)
+        #expect(kept.recording(matching: "I think we should ship the release on Friday.", onPage: "other") == nil)
+        #expect(kept.recording(matching: "Friday on release the ship should we think I", onPage: "page") == nil)
+        #expect(kept.recording(matching: "ship the release", onPage: "page") == nil)
+        #expect(kept.recording(matching: "Buy milk today", onPage: "page") != nil)
+        #expect(kept.recording(matching: "Then we booked a small cabin near the water for a week.", onPage: "page") != nil)
+        #expect(kept.recording(matching: "We should never ship anything at all on a weekend", onPage: "page") == nil)
+        #expect(kept.recording(matching: "Call the plumber about the leak.", onPage: "page") == nil)
+        #expect(kept.recording(matching: "   ", onPage: "page") == nil)
+    }
+
+    @MainActor
+    @Test func pruningDropsOldRecordingsThenOldestOverTheSizeLimit() throws {
+        let directory = temporaryDirectory("voice-prune")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let kept = TranscribedVoiceRecordingStore(
+            directoryURL: directory,
+            maximumAge: 100,
+            maximumBytes: 25
+        )
+        func keep(_ transcript: String, at seconds: TimeInterval) throws {
+            let url = try kept.newAudioURL(fileExtension: "caf")
+            try Data(repeating: 1, count: 10).write(to: url)
+            try kept.keep(audioAt: url, transcript: transcript, pageKey: "page", now: Date(timeIntervalSince1970: seconds))
+        }
+        try keep("ancient", at: 0)
+        try keep("older", at: 150)
+        try keep("old", at: 160)
+        try keep("new", at: 170)
+
+        #expect(kept.recordings().map(\.transcript) == ["new", "old"])
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        #expect(leftovers.count == 4)
+    }
+
     private func temporaryDirectory(_ name: String) -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("quagmire-\(name)-\(UUID().uuidString)", isDirectory: true)
@@ -191,8 +273,10 @@ private final class StubVoiceRecorder: VoiceRecording {
     }
 
     func startLiveTranscription(
+        savingAudioTo audioURL: URL?,
         onDraft: @escaping @MainActor @Sendable (String) -> Void
     ) async throws {
+        if let audioURL { try Data([3]).write(to: audioURL) }
         onDraft("draft words")
         state = .recording
     }

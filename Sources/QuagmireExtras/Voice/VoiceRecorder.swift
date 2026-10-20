@@ -16,6 +16,7 @@ protocol VoiceRecording: AnyObject {
     var unexpectedStopHandler: ((String) -> Void)? { get set }
     func start(recordingAt url: URL) async throws
     func startLiveTranscription(
+        savingAudioTo audioURL: URL?,
         onDraft: @escaping @MainActor @Sendable (String) -> Void
     ) async throws
     func stopAndTranscribe() async throws -> String
@@ -92,7 +93,11 @@ public final class VoiceRecorder: VoiceRecording {
         logger?.log("recording started file=\(url.lastPathComponent, privacy: .public)")
     }
 
+    /// Starts live transcription. With an `audioURL`, the audio the
+    /// transcriber hears is also written there as AAC, so the caller can keep
+    /// it; a failure to write never interrupts the transcription.
     public func startLiveTranscription(
+        savingAudioTo audioURL: URL? = nil,
         onDraft: @escaping @MainActor @Sendable (String) -> Void
     ) async throws {
         guard state == .idle else { return }
@@ -118,6 +123,9 @@ public final class VoiceRecorder: VoiceRecording {
         try await analyzer.prepareToAnalyze(in: analyzerFormat)
         let capture = LiveAudioCapture()
         let (inputSequence, inputContinuation) = AsyncStream<AnalyzerInput>.makeStream()
+        let audioWriter = audioURL.flatMap { url in
+            LiveAudioFileWriter(url: url, format: analyzerFormat, logger: logger)
+        }
 
         let resultTask = Task<String, Error> { @MainActor in
             var finalized: [String] = []
@@ -153,14 +161,17 @@ public final class VoiceRecorder: VoiceRecording {
                     using: converter
                 )
                 if converted.frameLength > 0 {
+                    audioWriter?.write(converted)
                     inputContinuation.yield(AnalyzerInput(buffer: converted))
                 }
             }
             // A drained microphone stream is not a drained sample-rate converter.
             // Deliver its buffered tail before ending the analyzer input.
             try Self.finishConversion(using: converter) { buffer in
+                audioWriter?.write(buffer)
                 inputContinuation.yield(AnalyzerInput(buffer: buffer))
             }
+            audioWriter?.close()
         }
 
         do {
@@ -510,8 +521,49 @@ public final class VoiceRecorder: VoiceRecording {
     }
 }
 
-/// Captures the short-lived pinch microphone stream. The durable toolbar path
-/// deliberately uses AVAudioRecorder instead; pinch audio is never written.
+/// Writes the live stream to a compressed file for keeping after it is
+/// transcribed. Only the conversion task touches it.
+private final class LiveAudioFileWriter: @unchecked Sendable {
+    private var file: AVAudioFile?
+    private let logger: Logger?
+
+    init?(url: URL, format: AVAudioFormat, logger: Logger?) {
+        self.logger = logger
+        do {
+            file = try AVAudioFile(
+                forWriting: url,
+                settings: [
+                    AVFormatIDKey: kAudioFormatMPEG4AAC,
+                    AVSampleRateKey: format.sampleRate,
+                    AVNumberOfChannelsKey: format.channelCount
+                ],
+                commonFormat: format.commonFormat,
+                interleaved: format.isInterleaved
+            )
+        } catch {
+            logger?.error("live audio file could not be created: \(String(describing: error), privacy: .public)")
+            return nil
+        }
+    }
+
+    func write(_ buffer: AVAudioPCMBuffer) {
+        guard let file else { return }
+        do {
+            try file.write(from: buffer)
+        } catch {
+            logger?.error("live audio write failed: \(String(describing: error), privacy: .public)")
+            close()
+        }
+    }
+
+    func close() {
+        file?.close()
+        file = nil
+    }
+}
+
+/// Captures the pinch microphone stream. The toolbar path uses
+/// AVAudioRecorder instead, so its audio survives a crash for recovery.
 private final class LiveAudioCapture: @unchecked Sendable {
     let buffers: AsyncStream<TransferableAudioBuffer>
     let audioFormat: AVAudioFormat

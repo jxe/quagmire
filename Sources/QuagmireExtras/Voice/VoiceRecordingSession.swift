@@ -18,8 +18,11 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
     private let recorder: any VoiceRecording
     private let recoveryStore: PendingVoiceRecordingStore<Destination>
     private let recoveryDelivery: VoiceTranscriptDelivery<Destination>
+    private let transcribedStore: TranscribedVoiceRecordingStore?
+    private let pageKey: (Destination) -> String?
     private var activeDelivery: VoiceTranscriptDelivery<Destination>?
     private var activeRecording: PendingVoiceRecording<Destination>?
+    private var activeLiveAudioURL: URL?
     private var deferredRecoveryIDs: Set<UUID> = []
 
     public private(set) var isTransitioning = false
@@ -28,13 +31,20 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
 
     public var state: VoiceRecordingState { recorder.state }
 
+    /// With a `transcribedStore`, audio that transcribed successfully is kept
+    /// there instead of being deleted, under the page `pageKey` names for its
+    /// destination.
     public init(
         recoveryStore: PendingVoiceRecordingStore<Destination>,
+        transcribedStore: TranscribedVoiceRecordingStore? = nil,
+        pageKey: @escaping (Destination) -> String? = { _ in nil },
         loggingSubsystem: String? = nil,
         recoveryDelivery: @escaping VoiceTranscriptDelivery<Destination>
     ) {
         self.recorder = VoiceRecorder(loggingSubsystem: loggingSubsystem)
         self.recoveryStore = recoveryStore
+        self.transcribedStore = transcribedStore
+        self.pageKey = pageKey
         self.recoveryDelivery = recoveryDelivery
         finishInitialization()
     }
@@ -42,10 +52,14 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
     init(
         recorder: any VoiceRecording,
         recoveryStore: PendingVoiceRecordingStore<Destination>,
+        transcribedStore: TranscribedVoiceRecordingStore? = nil,
+        pageKey: @escaping (Destination) -> String? = { _ in nil },
         recoveryDelivery: @escaping VoiceTranscriptDelivery<Destination>
     ) {
         self.recorder = recorder
         self.recoveryStore = recoveryStore
+        self.transcribedStore = transcribedStore
+        self.pageKey = pageKey
         self.recoveryDelivery = recoveryDelivery
         finishInitialization()
     }
@@ -76,7 +90,8 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
 
     /// Starts the pinch-only live transcription path. Unlike ordinary toolbar
     /// recording, this creates no recovery record and has no destination: the
-    /// caller owns the provisional UI and final insertion target.
+    /// caller owns the provisional UI and final insertion target. Its audio is
+    /// written only when there is a `transcribedStore` to keep it in.
     @discardableResult
     public func startLiveTranscription(
         onDraft: @escaping @MainActor @Sendable (String) -> Void
@@ -88,11 +103,16 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
         do {
             activeRecording = nil
             activeDelivery = nil
-            try await recorder.startLiveTranscription(onDraft: onDraft)
+            activeLiveAudioURL = try? transcribedStore?.newAudioURL(fileExtension: "m4a")
+            try await recorder.startLiveTranscription(
+                savingAudioTo: activeLiveAudioURL,
+                onDraft: onDraft
+            )
             errorMessage = nil
             return state == .recording
         } catch {
             recorder.cancel(discardingAudio: true)
+            discardLiveAudio()
             activeRecording = nil
             activeDelivery = nil
             errorMessage = error.localizedDescription
@@ -112,6 +132,11 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
             guard let recording else { throw VoiceRecordingSessionError.missingDestination }
             let transcript = try await recorder.stopAndTranscribe()
             try await deliver(transcript, recording.destination, using: delivery)
+            keepAudio(
+                at: recoveryStore.audioURL(for: recording),
+                transcript: transcript,
+                pageKey: pageKey(recording.destination)
+            )
             try recoveryStore.remove(recording)
             activeRecording = nil
         } catch {
@@ -133,7 +158,8 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
     /// Silence is an ordinary result: its empty audio is discarded and no
     /// alert is produced. Retryable recorder failures still preserve the
     /// pending audio and populate `errorMessage` for the host to surface.
-    public func stopAndReturnTranscript() async -> VoiceRecordingTranscriptionResult {
+    /// `pageKey` names the page the caller inserts into, for keeping the audio.
+    public func stopAndReturnTranscript(pageKey: String? = nil) async -> VoiceRecordingTranscriptionResult {
         guard !isTransitioning, state == .recording else { return .failed }
         isTransitioning = true
         let recording = activeRecording
@@ -144,12 +170,23 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
             let rawTranscript = try await recorder.stopAndTranscribe()
             let transcript = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !transcript.isEmpty else { throw VoiceRecordingSessionError.emptyTranscript }
-            if let recording { try recoveryStore.remove(recording) }
+            if let recording {
+                keepAudio(
+                    at: recoveryStore.audioURL(for: recording),
+                    transcript: transcript,
+                    pageKey: pageKey ?? self.pageKey(recording.destination)
+                )
+                try recoveryStore.remove(recording)
+            } else if let activeLiveAudioURL {
+                keepAudio(at: activeLiveAudioURL, transcript: transcript, pageKey: pageKey)
+            }
+            activeLiveAudioURL = nil
             activeRecording = nil
             errorMessage = nil
             return .transcript(transcript)
         } catch {
             recorder.cancel(discardingAudio: false)
+            discardLiveAudio()
             let disposition = VoiceRecordingFailureDisposition(error: error)
             if disposition == .discard, let recording {
                 try? recoveryStore.remove(recording)
@@ -173,6 +210,7 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
 
     public func cancel() {
         recorder.cancel(discardingAudio: true)
+        discardLiveAudio()
         if let activeRecording {
             try? recoveryStore.remove(activeRecording)
         }
@@ -192,6 +230,11 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
                 at: recoveryStore.audioURL(for: recording)
             )
             try await deliver(transcript, recording.destination, using: recoveryDelivery)
+            keepAudio(
+                at: recoveryStore.audioURL(for: recording),
+                transcript: transcript,
+                pageKey: pageKey(recording.destination)
+            )
             try recoveryStore.remove(recording)
         } catch {
             if VoiceRecordingFailureDisposition(error: error) == .discard {
@@ -232,7 +275,27 @@ public final class VoiceRecordingSession<Destination: Codable & Sendable> {
         try await delivery(transcript, destination)
     }
 
+    /// Moves successfully transcribed audio into the transcribed store, if
+    /// there is one. Keeping is best effort: the transcript is already
+    /// delivered, so a failure here only loses the replay.
+    private func keepAudio(at url: URL, transcript: String, pageKey: String?) {
+        guard let transcribedStore else { return }
+        _ = try? transcribedStore.keep(
+            audioAt: url,
+            transcript: transcript.trimmingCharacters(in: .whitespacesAndNewlines),
+            pageKey: pageKey
+        )
+    }
+
+    private func discardLiveAudio() {
+        if let activeLiveAudioURL {
+            try? FileManager.default.removeItem(at: activeLiveAudioURL)
+        }
+        activeLiveAudioURL = nil
+    }
+
     private func handleUnexpectedStop(_ message: String) {
+        discardLiveAudio()
         activeRecording = nil
         activeDelivery = nil
         isTransitioning = false
