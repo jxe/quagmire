@@ -836,7 +836,10 @@ public struct EditorView: View {
         // AppKit can route navigation keys to the hosting view while SwiftUI's
         // page FocusState remains false after NSTextView relinquishes focus.
         // Use the native editor boundary for both highlight and key ownership.
-        let isSelected = macContentHasFocus && state.editingBlock == nil && selectedIDs.contains(block.id)
+        // Opening the icon picker moves the cursor to its row only to end text
+        // editing; the row is not highlighted while the picker opens.
+        let isSelected = macContentHasFocus && state.editingBlock == nil && iconPickerBlockID == nil
+            && selectedIDs.contains(block.id)
         #endif
         #if os(iOS)
         // Treat the just-transitioned-away block as still editing for one runloop
