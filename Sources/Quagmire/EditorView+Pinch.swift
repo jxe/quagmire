@@ -537,13 +537,15 @@ extension EditorView {
         )
         .overlay {
             // The slide's progress cue: the screen edge beside this row
-            // lights toward the side being slid to.
-            if pinchCrossedInsertThreshold && pinchLock != .held {
+            // lights toward the side being slid to. Once the lock arms, its
+            // red bar stays lit until the insert finishes, as the recording
+            // cue.
+            if pinchCrossedInsertThreshold || pinchLock != .none {
                 PinchEdgeGlow(
                     typeProgress: pinchLock == .none ? pinchTypeProgress : 0,
                     typeArmed: pinchTypeArmed,
                     lockProgress: pinchLockProgress,
-                    lockArmed: pinchLock == .armed
+                    lockArmed: pinchLock != .none
                 )
                 .padding(.leading, -layoutCache.contentOriginX)
                 .padding(.trailing, -max(0, pageWidth - layoutCache.contentOriginX - layoutCache.contentWidth))

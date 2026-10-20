@@ -67,27 +67,26 @@ struct PinchEdgeGlow: View {
     }
 }
 
-/// A pulsing red dot and elapsed time beside the draft row, from the moment
-/// the recorder starts until the insert commits.
+/// Elapsed time beside the draft row, from the moment the recorder starts
+/// until the insert commits. It floats by the lock's red edge bar with no
+/// background of its own; a halo in the page's colour keeps it legible over
+/// whatever is behind it.
 struct PinchRecordingIndicator: View {
     let since: Date
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "circle.fill")
-                .font(.system(size: 8))
-                .foregroundStyle(.red)
-                .symbolEffect(.pulse, options: .repeating)
-            Text(timerInterval: since...Date.distantFuture, countsDown: false)
-                .font(.footnote.weight(.medium).monospacedDigit())
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 34)
-        .glassEffect(.regular, in: Capsule())
-        .transition(.scale(scale: 0.6).combined(with: .opacity))
-        .accessibilityHidden(true)
-        .allowsHitTesting(false)
+        let halo: Color = colorScheme == .dark ? .black : .white
+        Text(timerInterval: since...Date.distantFuture, countsDown: false)
+            .font(.footnote.weight(.semibold).monospacedDigit())
+            .foregroundStyle(.primary)
+            .shadow(color: halo, radius: 1)
+            .shadow(color: halo, radius: 3)
+            .shadow(color: halo.opacity(0.6), radius: 6)
+            .padding(.trailing, 6)
+            .transition(.opacity)
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
     }
 }
 
