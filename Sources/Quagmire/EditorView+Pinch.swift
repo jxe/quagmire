@@ -438,6 +438,17 @@ extension EditorView {
         } else {
             cancelPinchDictationIfNeeded()
             pinchDictationDraft = nil
+            if typing { landPinchCaret(on: newBlock.id) }
+        }
+    }
+
+    /// Hand a typing pinch's big caret to the new row, where it shrinks as
+    /// the keyboard opens.
+    private func landPinchCaret(on blockID: BlockID) {
+        pinchLandingCaretBlock = blockID
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(450))
+            if pinchLandingCaretBlock == blockID { pinchLandingCaretBlock = nil }
         }
     }
 

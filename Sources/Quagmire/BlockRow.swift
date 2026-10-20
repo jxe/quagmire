@@ -33,6 +33,9 @@ struct BlockRowModel: Equatable {
     /// typing: steady at this opacity as it nears arming, then blinking.
     var provisionalCaretOpacity: Double = 0
     var provisionalCaretBlinks = false
+    /// A typing pinch just landed here: its big caret shrinks into the
+    /// editor's as the keyboard opens.
+    var landsPinchCaret = false
     /// The host marks this block as derived rather than written; it reads
     /// faded until it is edited.
     var isMuted = false
@@ -716,6 +719,11 @@ struct BlockRow: View, Equatable {
             )
             .foregroundStyle(usesMutedForeground ? theme.mutedForeground : theme.foreground)
             .strikethrough(strikethrough)
+            .overlay(alignment: .leading) {
+                if model.landsPinchCaret {
+                    PinchLandingCaret()
+                }
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             if String(readOnlyText.characters).isEmpty {

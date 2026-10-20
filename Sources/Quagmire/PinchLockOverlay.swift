@@ -4,61 +4,67 @@ import SwiftUI
 
 /// A text caret in an empty provisional row, standing in for the keyboard a
 /// typing pinch will open, and the slide's only cue on that side. Steady
-/// while the slide approaches; once typing arms it pops, swelling well past
-/// its size and springing back, then blinks.
+/// while the slide approaches; once typing arms it pops big, overshooting,
+/// and stays big and blinking until the pinch lets go (`PinchLandingCaret`
+/// then shrinks it into the real caret) or slides back.
 struct ProvisionalCaret: View {
     let blinks: Bool
     /// Blinking starts on the visible beat, so arming never reads as the
     /// caret vanishing.
     @State private var blinkStart = Date.now
-    @State private var pops = 0
 
     var body: some View {
         TimelineView(.periodic(from: blinkStart, by: 0.5)) { context in
             let beat = Int(context.date.timeIntervalSince(blinkStart) * 2)
             let visible = !blinks || beat % 2 == 0
-            RoundedRectangle(cornerRadius: 1)
-                .fill(Color.accentColor)
-                .frame(width: 2)
-                .padding(.vertical, 2)
+            PinchCaretShape()
                 .opacity(visible ? 1 : 0)
         }
-        .keyframeAnimator(initialValue: CaretPop(), trigger: pops) { caret, pop in
-            caret
-                .scaleEffect(x: pop.width, y: pop.height, anchor: .center)
-                .shadow(color: Color.accentColor.opacity(pop.glow), radius: 6)
-        } keyframes: { _ in
-            KeyframeTrack(\.width) {
-                SpringKeyframe(4, duration: 0.12, spring: .snappy)
-                SpringKeyframe(1, duration: 0.45, spring: .bouncy(extraBounce: 0.2))
-            }
-            KeyframeTrack(\.height) {
-                SpringKeyframe(1.9, duration: 0.12, spring: .snappy)
-                SpringKeyframe(1, duration: 0.45, spring: .bouncy(extraBounce: 0.2))
-            }
-            KeyframeTrack(\.glow) {
-                LinearKeyframe(0.9, duration: 0.1)
-                LinearKeyframe(0, duration: 0.5)
-            }
-        }
-        .onChange(of: blinks) {
-            blinkStart = .now
-            // Only arming pops; disarming just stops the blink.
-            if blinks { pops += 1 }
-        }
-        .onAppear {
-            // A fast slide can mount the caret already armed.
-            if blinks { pops += 1 }
-        }
+        .scaleEffect(
+            x: blinks ? PinchCaretShape.armedWidthScale : 1,
+            y: blinks ? PinchCaretShape.armedHeightScale : 1
+        )
+        .shadow(color: Color.accentColor.opacity(blinks ? 0.6 : 0), radius: 8)
+        // Underdamped, so arming overshoots: the pop.
+        .animation(.spring(response: 0.3, dampingFraction: 0.42), value: blinks)
+        .onChange(of: blinks) { blinkStart = .now }
         .transition(.opacity)
         .allowsHitTesting(false)
     }
 }
 
-private struct CaretPop {
-    var width: CGFloat = 1
-    var height: CGFloat = 1
-    var glow: Double = 0
+/// The armed caret again, over the new row's editor once a typing pinch
+/// lets go, shrinking into the real caret while the keyboard rises.
+struct PinchLandingCaret: View {
+    @State private var landed = false
+
+    var body: some View {
+        PinchCaretShape()
+            .scaleEffect(
+                x: landed ? 1 : PinchCaretShape.armedWidthScale,
+                y: landed ? 1 : PinchCaretShape.armedHeightScale
+            )
+            .shadow(color: Color.accentColor.opacity(landed ? 0 : 0.6), radius: 8)
+            .opacity(landed ? 0 : 1)
+            .onAppear {
+                // About the keyboard's own rise.
+                withAnimation(.easeInOut(duration: 0.35)) { landed = true }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+struct PinchCaretShape: View {
+    static let armedWidthScale: CGFloat = 5
+    static let armedHeightScale: CGFloat = 2.2
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 1)
+            .fill(Color.accentColor)
+            .frame(width: 2)
+            .padding(.vertical, 2)
+    }
 }
 
 /// A red bar on the trailing screen edge beside the pinch's draft row as an

@@ -151,6 +151,8 @@ public struct EditorView: View {
     /// eventual row's exact typography and wrapping while keeping partial
     /// recognition out of persistence and undo.
     @State var pinchDictationDraft: PinchDictationDraft?
+    /// The block a typing pinch just inserted, while its caret lands.
+    @State var pinchLandingCaretBlock: BlockID?
     @State var scrollMetrics = PageScrollMetrics()
     @State var scrollPosition = ScrollPosition()
     @State var findPresented = false
@@ -502,6 +504,7 @@ public struct EditorView: View {
                             depth: row.depth,
                             numberingIndex: numbering[id],
                             selectedIDs: selectedIDs,
+                            landsPinchCaret: pinchLandingCaretBlock == id,
                             isFindMatch: findMatchBlockIDs.contains(id),
                             isCurrentFindMatch: selectedFindMatch?.blockID == id
                         )
@@ -823,6 +826,7 @@ public struct EditorView: View {
         isProvisionalText: Bool = false,
         provisionalCaretOpacity: Double = 0,
         provisionalCaretBlinks: Bool = false,
+        landsPinchCaret: Bool = false,
         isFindMatch: Bool = false,
         isCurrentFindMatch: Bool = false
     ) -> some View {
@@ -934,6 +938,7 @@ public struct EditorView: View {
             linkPreviews: relevantLinkPreviews,
             provisionalCaretOpacity: provisionalCaretOpacity,
             provisionalCaretBlinks: provisionalCaretBlinks,
+            landsPinchCaret: landsPinchCaret,
             isMuted: mutedBlock(block)
         )
         let rowActions = BlockRowActions(
