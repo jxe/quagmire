@@ -3,13 +3,15 @@ import SwiftUI
 // MARK: - Pinch lock (iOS)
 
 /// A text caret in an empty provisional row, standing in for the keyboard a
-/// typing pinch will open. Steady while the slide approaches, blinking once
-/// typing is armed.
+/// typing pinch will open, and the slide's only cue on that side. Steady
+/// while the slide approaches; once typing arms it pops, swelling well past
+/// its size and springing back, then blinks.
 struct ProvisionalCaret: View {
     let blinks: Bool
     /// Blinking starts on the visible beat, so arming never reads as the
     /// caret vanishing.
     @State private var blinkStart = Date.now
+    @State private var pops = 0
 
     var body: some View {
         TimelineView(.periodic(from: blinkStart, by: 0.5)) { context in
@@ -21,26 +23,55 @@ struct ProvisionalCaret: View {
                 .padding(.vertical, 2)
                 .opacity(visible ? 1 : 0)
         }
-        .onChange(of: blinks) { blinkStart = .now }
+        .keyframeAnimator(initialValue: CaretPop(), trigger: pops) { caret, pop in
+            caret
+                .scaleEffect(x: pop.width, y: pop.height, anchor: .center)
+                .shadow(color: Color.accentColor.opacity(pop.glow), radius: 6)
+        } keyframes: { _ in
+            KeyframeTrack(\.width) {
+                SpringKeyframe(4, duration: 0.12, spring: .snappy)
+                SpringKeyframe(1, duration: 0.45, spring: .bouncy(extraBounce: 0.2))
+            }
+            KeyframeTrack(\.height) {
+                SpringKeyframe(1.9, duration: 0.12, spring: .snappy)
+                SpringKeyframe(1, duration: 0.45, spring: .bouncy(extraBounce: 0.2))
+            }
+            KeyframeTrack(\.glow) {
+                LinearKeyframe(0.9, duration: 0.1)
+                LinearKeyframe(0, duration: 0.5)
+            }
+        }
+        .onChange(of: blinks) {
+            blinkStart = .now
+            // Only arming pops; disarming just stops the blink.
+            if blinks { pops += 1 }
+        }
+        .onAppear {
+            // A fast slide can mount the caret already armed.
+            if blinks { pops += 1 }
+        }
         .transition(.opacity)
         .allowsHitTesting(false)
     }
 }
 
-/// A bar on the screen edge beside the pinch's draft row, on the side an
-/// open pinch is sliding toward: faint and thin as the slide begins, growing
-/// brighter, then snapping thick and full-colour, with no in-between, once
-/// that side arms. Leading is typing, in the accent colour of the caret it
-/// brings; trailing is the lock, red like the recording it keeps going.
+private struct CaretPop {
+    var width: CGFloat = 1
+    var height: CGFloat = 1
+    var glow: Double = 0
+}
+
+/// A red bar on the trailing screen edge beside the pinch's draft row as an
+/// open pinch slides toward the lock: faint and thin as the slide begins,
+/// growing brighter, then snapping thick and full-colour, with no
+/// in-between, once the lock arms. (Sliding the other way, toward typing,
+/// is cued by the draft row's caret instead.)
 struct PinchEdgeGlow: View {
-    let typeProgress: CGFloat
-    let typeArmed: Bool
     let lockProgress: CGFloat
     let lockArmed: Bool
 
     var body: some View {
         HStack(spacing: 0) {
-            bar(progress: typeProgress, armed: typeArmed, color: .accentColor, leading: true)
             Spacer(minLength: 0)
             bar(progress: lockProgress, armed: lockArmed, color: .red, leading: false)
         }

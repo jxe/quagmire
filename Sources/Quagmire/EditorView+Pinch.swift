@@ -536,14 +536,11 @@ extension EditorView {
             provisionalCaretBlinks: pinchTypeArmed
         )
         .overlay {
-            // The slide's progress cue: the screen edge beside this row
-            // lights toward the side being slid to. Once the lock arms, its
-            // red bar stays lit until the insert finishes, as the recording
-            // cue.
+            // The lock slide's progress cue: the screen edge beside this
+            // row lights red. Once the lock arms, the bar stays lit until the
+            // insert finishes, as the recording cue.
             if pinchCrossedInsertThreshold || pinchLock != .none {
                 PinchEdgeGlow(
-                    typeProgress: pinchLock == .none ? pinchTypeProgress : 0,
-                    typeArmed: pinchTypeArmed,
                     lockProgress: pinchLockProgress,
                     lockArmed: pinchLock != .none
                 )
