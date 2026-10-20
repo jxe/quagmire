@@ -5,9 +5,17 @@ set -eu
 quagmire_script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 quagmire_package_dir=$(dirname -- "$quagmire_script_dir")
 quagmire_derived_root=${QUAGMIRE_DERIVED_DATA_ROOT:-${TMPDIR:-/tmp}/quagmire-verify}
+# Builds are incremental, reusing the last run's products, unless
+# QUAGMIRE_VERIFY_CLEAN=1 asks for clean ones.
+quagmire_build_action=build
+if [ "${QUAGMIRE_VERIFY_CLEAN:-}" = "1" ]; then
+    quagmire_build_action="clean build"
+fi
 
 echo "Running Quagmire package tests"
-swift package --package-path "$quagmire_package_dir" clean
+if [ "${QUAGMIRE_VERIFY_CLEAN:-}" = "1" ]; then
+    swift package --package-path "$quagmire_package_dir" clean
+fi
 swift test --package-path "$quagmire_package_dir"
 
 echo "Building Quagmire for macOS"
@@ -18,7 +26,7 @@ echo "Building Quagmire for macOS"
         -destination 'generic/platform=macOS' \
         -derivedDataPath "$quagmire_derived_root/macos" \
         CODE_SIGNING_ALLOWED=NO \
-        clean build
+        $quagmire_build_action
 )
 
 echo "Building QuagmireExtras for macOS"
@@ -29,7 +37,7 @@ echo "Building QuagmireExtras for macOS"
         -destination 'generic/platform=macOS' \
         -derivedDataPath "$quagmire_derived_root/extras-macos" \
         CODE_SIGNING_ALLOWED=NO \
-        clean build
+        $quagmire_build_action
 )
 
 echo "Building Quagmire for iOS Simulator"
@@ -40,7 +48,7 @@ echo "Building Quagmire for iOS Simulator"
         -destination 'generic/platform=iOS Simulator' \
         -derivedDataPath "$quagmire_derived_root/ios-simulator" \
         CODE_SIGNING_ALLOWED=NO \
-        clean build
+        $quagmire_build_action
 )
 
 echo "Building QuagmireExtras for iOS Simulator"
@@ -51,5 +59,5 @@ echo "Building QuagmireExtras for iOS Simulator"
         -destination 'generic/platform=iOS Simulator' \
         -derivedDataPath "$quagmire_derived_root/extras-ios-simulator" \
         CODE_SIGNING_ALLOWED=NO \
-        clean build
+        $quagmire_build_action
 )
