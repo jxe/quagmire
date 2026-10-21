@@ -93,7 +93,7 @@ private struct RowSurfaceOrder<ID: Hashable>: Equatable {
 
 /// Gap open/close while a reorder hole moves between slots. Critically
 /// damped: layout that overshoots reads as wobbly under a held finger.
-private let reorderGapAnimation = Animation.smooth(duration: 0.26)
+private let reorderGapAnimation = Animation.smooth(duration: 0.32)
 
 func reorderAnchorPreservingOffset(
     sourceEffectiveOffset: CGFloat,

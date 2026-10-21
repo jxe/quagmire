@@ -529,52 +529,68 @@ extension EditorView {
         }
 
         // The insertion slot decides where the gap is, and the gap decides
-        // where everything below it is drawn, so resolve it first. It stays in
-        // place while a drop-onto row is targeted: closing the gap would move
-        // that row out from under the finger and flip straight back.
+        // where everything below it is drawn, so resolve it first.
         let footprint = currentLiftFootprint(in: rows)
-        let slot = resolveDropSlot(
-            forY: slotY,
-            in: rows,
-            previousIndex: visibleSlotForCurrentDropPath(in: rows),
-            liftFootprint: footprint
-        )
-
+        let current = visibleSlotForCurrentDropPath(in: rows)
+        let sourceRow = lift.flatMap { lift in unprojectedRows.first { $0.id == lift.block.id } }
         // Drop-onto rows are hit-tested where they are drawn. The frozen
         // frames omit the lift's gap, so rows past it sit a whole lift
         // height above their on-screen position; under a tall lift the
         // finger would otherwise land on rows hidden beneath it.
-        let gapShift: CGFloat = lift == nil ? 0 : reorderDriftGap(
-            at: slot,
-            hoverSlot: slot,
-            liftFootprint: footprint,
-            rows: rows,
-            sourceRow: lift.flatMap { lift in unprojectedRows.first { $0.id == lift.block.id } }
-        )
-        func displayedFrame(of index: Int) -> CGRect? {
+        func gapShift(at slot: Int) -> CGFloat {
+            lift == nil ? 0 : reorderDriftGap(at: slot, hoverSlot: slot, liftFootprint: footprint, rows: rows, sourceRow: sourceRow)
+        }
+        func drawnFrame(of index: Int, slot: Int, shift: CGFloat) -> CGRect? {
             guard let frame = layoutCache.reorderFrame(of: rows[index].id) else { return nil }
-            return index >= slot ? frame.offsetBy(dx: 0, dy: gapShift) : frame
+            return index >= slot ? frame.offsetBy(dx: 0, dy: shift) : frame
+        }
+        let linkIndices: [Int] = rows.indices.filter { index in
+            guard !liftIDs.contains(rows[index].id), !isReceivingForeignBlocks,
+                  case .documentLink(let reference) = rows[index].kind else { return false }
+            return host.lookupDocument(reference).can(.receiveBlocks)
         }
 
-        // Resolve document-link rows before collapsed sections. Their padded,
-        // sticky target keeps a run of short link rows from flickering.
-        let linkRows: [(row: VisibleRow, frame: ReorderDropFrame)] = rows.indices.compactMap { index in
-            let row = rows[index]
-            guard !liftIDs.contains(row.id), !isReceivingForeignBlocks,
-                  case .documentLink(let reference) = row.kind,
-                  host.lookupDocument(reference).can(.receiveBlocks),
-                  let frame = displayedFrame(of: index)
-            else { return nil }
-            return (row, ReorderDropFrame(frame: frame))
+        // A targeted link keeps the gap where it is while the finger stays
+        // on it: moving the gap would move the link out from under the finger.
+        if case .intoDocument(let id, let reference)? = state.currentDropTarget, let current,
+           let index = linkIndices.first(where: { rows[$0].id == id }),
+           let frame = drawnFrame(of: index, slot: current, shift: gapShift(at: current)),
+           y >= frame.minY, y <= frame.maxY {
+            return (.intoDocument(id, reference), current)
         }
-        let previousLinkIndex: Int? = {
-            guard case .intoDocument(let id, _)? = state.currentDropTarget else { return nil }
-            return linkRows.firstIndex { $0.row.id == id }
-        }()
+
+        // The gap passes a link row only once the finger reaches its far
+        // edge, so the link's middle stays reachable to drop onto.
+        let candidate = resolveDropSlot(
+            forY: slotY,
+            in: rows,
+            previousIndex: current,
+            liftFootprint: footprint
+        )
+        let slot = current.map { current in
+            let shift = gapShift(at: current)
+            return ReorderDropResolver.slotHeldByLinks(
+                candidate,
+                current: current,
+                pointerY: y,
+                linkFrames: linkIndices.compactMap { index in
+                    drawnFrame(of: index, slot: current, shift: shift).map { (index, $0) }
+                }
+            )
+        } ?? candidate
+        let shift = gapShift(at: slot)
+        func displayedFrame(of index: Int) -> CGRect? {
+            drawnFrame(of: index, slot: slot, shift: shift)
+        }
+
+        // Resolve document-link rows before collapsed sections. The middle of
+        // a link row targets it; its edges stay insertion points beside it.
+        let linkRows: [(row: VisibleRow, frame: ReorderDropFrame)] = linkIndices.compactMap { index in
+            displayedFrame(of: index).map { (rows[index], ReorderDropFrame(frame: $0)) }
+        }
         if let index = ReorderDropResolver.rowTargetIndex(
             forY: y,
-            rowFrames: linkRows.map(\.frame),
-            previousIndex: previousLinkIndex
+            rowFrames: linkRows.map(\.frame)
         ), case .documentLink(let reference) = linkRows[index].row.kind {
             return (.intoDocument(linkRows[index].row.id, reference), slot)
         }
@@ -1037,7 +1053,7 @@ extension EditorView {
     /// Selection tick on drop-target changes during an active reorder,
     /// after the first. Two layers of
     /// suppression keep this from machine-gunning when the drift gap's
-    /// 260ms spring animation makes row frames jitter:
+    /// 320ms animation makes row frames jitter:
     /// 1. Dedupe on the full `DropTarget` (not just `.insertAt` position), so
     ///    a brief detour through `.asLastChildOf` / `.intoDocument` and back
     ///    to the same `.insertAt` slot doesn't re-fire.
@@ -1065,7 +1081,12 @@ extension EditorView {
         }
         lastDropHapticTarget = target
         lastDropHapticFireAt = now
-        Haptics.selection(enabled: configuration.isHapticFeedbackEnabled)
+        // Arriving on a page link is a different kind of target: a firmer tap.
+        if case .intoDocument = target {
+            Haptics.light(enabled: configuration.isHapticFeedbackEnabled)
+        } else {
+            Haptics.selection(enabled: configuration.isHapticFeedbackEnabled)
+        }
         #else
         _ = target
         #endif

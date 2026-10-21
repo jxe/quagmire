@@ -5,16 +5,17 @@ struct ReorderDropFrame: Equatable {
 }
 
 enum ReorderDropResolver {
-    /// Picks a row-shaped drop target before the insertion-slot resolver opens
-    /// a drift gap. The acquisition padding makes thin rows approachable from
-    /// their surrounding whitespace; the larger retention padding keeps an
-    /// acquired target from escaping when nearby layout animates.
+    /// Picks a row-shaped drop target (a document link) where the finger is
+    /// over it as drawn. The middle of a row acquires it; its top and bottom
+    /// edge bands stay insertion points beside it. Once acquired, the whole
+    /// row (plus `retentionPadding`) keeps it, so nearby layout that animates
+    /// does not drop the target.
     static func rowTargetIndex(
         forY y: CGFloat,
         rowFrames: [ReorderDropFrame],
         previousIndex: Int? = nil,
-        acquisitionPadding: CGFloat = 6,
-        retentionPadding: CGFloat = 12
+        edgeFraction: CGFloat = 0.25,
+        retentionPadding: CGFloat = 0
     ) -> Int? {
         if let previousIndex, rowFrames.indices.contains(previousIndex) {
             let retained = rowFrames[previousIndex].frame.insetBy(dx: 0, dy: -retentionPadding)
@@ -23,12 +24,41 @@ enum ReorderDropResolver {
 
         return rowFrames.indices
             .filter { index in
-                let acquired = rowFrames[index].frame.insetBy(dx: 0, dy: -acquisitionPadding)
-                return y >= acquired.minY && y <= acquired.maxY
+                let frame = rowFrames[index].frame
+                let band = frame.height * edgeFraction
+                return y > frame.minY + band && y < frame.maxY - band
             }
             .min { lhs, rhs in
                 abs(rowFrames[lhs].frame.midY - y) < abs(rowFrames[rhs].frame.midY - y)
             }
+    }
+
+    /// The insertion slot once document-link rows hold it. The slot follows
+    /// the lift's top edge, which crosses a link row's midline about when the
+    /// finger reaches the row; moving the gap past it then would slide the
+    /// row out from under the finger. So the gap passes a link row only once
+    /// the finger reaches that row's far edge band, as drawn now
+    /// (`linkFrames`, keyed by visible row index, under `current`).
+    static func slotHeldByLinks(
+        _ candidate: Int,
+        current: Int?,
+        pointerY y: CGFloat,
+        linkFrames: [(index: Int, frame: CGRect)],
+        edgeFraction: CGFloat = 0.25
+    ) -> Int {
+        guard let current, candidate != current else { return candidate }
+        if candidate > current {
+            for link in linkFrames.sorted(by: { $0.index < $1.index })
+            where link.index >= current && link.index < candidate {
+                if y < link.frame.maxY - link.frame.height * edgeFraction { return link.index }
+            }
+        } else {
+            for link in linkFrames.sorted(by: { $0.index > $1.index })
+            where link.index >= candidate && link.index < current {
+                if y > link.frame.minY + link.frame.height * edgeFraction { return link.index + 1 }
+            }
+        }
+        return candidate
     }
 
     static func insertionIndex(

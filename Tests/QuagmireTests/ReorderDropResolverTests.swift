@@ -4,24 +4,42 @@ import Testing
 
 @Suite("Reorder drop resolver")
 struct ReorderDropResolverTests {
-    @Test func rowTargetsAcquireFromSpacingAndPreferTheNearestConsecutiveRow() {
+    @Test func rowTargetsAcquireFromTheirMiddleAndLeaveTheirEdgesForInsertion() {
         let frames = [
             ReorderDropFrame(frame: CGRect(x: 0, y: 20, width: 320, height: 24)),
             ReorderDropFrame(frame: CGRect(x: 0, y: 48, width: 320, height: 24)),
         ]
 
-        #expect(ReorderDropResolver.rowTargetIndex(forY: 16, rowFrames: frames) == 0)
-        #expect(ReorderDropResolver.rowTargetIndex(forY: 46, rowFrames: frames) == 0)
-        #expect(ReorderDropResolver.rowTargetIndex(forY: 47, rowFrames: frames) == 1)
-        #expect(ReorderDropResolver.rowTargetIndex(forY: 76, rowFrames: frames) == 1)
+        #expect(ReorderDropResolver.rowTargetIndex(forY: 32, rowFrames: frames) == 0)
+        #expect(ReorderDropResolver.rowTargetIndex(forY: 60, rowFrames: frames) == 1)
+        #expect(ReorderDropResolver.rowTargetIndex(forY: 16, rowFrames: frames) == nil)
+        #expect(ReorderDropResolver.rowTargetIndex(forY: 24, rowFrames: frames) == nil)
+        #expect(ReorderDropResolver.rowTargetIndex(forY: 46, rowFrames: frames) == nil)
     }
 
-    @Test func acquiredRowTargetRemainsStickyOutsideItsAcquisitionBand() {
+    @Test func acquiredRowTargetHoldsAcrossTheWholeRow() {
         let frames = [ReorderDropFrame(frame: CGRect(x: 0, y: 20, width: 320, height: 24))]
 
-        #expect(ReorderDropResolver.rowTargetIndex(forY: 10, rowFrames: frames) == nil)
-        #expect(ReorderDropResolver.rowTargetIndex(forY: 10, rowFrames: frames, previousIndex: 0) == 0)
-        #expect(ReorderDropResolver.rowTargetIndex(forY: 7, rowFrames: frames, previousIndex: 0) == nil)
+        #expect(ReorderDropResolver.rowTargetIndex(forY: 22, rowFrames: frames) == nil)
+        #expect(ReorderDropResolver.rowTargetIndex(forY: 22, rowFrames: frames, previousIndex: 0) == 0)
+        #expect(ReorderDropResolver.rowTargetIndex(forY: 10, rowFrames: frames, previousIndex: 0) == nil)
+    }
+
+    @Test func theGapPassesALinkRowOnlyAtItsFarEdge() {
+        // A link row at visible index 2, drawn at 100..140.
+        let link = [(index: 2, frame: CGRect(x: 0, y: 100, width: 320, height: 40))]
+        // Dragging down: the lift's top asks for slot 3 while the finger is
+        // still on the link's near edge or middle; the gap stays above it.
+        #expect(ReorderDropResolver.slotHeldByLinks(3, current: 2, pointerY: 104, linkFrames: link) == 2)
+        #expect(ReorderDropResolver.slotHeldByLinks(3, current: 2, pointerY: 120, linkFrames: link) == 2)
+        #expect(ReorderDropResolver.slotHeldByLinks(3, current: 2, pointerY: 135, linkFrames: link) == 3)
+        // Dragging up: the gap stays below the link until its top edge.
+        #expect(ReorderDropResolver.slotHeldByLinks(2, current: 3, pointerY: 136, linkFrames: link) == 3)
+        #expect(ReorderDropResolver.slotHeldByLinks(2, current: 3, pointerY: 120, linkFrames: link) == 3)
+        #expect(ReorderDropResolver.slotHeldByLinks(2, current: 3, pointerY: 105, linkFrames: link) == 2)
+        // A move that crosses no link row is unchanged.
+        #expect(ReorderDropResolver.slotHeldByLinks(5, current: 3, pointerY: 120, linkFrames: link) == 5)
+        #expect(ReorderDropResolver.slotHeldByLinks(1, current: 2, pointerY: 120, linkFrames: link) == 1)
     }
 
     @Test func resolvesByRowMidlines() {
