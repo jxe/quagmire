@@ -409,8 +409,8 @@ extension DocumentTransactionTests {
         let block = doc.children[0].id
         var ids: [UUID] = []
         doc.didCommitTransaction = { _ in if let id = doc.transactionForCurrentCommit?.id { ids.append(id) } }
-        autoreleasepool { doc.transaction(name: "Type", coalesceKey: block) { _ = doc.setText(block, AttributedString("one")) } }
-        autoreleasepool { doc.transaction(name: "Type", coalesceKey: block) { _ = doc.setText(block, AttributedString("two")) } }
+        _ = autoreleasepool { doc.transaction(name: "Type", coalesceKey: block) { _ = doc.setText(block, AttributedString("one")) } }
+        _ = autoreleasepool { doc.transaction(name: "Type", coalesceKey: block) { _ = doc.setText(block, AttributedString("two")) } }
         #expect(doc.retainedUndoTransactionIDs == Set(ids))
         autoreleasepool { manager.undo() }
         #expect(doc.retainedUndoTransactionIDs == [ids.last!])

@@ -41,7 +41,8 @@ struct ExternalBlockDropTests {
         #expect(destinationDocument.children[1].id == moving.id, "a move keeps the blocks' identities")
         #expect(destinationDocument.children[1].children.map(\.id) == [child.id])
         #expect(texts(sourceDocument.children) == ["stays"])
-        let received = try? #require(destinationHost.received.first)
+        let received = destinationHost.received.first
+        #expect(received != nil)
         #expect(received?.transfer.isCopy == false)
         #expect(received?.transfer.source === sourceDocument)
         #expect(received?.transfer.sourceHost === sourceHost)
