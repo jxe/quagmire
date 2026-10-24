@@ -162,9 +162,28 @@ struct PublicAPIConsumerTests {
             readOnly: true
         )
 
+        let marked = view.bulletMarkers([
+            EditorBulletMarker(
+                id: "stars",
+                title: "Star",
+                systemImage: "star",
+                recognizes: { $0.hasPrefix("★") },
+                turnInto: { block, _ in block }
+            ) { context in
+                Button("Clear") {
+                    context.selectionFeedback()
+                    context.apply(
+                        [BlockReplacement(blockID: context.block.id, kind: .bullet(text: AttributedString()))],
+                        actionName: "Clear Star"
+                    )
+                }
+            }
+        ])
+
         #expect(document.title == "Untitled")
         _ = view
         _ = readOnlyView
+        _ = marked
         _ = liveDictation
     }
 

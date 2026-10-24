@@ -126,6 +126,7 @@ extension EditorView {
                 block: lift.block,
                 depth: isLanding ? reorderSettleDestinationDepth() ?? lift.sourceDepth : lift.sourceDepth,
                 documentLookups: resolveDocumentLookups(for: lift.block, host: host, in: document),
+                bulletMarkerSymbol: bulletMarker(for: lift.block)?.systemImage,
                 theme: configuration.theme
             )
             .frame(width: size.width, height: size.height, alignment: .leading)
@@ -951,6 +952,7 @@ extension EditorView {
             block: lift.block,
             depth: lift.sourceDepth,
             documentLookups: resolveDocumentLookups(for: lift.block, host: host, in: document),
+            bulletMarkerSymbol: bulletMarker(for: lift.block)?.systemImage,
             theme: configuration.theme
         )
         .frame(width: size.width, height: size.height, alignment: .leading)

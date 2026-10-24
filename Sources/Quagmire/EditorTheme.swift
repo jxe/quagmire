@@ -324,6 +324,7 @@ public struct EditorTheme: Equatable, Sendable {
     var numberedMarkerColumnWidth: CGFloat { listMarkerColumnWidth }
     var todoMarkerColumnWidth: CGFloat { listMarkerColumnWidth }
     var todoCheckboxSize: CGFloat { 16 }
+    var bulletMarkerSymbolSize: CGFloat { 13 }
 
     // MARK: Toggle / documentLink
     var chevronSize: CGFloat { 12 }

@@ -50,11 +50,17 @@ shipping the host.
 
 The optional `QuagmireExtras` product contains reusable host-side features for
 Apple-platform apps: external-link previews, durable voice recording and
-transcription (including the Start Voice Recording App Intent), and conservative
-on-device transcript polishing. Add
+transcription (including the Start Voice Recording App Intent), conservative
+on-device transcript polishing, and time rows. Add
 `.product(name: "QuagmireExtras", package: "Quagmire")` to the app target and
 `import QuagmireExtras`; the core `Quagmire` product does not link these
 frameworks.
+
+Time rows are a bullet marker: `EditorView(…).bulletMarkers([.timeRows])` draws
+a clock in place of the dot of any bullet whose whole text is a time range
+("9 to 11", "noon until 2"). Tapping it edits the start and end, and moving an
+end moves every later time row beside it. Hosts can build their own markers
+with `EditorBulletMarker`.
 
 Apps provide their own cache/support directories, durable voice destination,
 transcript-delivery closure, entitlements, usage descriptions, and UI placement.

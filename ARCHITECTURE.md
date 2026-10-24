@@ -13,7 +13,8 @@ Quagmire owns:
 - the block-tree model and storage-neutral semantic change descriptions;
 - `EditorView`, text-system bridges, selection, focus, undo, gestures, menus,
   autotransforms, and package resources;
-- validation and one-transaction application of host-supplied block actions.
+- validation and one-transaction application of host-supplied block actions
+  and bullet-marker edits.
 
 The embedding host owns:
 
@@ -26,13 +27,20 @@ The embedding host owns:
 - inline external-link metadata fetching and an injected-directory disk cache;
 - durable voice recording, transcription, interrupted-recording recovery, a
   reusable toolbar button, and the package's App Intent;
-- the shared conservative on-device transcript-polishing action.
+- the shared conservative on-device transcript-polishing action;
+- time rows, an `EditorBulletMarker` that draws a clock for bullets reading as
+  a time range and edits their start and end.
 
 Hosts still choose support directories, recording destinations, transcript
 delivery, toolbar placement, entitlements, usage descriptions, and surrounding
 error/recovery presentation. An app-target `AppShortcutsProvider` must register
 `StartVoiceRecordingIntent` with literal shortcut metadata so Xcode includes
 the reusable intent in the built application's shortcut metadata.
+
+Bullet markers (`EditorView.bulletMarkers(_:)`) let a host recognize bullets
+by their text and draw a symbol in place of the dot that opens a popover and
+may appear in Turn Into. The stored block stays an ordinary bullet, so the
+Markdown and every other host are unaffected.
 
 `EditorHost` is the seam between those responsibilities. Only
 `persistCommit(changes:in:)` and `flush(_:)` are mandatory; every optional

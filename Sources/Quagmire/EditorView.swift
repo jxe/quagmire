@@ -40,6 +40,7 @@ public struct EditorView: View {
     var accessoryReveal: EditorAccessoryReveal?
     var unavailableAccessories: ([String]) -> Void = { _ in }
     var mutedBlock: (Block) -> Bool = { _ in false }
+    var editorBulletMarkers: [EditorBulletMarker] = []
 
     // View-shaped @State that doesn't move into EditorState because it's tied to
     // SwiftUI/UIKit lifecycle (FocusState must live on a View; row-frame cache
@@ -202,6 +203,8 @@ public struct EditorView: View {
     @State var actionSheet: BlockActionSheet?
     /// DocumentLink row whose marker anchors the page-icon picker.
     @State var iconPickerBlockID: BlockID?
+    /// The bullet whose marker popover is open.
+    @State var bulletMarkerPopoverBlockID: BlockID?
 
     /// Owns the in-flight `@`-mention query so a newer keystroke cancels the
     /// previous one. See `MentionSearch`.
@@ -347,6 +350,10 @@ public struct EditorView: View {
                     } else if isPageTitleBlock(block),
                               point.x - frame.minX <= theme.pageTitleIconColumnWidth {
                         openDocumentIconPicker(for: id)
+                    } else if bulletMarker(for: block) != nil,
+                              hitsDocumentLinkIconColumn(point: point, rowFrame: frame, depth: row.depth, theme: theme) {
+                        // A bullet marker sits in the same marker column.
+                        openBulletMarkerPopover(id)
                     } else {
                         handleRowClick(blockID: id)
                     }
@@ -920,6 +927,8 @@ public struct EditorView: View {
             isActiveEditor: editing?.isActive ?? false,
             completionActive: editing?.completionActive ?? false,
             isIconPickerPresented: iconPickerBlockID == block.id,
+            bulletMarkerSymbol: bulletMarker(for: block)?.systemImage,
+            isBulletMarkerPopoverPresented: bulletMarkerPopoverBlockID == block.id,
             isExpanded: isSectionExpanded(block),
             isDropTarget: state.dropOntoBlockID == block.id,
             isActionMenuTarget: isActionMenuTarget,
@@ -1020,6 +1029,24 @@ public struct EditorView: View {
                 AnyView(EditorEmojiPicker { emoji in
                     selectDocumentIcon(emoji, fromDocumentLinkBlock: block.id)
                 })
+            },
+            onBulletMarkerDismiss: {
+                if bulletMarkerPopoverBlockID == block.id { bulletMarkerPopoverBlockID = nil }
+            },
+            onBulletMarkerTap: {
+                #if os(iOS)
+                if actionSheet != nil {
+                    actionSheet = nil
+                    return
+                }
+                #endif
+                openBulletMarkerPopover(block.id)
+            },
+            bulletMarkerPopoverContent: {
+                guard let current = document.find(block.id), let marker = bulletMarker(for: current) else {
+                    return AnyView(EmptyView())
+                }
+                return marker.popover(in: bulletMarkerContext(for: current))
             }
         )
         #if os(macOS)

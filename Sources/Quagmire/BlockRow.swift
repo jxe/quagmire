@@ -13,6 +13,10 @@ struct BlockRowModel: Equatable {
     let isActiveEditor: Bool
     let completionActive: Bool
     let isIconPickerPresented: Bool
+    /// The symbol drawn in place of a bullet's dot, from the marker that
+    /// recognizes its text.
+    var bulletMarkerSymbol: String?
+    var isBulletMarkerPopoverPresented = false
     let isExpanded: Bool
     let isDropTarget: Bool
     let isActionMenuTarget: Bool
@@ -182,6 +186,9 @@ struct BlockRow: View, Equatable {
     var actionMenuContent: () -> AnyView { actions.actionMenuContent }
     var completionMenuContent: () -> AnyView { actions.completionMenuContent }
     var emojiPickerContent: () -> AnyView { actions.emojiPickerContent }
+    var onBulletMarkerDismiss: () -> Void { actions.onBulletMarkerDismiss }
+    var onBulletMarkerTap: () -> Void { actions.onBulletMarkerTap }
+    var bulletMarkerPopoverContent: () -> AnyView { actions.bulletMarkerPopoverContent }
 
     /// Convenience: this row is in edit mode (its text area is hosting a
     /// `BlockTextEditor` rather than a read-only renderer).
@@ -271,6 +278,9 @@ struct BlockRow: View, Equatable {
                         onDocumentLinkIconTap()
                     } else if isPageTitle, value.location.x <= theme.pageTitleIconColumnWidth {
                         onDocumentLinkIconTap()
+                    } else if model.bulletMarkerSymbol != nil,
+                              hitsDocumentLinkIconColumn(localX: value.location.x, depth: depth, theme: theme) {
+                        onBulletMarkerTap()
                     } else {
                         onTapOutsideText()
                     }
@@ -438,16 +448,36 @@ struct BlockRow: View, Equatable {
 
     private func bulletRow() -> some View {
         HStack(alignment: .firstTextBaseline, spacing: theme.listMarkerGap) {
-            Circle()
-                .foregroundStyle(theme.foreground)
-                .frame(width: theme.bulletMarkerDiameter, height: theme.bulletMarkerDiameter)
-                .frame(width: theme.bulletMarkerColumnWidth, height: theme.listMarkerFrameHeight, alignment: .trailing)
-                .alignmentGuide(.firstTextBaseline) { dimensions in
-                    dimensions[VerticalAlignment.center] + theme.bulletMarkerBaselineOffset
-                }
+            if let symbol = model.bulletMarkerSymbol {
+                bulletMarker(symbol)
+            } else {
+                Circle()
+                    .foregroundStyle(theme.foreground)
+                    .frame(width: theme.bulletMarkerDiameter, height: theme.bulletMarkerDiameter)
+                    .frame(width: theme.bulletMarkerColumnWidth, height: theme.listMarkerFrameHeight, alignment: .trailing)
+                    .alignmentGuide(.firstTextBaseline) { dimensions in
+                        dimensions[VerticalAlignment.center] + theme.bulletMarkerBaselineOffset
+                    }
+            }
             editableText(font: theme.body(), fontSize: 16, bold: false, lineSpacing: theme.bodyLineSpacing)
         }
         .padding(.leading, CGFloat(depth) * theme.indentStep)
+    }
+
+    /// A bullet a host marker recognizes draws the marker's symbol in place
+    /// of its dot. Taps on the marker column open the marker's popover,
+    /// anchored here.
+    private func bulletMarker(_ symbol: String) -> some View {
+        BulletMarkerSymbol(systemImage: symbol, theme: theme)
+            .popover(
+                isPresented: Binding(
+                    get: { model.isBulletMarkerPopoverPresented },
+                    set: { if !$0 { onBulletMarkerDismiss() } }
+                ),
+                arrowEdge: .bottom
+            ) {
+                bulletMarkerPopoverContent()
+            }
     }
 
     private func numberedRow() -> some View {
@@ -807,6 +837,9 @@ struct BlockRowActions {
     let actionMenuContent: () -> AnyView
     let completionMenuContent: () -> AnyView
     let emojiPickerContent: () -> AnyView
+    var onBulletMarkerDismiss: () -> Void = {}
+    var onBulletMarkerTap: () -> Void = {}
+    var bulletMarkerPopoverContent: () -> AnyView = { AnyView(EmptyView()) }
 }
 
 /// A page title that begins with an emoji ("👍 Emoji Page") lends that
@@ -1102,6 +1135,24 @@ private func decodeFavicon(_ data: Data, size: CGFloat) -> Image? {
 }
 #endif
 
+/// A host marker's symbol in a bullet's marker column, centered where the
+/// dot would be.
+private struct BulletMarkerSymbol: View {
+    let systemImage: String
+    let theme: EditorTheme
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: theme.bulletMarkerSymbolSize, weight: .medium))
+            .foregroundStyle(theme.foreground)
+            .frame(width: theme.bulletMarkerColumnWidth, height: theme.listMarkerFrameHeight, alignment: .trailing)
+            .offset(x: theme.markerCenteringOffset(markerWidth: theme.bulletMarkerSymbolSize))
+            .alignmentGuide(.firstTextBaseline) { dimensions in
+                dimensions[VerticalAlignment.center] + theme.bulletMarkerBaselineOffset
+            }
+    }
+}
+
 /// Read-only block renderer used by the reorder lift overlay. The lift just
 /// shows what's being dragged — no editing, no gestures, no popovers, no
 /// link-preview fetching. So this view doesn't carry any of `BlockRowContent`'s
@@ -1117,6 +1168,7 @@ struct BlockRowPreview: View, Equatable {
     let isExpanded: Bool
     let documentLookups: [String: DocumentLookup]
     let linkPreviews: [URL: LinkPreview]
+    let bulletMarkerSymbol: String?
     let theme: EditorTheme
 
     init(
@@ -1127,6 +1179,7 @@ struct BlockRowPreview: View, Equatable {
         isExpanded: Bool = false,
         documentLookups: [String: DocumentLookup] = [:],
         linkPreviews: [URL: LinkPreview] = [:],
+        bulletMarkerSymbol: String? = nil,
         theme: EditorTheme = .default
     ) {
         self.block = block
@@ -1136,6 +1189,7 @@ struct BlockRowPreview: View, Equatable {
         self.isExpanded = isExpanded
         self.documentLookups = documentLookups
         self.linkPreviews = linkPreviews
+        self.bulletMarkerSymbol = bulletMarkerSymbol
         self.theme = theme
     }
 
@@ -1202,13 +1256,17 @@ struct BlockRowPreview: View, Equatable {
 
         case .bullet:
             HStack(alignment: .firstTextBaseline, spacing: theme.listMarkerGap) {
-                Circle()
-                    .foregroundStyle(theme.foreground)
-                    .frame(width: theme.bulletMarkerDiameter, height: theme.bulletMarkerDiameter)
-                    .frame(width: theme.bulletMarkerColumnWidth, height: theme.listMarkerFrameHeight, alignment: .trailing)
-                    .alignmentGuide(.firstTextBaseline) { dimensions in
-                        dimensions[VerticalAlignment.center] + theme.bulletMarkerBaselineOffset
-                    }
+                if let bulletMarkerSymbol {
+                    BulletMarkerSymbol(systemImage: bulletMarkerSymbol, theme: theme)
+                } else {
+                    Circle()
+                        .foregroundStyle(theme.foreground)
+                        .frame(width: theme.bulletMarkerDiameter, height: theme.bulletMarkerDiameter)
+                        .frame(width: theme.bulletMarkerColumnWidth, height: theme.listMarkerFrameHeight, alignment: .trailing)
+                        .alignmentGuide(.firstTextBaseline) { dimensions in
+                            dimensions[VerticalAlignment.center] + theme.bulletMarkerBaselineOffset
+                        }
+                }
                 text(font: theme.body(), fontSize: 16, lineSpacing: theme.bodyLineSpacing)
             }
             .padding(.leading, CGFloat(depth) * theme.indentStep)

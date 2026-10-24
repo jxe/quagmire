@@ -22,6 +22,7 @@ struct PublicAPIConsumerTests {
         _ = TranscriptPolishingActions.actions(polisher: UnavailablePolisher())
         _ = StartVoiceRecordingIntent()
         _ = QuagmireExtrasAppIntents()
+        _ = EditorBulletMarker.timeRows
     }
 
     private struct UnavailablePolisher: TranscriptPolishing {

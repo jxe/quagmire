@@ -207,6 +207,29 @@ extension EditorView {
         return .handled
     }
 
+    /// Turns each block into the marker's bullets in one undo step. Blocks
+    /// the marker declines are left alone.
+    @discardableResult
+    func convert(blockIDs: [BlockID], to marker: EditorBulletMarker) -> KeyPress.Result {
+        let replacements = blockIDs.compactMap { id -> Block? in
+            guard let block = document.find(id), textForBlockTypeChange(block) != nil,
+                  let replacement = marker.turnInto(block, in: document),
+                  replacement.id == id else { return nil }
+            return replacement
+        }
+        guard !replacements.isEmpty else { return .ignored }
+        mutate("Turn Into") {
+            for replacement in replacements {
+                document.replaceSubtree(replacement.id, with: [replacement])
+            }
+        }
+        for replacement in replacements {
+            state.expandedToggles.remove(replacement.id)
+            state.expandedTemplates.remove(replacement.id)
+        }
+        return .handled
+    }
+
     @discardableResult
     fileprivate func convertBlockToTemplate(blockID: BlockID) -> KeyPress.Result {
         guard let block = document.find(blockID) else { return .ignored }
@@ -368,6 +391,8 @@ extension EditorView {
             let visibleGroups: [(BlockTurnInto.Category, [BlockTurnInto])] = BlockTurnInto.orderedGroups
                 .map { ($0.0, $0.1.filter { availableTargets.contains($0) || $0 == selectedTarget }) }
                 .filter { !$0.1.isEmpty }
+            let markerTargets = bulletMarkerTurnIntoTargets(for: targetBlocks)
+            let selectedMarkerID = selectedBulletMarkerID(for: targetBlocks)
             let indentTargets = indentActions(for: targetIDs)
             let hostActions = applicableBlockActions(anchorID: blockID, targetIDs: targetIDs)
             VStack(alignment: .leading, spacing: 8) {
@@ -394,6 +419,21 @@ extension EditorView {
                                 ) {
                                     if target != selectedTarget {
                                         _ = convert(blockIDs: targetIDs, to: target)
+                                    }
+                                }
+                            }
+                            // Host bullet markers follow the built-in lists.
+                            if group.0 == .lists {
+                                ForEach(markerTargets) { marker in
+                                    compactMenuButton(
+                                        title: marker.title,
+                                        systemImage: marker.systemImage,
+                                        keyboardShortcut: marker.turnIntoShortcut,
+                                        isSelected: marker.id == selectedMarkerID
+                                    ) {
+                                        if marker.id != selectedMarkerID {
+                                            _ = convert(blockIDs: targetIDs, to: marker)
+                                        }
                                     }
                                 }
                             }
@@ -676,7 +716,8 @@ extension EditorView {
             case .h4, .h5, .h6: return nil
             }
         case .bullet:
-            return .bullet
+            // A bullet a host marker draws is that marker's, not a plain bullet.
+            return bulletMarker(for: block) != nil ? nil : .bullet
         case .numbered:
             return .numbered
         case .todo:
@@ -690,6 +731,23 @@ extension EditorView {
         case .quote, .code, .divider, .image, .unsupported:
             return nil
         }
+    }
+
+    /// Host markers offered in Turn Into for these blocks: every block
+    /// carries text, and none is a page reference.
+    fileprivate func bulletMarkerTurnIntoTargets(for blocks: [Block]) -> [EditorBulletMarker] {
+        let eligible = blocks.allSatisfy { block in
+            if case .documentLink = block.kind { return false }
+            return textForBlockTypeChange(block) != nil
+        }
+        guard eligible else { return [] }
+        return editorBulletMarkers.filter(\.offersTurnInto)
+    }
+
+    /// The marker every block in `blocks` is drawn with, if they share one.
+    fileprivate func selectedBulletMarkerID(for blocks: [Block]) -> String? {
+        guard let first = blocks.first.flatMap({ bulletMarker(for: $0)?.id }) else { return nil }
+        return blocks.allSatisfy({ bulletMarker(for: $0)?.id == first }) ? first : nil
     }
 
     fileprivate func canTurn(_ block: Block, into target: BlockTurnInto) -> Bool {
