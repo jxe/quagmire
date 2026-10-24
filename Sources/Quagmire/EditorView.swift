@@ -645,7 +645,7 @@ public struct EditorView: View {
             // the soft keyboard mid-split. Skip both on iOS.
             .focusable()
             .focused($pageFocused)
-            .background { MacEditorContentFocus(hasFocus: $macContentHasFocus) }
+            .background { MacEditorContentFocus(hasFocus: $macContentHasFocus, pageFocused: pageFocused) }
             #endif
             .onChange(of: accessoryReveal, initial: true) { _, _ in revealAccessory() }
             .onChange(of: missingAccessoryIDs, initial: true) { _, ids in unavailableAccessories(ids) }

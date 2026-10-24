@@ -23,6 +23,19 @@ struct MacEditorContentFocusTests {
         #expect(!MacEditorContentFocus.Probe.isContentResponder(nil, in: content, editorAnchor: editorAnchor))
     }
 
+    @Test func swiftUIKeyViewProxyCountsOnlyWhileThePageHoldsFocus() {
+        let content = NSView()
+        let hosting = NSView()
+        let editorAnchor = NSView()
+        let proxy = KeyViewProxy()
+        content.addSubview(hosting)
+        hosting.addSubview(editorAnchor)
+        hosting.addSubview(proxy)
+
+        #expect(MacEditorContentFocus.Probe.isContentResponder(proxy, in: content, editorAnchor: editorAnchor, pageFocused: true))
+        #expect(!MacEditorContentFocus.Probe.isContentResponder(proxy, in: content, editorAnchor: editorAnchor, pageFocused: false))
+    }
+
     @Test func queuedTextFocusCannotReclaimResponderAfterEscape() async {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
                               styleMask: [.titled], backing: .buffered, defer: false)
@@ -85,4 +98,7 @@ struct MacEditorContentFocusTests {
         #expect(!MacEditorContentFocus.Probe.isContentResponder(nil, in: content))
     }
 }
+
+/// Stands in for SwiftUI's private key-view proxy, matched by type name.
+private final class KeyViewProxy: NSView {}
 #endif
