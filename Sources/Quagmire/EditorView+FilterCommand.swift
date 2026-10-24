@@ -37,6 +37,9 @@ extension EditorView {
         }
         findPresented = false
         filterCommandText = FilterCommandHistory.load().first ?? ""
+        // Let go of page focus so the bar's field can take it; `!` arrives
+        // as a page key press, which otherwise keeps the page first responder.
+        pageFocused = false
         filterCommandPresented = true
         filterCommandFocusRequest &+= 1
     }
@@ -171,10 +174,17 @@ private struct FilterCommandBar: View {
         .padding(.top, 8)
         .frame(maxWidth: 520)
         .onAppear {
-            isFocused = true
+            focusField()
             historyIndex = history.first == command ? 0 : nil
         }
-        .onChange(of: focusRequest) { _, _ in isFocused = true }
+        .onChange(of: focusRequest) { _, _ in focusField() }
+    }
+
+    /// Focus on the next runloop tick: the key press that opened the bar is
+    /// still being handled, and a focus write during it doesn't stick.
+    private func focusField() {
+        isFocused = true
+        DispatchQueue.main.async { isFocused = true }
     }
 
     private func stepHistory(by delta: Int) -> KeyPress.Result {
