@@ -339,6 +339,9 @@ public struct EditorView: View {
                     guard let row = visibleRowByID[id],
                           let frame = layoutCache.frame(of: id),
                           let block = document.find(id) else { return }
+                    #if os(macOS)
+                    if NSEvent.modifierFlags.contains(.shift), selectRange(to: id) { return }
+                    #endif
                     if readOnly {
                         if case .documentLink = block.kind { _ = navigateIntoDocumentLink(id, at: clickOpenTarget()) }
                         return
@@ -736,6 +739,7 @@ public struct EditorView: View {
                 .delete,
                 KeyEquivalent("\u{8}"),
                 KeyEquivalent("\u{7F}"),
+                KeyEquivalent("a"),
                 KeyEquivalent("c"),
                 KeyEquivalent("v"),
                 KeyEquivalent("x"),
@@ -1501,6 +1505,7 @@ public struct EditorView: View {
     static let navBindings: [NavKeyBinding] = [
         // Cmd shortcuts
         .init(key: "[", modifiers: .command, action: .navigateBack),
+        .init(key: "a", modifiers: .command, action: .selectAll),
         .init(key: "c", modifiers: .command, action: .copySelection),
         .init(key: "v", modifiers: .command, action: .pasteFromPasteboard),
         .init(key: "x", modifiers: .command, action: .cutSelection),
@@ -2272,6 +2277,33 @@ public struct EditorView: View {
         let hi = max(anchorIndex, nextIndex)
         let newSelection = Set(blocks[lo...hi].map { $0.id })
         state.setNavSelection(blocks: newSelection, anchor: anchorID, cursor: newCursor)
+    }
+
+    /// Shift-click: select every row from the selection's anchor (or the row
+    /// being edited) through `blockID`, in document order. Returns false when
+    /// there is nothing to anchor on, so the click acts as a plain click.
+    func selectRange(to blockID: BlockID) -> Bool {
+        guard let anchorID = state.anchor ?? state.cursor ?? state.editingBlock,
+              anchorID != blockID || state.editingBlock != nil else { return false }
+        let blocks = preorderFlat()
+        guard let anchorIndex = blocks.firstIndex(where: { $0.id == anchorID }),
+              let targetIndex = blocks.firstIndex(where: { $0.id == blockID }) else { return false }
+        if state.editingBlock != nil {
+            transferFocus(to: .nav(cursor: anchorID))
+        }
+        let hidden = hiddenBlockIDs(in: document.children)
+        let range = blocks[min(anchorIndex, targetIndex)...max(anchorIndex, targetIndex)]
+        let selection = Set(range.map(\.id).filter { !hidden.contains($0) })
+        state.setNavSelection(blocks: selection, anchor: anchorID, cursor: blockID)
+        return true
+    }
+
+    /// Cmd-A in navigation mode: every visible row.
+    func selectAllBlocks() {
+        let hidden = hiddenBlockIDs(in: document.children)
+        let visible = preorderFlat().map(\.id).filter { !hidden.contains($0) }
+        guard let first = visible.first, let last = visible.last else { return }
+        state.setNavSelection(blocks: Set(visible), anchor: first, cursor: last)
     }
 
     private func outlineSelectionStep(from cursorIndex: Int, anchoredAt anchorIndex: Int, by delta: Int, blocks: [Block]) -> Int {

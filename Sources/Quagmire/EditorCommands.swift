@@ -84,6 +84,7 @@ public enum EditorAction: Sendable, Equatable {
     case navigateBack
     case moveCursor(delta: Int)
     case extendSelection(delta: Int)
+    case selectAll
     case enterEditOrOpenDocument
     case navRightArrow
     case navLeftArrow

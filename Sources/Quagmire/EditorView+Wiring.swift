@@ -172,6 +172,8 @@ extension EditorView {
                 deleteSelection()
             case .escape:
                 handleEscapeKey()
+            case .selectAll:
+                selectAllBlocks()
             case .navigateBack:
                 host.navigateBack()
             case .moveCursor(let delta):

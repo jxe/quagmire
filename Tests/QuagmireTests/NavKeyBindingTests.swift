@@ -162,6 +162,10 @@ struct NavKeyBindingTests {
         #expect(EditorView.navAction(for: .downArrow, modifiers: .shift) == .extendSelection(delta: +1))
     }
 
+    @Test func commandASelectsAll() {
+        #expect(EditorView.navAction(for: "a", modifiers: .command) == .selectAll)
+    }
+
     @Test func optionArrowsMoveBlock() {
         #expect(EditorView.navAction(for: .upArrow, modifiers: .option) == .moveBlockUp)
         #expect(EditorView.navAction(for: .downArrow, modifiers: .option) == .moveBlockDown)
