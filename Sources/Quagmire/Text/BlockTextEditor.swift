@@ -161,11 +161,11 @@ enum BlockKey: Sendable, Equatable {
     case completionCommit
     case completionDismiss
     /// Cmd-V / paste action received by the editor with the raw pasteboard
-    /// string. EditorView decides whether the parsed result splits into
+    /// string, and the richer forms beside it. EditorView decides whether the parsed result splits into
     /// multiple blocks (handled here, splice below the row) or is a single
     /// paragraph (return `.ignored` so the platform text view does its native
     /// paste, preserving cursor + undo coalescing).
-    case paste(String)
+    case paste(String, rich: PasteboardRichContent)
     /// Pasteboard contained one or more images (or image file URLs). EditorView
     /// hands the bytes to the document-scoped async image host, then builds
     /// image blocks only after their authored sources are durable.
@@ -1356,7 +1356,7 @@ final class ContainedTextView: NSTextView {
                 }
             }
             if let str = NSPasteboard.general.string(forType: .string) {
-                if onKey(.paste(str)) == .handled {
+                if onKey(.paste(str, rich: PasteboardRichContent(NSPasteboard.general))) == .handled {
                     return
                 }
             }
@@ -2155,7 +2155,7 @@ final class ContainedTextViewIOS: UITextView {
                 }
             }
             if let str = UIPasteboard.general.string {
-                if coordinator.parent.onKey(.paste(str)) == .handled {
+                if coordinator.parent.onKey(.paste(str, rich: PasteboardRichContent(UIPasteboard.general))) == .handled {
                     return
                 }
             }
