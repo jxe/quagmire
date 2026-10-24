@@ -375,6 +375,18 @@ public protocol EditorHost: AnyObject {
     /// will insert on paste. Returning nil cancels the paste.
     func parseBlocksFromPasteboard(_ string: String) -> [Block]?
 
+    /// HTML twin of `serializeBlocksForPasteboard`, written to the pasteboard
+    /// alongside the string so rich-text apps (Notion, Mail, Pages) see the
+    /// blocks' structure — toggles, lists, headings — rather than raw
+    /// markup. nil writes the string alone.
+    func serializeBlocksForPasteboardHTML(_ blocks: [Block]) -> String?
+
+    /// Parse a paste whose pasteboard also carries richer forms than the
+    /// string. Return nil to fall back to `parseBlocksFromPasteboard(string)`;
+    /// a host uses this when another app's string lost structure the richer
+    /// forms keep (Notion's toggles live only in its web custom data).
+    func parseBlocksFromPasteboard(_ string: String, rich: PasteboardRichContent) -> [Block]?
+
     /// Persist pasted image bytes. Returns relative paths suitable for
     /// `Block.image.source` (one per input, in order). Empty / shorter
     /// returned array cancels the paste.
@@ -526,6 +538,8 @@ public extension EditorHost {
     func parseBlocksFromPasteboard(_ string: String) -> [Block]? {
         EditorPlainTextCodec.parse(string)
     }
+    func serializeBlocksForPasteboardHTML(_: [Block]) -> String? { nil }
+    func parseBlocksFromPasteboard(_: String, rich _: PasteboardRichContent) -> [Block]? { nil }
 }
 
 private enum EditorPlainTextCodec {

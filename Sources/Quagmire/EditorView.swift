@@ -2566,14 +2566,17 @@ public struct EditorView: View {
         }
 
         let pasted: String
+        let rich: PasteboardRichContent
         #if os(macOS)
         guard let str = NSPasteboard.general.string(forType: .string) else { return false }
         pasted = str
+        rich = PasteboardRichContent(NSPasteboard.general)
         #else
         guard let str = UIPasteboard.general.string else { return false }
         pasted = str
+        rich = PasteboardRichContent(UIPasteboard.general)
         #endif
-        guard let parsed = host.parseBlocksFromPasteboard(pasted), !parsed.isEmpty else { return false }
+        guard let parsed = parsePasteboard(pasted, rich: rich), !parsed.isEmpty else { return false }
         return spliceParsedBlocksAfter(state.cursor, parsed: parsed, focusLast: false)
     }
 
@@ -2627,18 +2630,32 @@ public struct EditorView: View {
         return true
     }
 
+    /// The host's reading of the richer forms wins when it offers one;
+    /// otherwise the string.
+    func parsePasteboard(_ string: String, rich: PasteboardRichContent) -> [Block]? {
+        if !rich.isEmpty, let parsed = host.parseBlocksFromPasteboard(string, rich: rich) {
+            return parsed
+        }
+        return host.parseBlocksFromPasteboard(string)
+    }
+
     func copyBlocksToPasteboard(ids: some Sequence<BlockID>) -> Bool {
         let roots = document.selectionSubtreeRoots(Set(ids))
         guard !roots.isEmpty else { return false }
         let blocks = roots.compactMap { document.find($0) }
         let serialized = host.serializeBlocksForPasteboard(blocks)
         guard !serialized.isEmpty else { return false }
+        let html = host.serializeBlocksForPasteboardHTML(blocks)
 
         #if os(macOS)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(serialized, forType: .string)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(serialized, forType: .string)
+        if let html { pasteboard.setString(html, forType: .html) }
         #else
-        UIPasteboard.general.string = serialized
+        var item: [String: Any] = [UTType.utf8PlainText.identifier: serialized]
+        if let html { item[UTType.html.identifier] = html }
+        UIPasteboard.general.setItems([item])
         #endif
         return true
     }
@@ -2692,8 +2709,8 @@ public struct EditorView: View {
         case .completionDismiss:
             state.closeCompletionMenu()
             return .handled
-        case .paste(let str):
-            return handleEditorPaste(str, blockID: blockID)
+        case .paste(let str, let rich):
+            return handleEditorPaste(str, rich: rich, blockID: blockID)
         case .imagesPasted(let images):
             return handleEditorImagePaste(images, blockID: blockID)
         }
@@ -2737,8 +2754,8 @@ public struct EditorView: View {
     /// - Otherwise (≥2 blocks, or a single non-paragraph block like `- foo`),
     ///   splice the parsed blocks immediately below the row's section and
     ///   move focus to the last one.
-    private func handleEditorPaste(_ str: String, blockID: BlockID) -> KeyPress.Result {
-        guard let parsed = host.parseBlocksFromPasteboard(str), !parsed.isEmpty else {
+    private func handleEditorPaste(_ str: String, rich: PasteboardRichContent, blockID: BlockID) -> KeyPress.Result {
+        guard let parsed = parsePasteboard(str, rich: rich), !parsed.isEmpty else {
             return .ignored
         }
         if parsed.count == 1, case .paragraph = parsed[0].kind {
