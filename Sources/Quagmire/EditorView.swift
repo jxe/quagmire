@@ -755,6 +755,10 @@ public struct EditorView: View {
             actionSheet = nil
             return
         }
+        if bulletMarkerPopoverBlockID != nil {
+            bulletMarkerPopoverBlockID = nil
+            return
+        }
         if let editingBlock = state.editingBlock {
             transferFocus(to: .nav(cursor: editingBlock))
         }

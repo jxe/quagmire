@@ -476,7 +476,16 @@ struct BlockRow: View, Equatable {
                 ),
                 arrowEdge: .bottom
             ) {
+                // Escape closes any marker's popover, whatever it holds;
+                // the editor's own key handling doesn't reach into it.
                 bulletMarkerPopoverContent()
+                    .background {
+                        Button("Close") { onBulletMarkerDismiss() }
+                            .keyboardShortcut(.escape, modifiers: [])
+                            .frame(width: 0, height: 0)
+                            .opacity(0)
+                            .accessibilityHidden(true)
+                    }
             }
     }
 
