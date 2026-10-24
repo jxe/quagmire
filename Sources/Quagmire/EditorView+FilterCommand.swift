@@ -78,6 +78,9 @@ extension EditorView {
                 if let first = replacements.first, let last = replacements.last {
                     state.setNavSelection(blocks: Set(replacements.map(\.id)), anchor: first.id, cursor: last.id)
                 }
+                // Replacing the rows rebuilds them and drops the page's first
+                // responder, which hides the nav selection until it's back.
+                forcePageFocusGrab()
                 showActionToast(
                     replacements.isEmpty
                         ? "Removed \(input.rows.count) \(input.rows.count == 1 ? "row" : "rows")"

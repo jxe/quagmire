@@ -979,6 +979,9 @@ public struct EditorView: View {
             },
             onClickAtPoint: { point in
                 if dismissIOSActionSheetForTap() { return }
+                #if os(macOS)
+                if NSEvent.modifierFlags.contains(.shift), selectRange(to: block.id) { return }
+                #endif
                 if !readOnly { transferFocus(to: .editor(block.id, initialCursor: .point(point))) }
             },
             onToggleExpansion: {
