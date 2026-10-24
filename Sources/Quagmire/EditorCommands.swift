@@ -74,6 +74,7 @@ public enum EditorAction: Sendable, Equatable {
     case foldAllHeadings
     case unfoldAllHeadings
     case findInPage
+    case filterThroughCommand
 
     // Nav-mode keyboard only (the menu bar uses the system equivalents directly).
     case copySelection
@@ -99,6 +100,7 @@ public enum EditorPredicate: Sendable {
     case canMoveBlockDown
     case canFoldAllHeadings
     case canUnfoldAllHeadings
+    case canFilterThroughCommand
 }
 
 struct EditorCommandsFocusKey: FocusedValueKey {

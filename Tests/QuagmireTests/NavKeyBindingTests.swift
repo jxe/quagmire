@@ -27,6 +27,11 @@ struct NavKeyBindingTests {
         #expect(EditorView.navAction(for: "x", modifiers: .command) == .cutSelection)
     }
 
+    @Test func bangFiltersThroughCommandWithOrWithoutShift() {
+        #expect(EditorView.navAction(for: "!", modifiers: []) == .filterThroughCommand)
+        #expect(EditorView.navAction(for: "!", modifiers: .shift) == .filterThroughCommand)
+    }
+
     @Test func cmdBMapsToBold() {
         #expect(EditorView.navAction(for: "b", modifiers: .command) == .toggleInlineMark(.bold))
     }

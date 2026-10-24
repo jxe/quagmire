@@ -160,6 +160,9 @@ public struct EditorView: View {
     @State var findQuery = ""
     @State var findSelectionIndex = 0
     @State var findFocusRequest = 0
+    @State var filterCommandPresented = false
+    @State var filterCommandText = ""
+    @State var filterCommandFocusRequest = 0
     /// Drives the compact block action menu. On iOS this is opened by a leading
     /// row swipe and further leading swipes add rows to its targets. On macOS
     /// the ordinary navigation selection remains the source of truth.
@@ -532,12 +535,16 @@ public struct EditorView: View {
             #endif
             .background(theme.background)
             .overlay(alignment: .top) {
-                if findPresented {
+                if filterCommandPresented {
+                    filterCommandBar()
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                } else if findPresented {
                     findBar(matches: findMatches)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
             .animation(.easeOut(duration: 0.16), value: findPresented)
+            .animation(.easeOut(duration: 0.16), value: filterCommandPresented)
             .overlay(alignment: .bottom) {
                 if let runningBlockActionTitle {
                     HStack(spacing: 10) {
@@ -748,7 +755,8 @@ public struct EditorView: View {
                 KeyEquivalent("b"),
                 KeyEquivalent("i"),
                 KeyEquivalent("."),
-                KeyEquivalent("[")
+                KeyEquivalent("["),
+                KeyEquivalent("!")
             ], action: handleNavKeyPress)
             .iosEdgeGateNavigateBack()
         }
@@ -1542,6 +1550,10 @@ public struct EditorView: View {
         // Single keys
         .init(key: .return, modifiers: [], action: .enterEditOrOpenDocument),
         .init(key: .escape, modifiers: [], action: .escape),
+        // `!` filters the selection through a shell command, as in Vim.
+        // Shift is part of typing it, so either report counts.
+        .init(key: "!", modifiers: [], action: .filterThroughCommand),
+        .init(key: "!", modifiers: .shift, action: .filterThroughCommand),
     ]
 
     /// Wrap a structural mutation so its inverse is registered with the

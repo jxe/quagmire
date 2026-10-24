@@ -155,6 +155,17 @@ that whole selection while the menu remains open.
 - Host actions appear after native editor actions. A host menu can invoke the
   same action through `EditorCommands.performBlockAction` using its id.
 
+**Filter Through Command** (hosts that supply a `FilterCommandRunner`)
+`!` in nav mode (or `EditorAction.filterThroughCommand` from a host menu) opens
+a bar like Find in Page for a shell command; ↑/↓ steps through recent
+commands. Each selected subtree root is one plain-text stdin line; children
+are not sent and travel with their parent. Output lines map back onto rows:
+a line identical to an input line keeps that row, remaining changed lines pair
+in order with the remaining rows (new text, same kind and children), extra
+lines become new rows shaped like the row above, and rows left without a line
+are removed — one undoable transaction. `QuagmireExtras.ShellFilterCommand`
+is a macOS runner using the login shell.
+
 **Pinch-to-insert** (trackpad / touchscreen)
 Spread fingers between two rows to open a gap. Releasing inserts a
 neighbour-shaped paragraph or list row. On iOS, sliding the open pinch toward
@@ -569,6 +580,7 @@ and there is nothing for a marker to protect.
 | `linkPreview` | `LinkPreviewsUnsupported` | `nil` |
 | `imageResource` | `ImagesUnsupported` | `nil` |
 | `blockActions` | `BlockActionsUnsupported` | `[]` |
+| `filterCommandRunner` | `FilterCommandsUnsupported` | `nil` |
 
 | Method | Signature | When it fires | Return semantics |
 |--------|-----------|---------------|------------------|
@@ -592,6 +604,7 @@ and there is nothing for a marker to protect.
 | `linkPreview` | `(for url: URL) async -> LinkPreview?` | Editor calls this once per external `http`/`https` link in a rendered (read-only) row to fetch favicon + page title. Async; nil → no preview rendered. | Host returns metadata for the URL, or nil on fetch failure / known-failed state. |
 | `imageResource` | `(for source: String, in document: Document) async -> EditorImageResource?` | Resolve an authored image source in the owning document's scope. | Return `.file(URL)` for local storage or `.data(Data)` for remote/replica bytes. The editor owns loading, stale-result cancellation, missing presentation, and full-size viewing; nil means missing. |
 | `blockActions` | `(in document: Document) -> [EditorBlockAction]` | The block-action surface is rendered or a focused host command checks/invokes an action id. | Empty hides host actions. Each action decides applicability and returns proposed replacements; the editor owns validation, mutation, progress, success, and errors. |
+| `filterCommandRunner` | `(for document: Document) -> FilterCommandRunner?` | Filter Through Command is validated or run. | Nil hides the command. The runner gets the command and stdin and returns stdout, throwing a readable error (the editor shows it and changes nothing). |
 
 ---
 

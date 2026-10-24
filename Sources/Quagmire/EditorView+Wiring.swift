@@ -158,6 +158,8 @@ extension EditorView {
                 unfoldAllHeadings()
             case .findInPage:
                 presentFind()
+            case .filterThroughCommand:
+                presentFilterCommand()
 
             // Nav-mode keyboard actions. Fired from `handleNavKeyPress` via
             // the binding table below; not exposed in the menu bar (the
@@ -223,6 +225,8 @@ extension EditorView {
                 return canFoldAllHeadings
             case .canUnfoldAllHeadings:
                 return canUnfoldAllHeadings
+            case .canFilterThroughCommand:
+                return canFilterThroughCommand
             }
         }
 

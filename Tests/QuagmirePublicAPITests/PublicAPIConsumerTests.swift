@@ -65,6 +65,7 @@ private final class FullHost: EditorHost {
         .file(URL(fileURLWithPath: "/image"))
     }
     func blockActions(in document: Document) -> [EditorBlockAction] { [] }
+    func filterCommandRunner(for document: Document) -> FilterCommandRunner? { { _, stdin in stdin } }
 
     var opened: DocumentReference?
     var deleted: DocumentReference?
@@ -116,6 +117,7 @@ struct PublicAPIConsumerTests {
         #expect(await host.moveDestination(for: [], candidates: []) != nil)
         #expect(host.serializeBlocksForPasteboard([]) == "serialized")
         #expect(host.parseBlocksFromPasteboard("x") != nil)
+        #expect(host.filterCommandRunner(for: document) != nil)
         let savedImages = await host.saveImages([], in: document)
         let imageResource = await host.imageResource(for: "x", in: document)
         #expect(!savedImages.isEmpty)

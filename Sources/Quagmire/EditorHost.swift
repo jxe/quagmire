@@ -413,7 +413,15 @@ public protocol EditorHost: AnyObject {
     /// empty array hides the host-action surface. Each action carries its own
     /// applicability predicate, so no parallel capability flag is needed.
     func blockActions(in document: Document) -> [EditorBlockAction]
+
+    /// Runs Filter Through Command's shell command over the selected rows'
+    /// text. Nil hides the command (iOS hosts, read-only hosts).
+    func filterCommandRunner(for document: Document) -> FilterCommandRunner?
 }
+
+/// Runs `command` with `stdin` and returns its stdout, throwing with a
+/// readable message when the command fails.
+public typealias FilterCommandRunner = @Sendable (_ command: String, _ stdin: String) async throws -> String
 
 // MARK: - Opting out of a surface
 //
@@ -499,6 +507,13 @@ public extension BlockActionsUnsupported {
     func blockActions(in document: Document) -> [EditorBlockAction] { [] }
 }
 
+/// No Filter Through Command.
+public protocol FilterCommandsUnsupported: EditorHost {}
+
+public extension FilterCommandsUnsupported {
+    func filterCommandRunner(for document: Document) -> FilterCommandRunner? { nil }
+}
+
 /// Every optional surface at once, for a host that only persists.
 ///
 /// ```swift
@@ -519,6 +534,7 @@ public typealias EditorHostDefaults = EditorHost
     & ImagesUnsupported
     & LinkPreviewsUnsupported
     & BlockActionsUnsupported
+    & FilterCommandsUnsupported
 
 // The pasteboard codec stays on `EditorHost` itself: unlike the rest, these
 // defaults do real work (a line-per-block plain-text codec) rather than

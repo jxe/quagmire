@@ -52,6 +52,7 @@ extension EditorView {
         if let editingBlock = state.editingBlock {
             transferFocus(to: .nav(cursor: editingBlock))
         }
+        filterCommandPresented = false
         findPresented = true
         findFocusRequest &+= 1
     }
