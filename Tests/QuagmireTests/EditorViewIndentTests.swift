@@ -83,6 +83,58 @@ struct EditorViewIndentTests {
         #expect(doc.children.map(\.id) == [heading.id, after.id])
         #expect(doc.children[0].children.map(\.id) == [first.id, second.id])
     }
+
+    /// [H1 Later {bullet Learn {bullet a, H1 Tomorrow {bullet t}}}, H1 Next {bullet n}]
+    private func makeIndentedHeadingDoc() -> (Document, tomorrow: Block, later: Block, next: Block) {
+        let tomorrow = Block.heading(level: .h1, text: AttributedString("Tomorrow"), children: [
+            .bullet(text: AttributedString("t"))
+        ])
+        let later = Block.heading(level: .h1, text: AttributedString("Later"), children: [
+            .bullet(text: AttributedString("Learn"), children: [
+                .bullet(text: AttributedString("a")),
+                tomorrow
+            ])
+        ])
+        let next = Block.heading(level: .h1, text: AttributedString("Next"), children: [
+            .bullet(text: AttributedString("n"))
+        ])
+        return (Document(id: DocumentID("test"), children: [later, next]), tomorrow, later, next)
+    }
+
+    @Test func outdentLiftsHeadingNestedInListItemUnderHeading() {
+        let (doc, tomorrow, later, next) = makeIndentedHeadingDoc()
+        let state = EditorState()
+        let editor = EditorView(document: doc, state: state, host: TestHost())
+        editor.installUndoApply()
+        let group = [tomorrow.id, tomorrow.children[0].id]
+
+        #expect(doc.canOutdent(tomorrow.id))
+        #expect(editor.canChangeIndent(ids: group, by: -1))
+        #expect(editor.indentBlocks(group, by: -1))
+        #expect(doc.children.map(\.id) == [later.id, tomorrow.id, next.id])
+        #expect(doc.children[0].children[0].children.count == 1)
+        #expect(doc.children[1].children.map(\.id) == [tomorrow.children[0].id])
+    }
+
+    @Test func optionDownOutdentsIndentedHeadingThenSwapsWithNextHeading() {
+        let (doc, tomorrow, later, next) = makeIndentedHeadingDoc()
+        let state = EditorState()
+        let editor = EditorView(document: doc, state: state, host: TestHost())
+        editor.installUndoApply()
+        let group: Set<BlockID> = [tomorrow.id, tomorrow.children[0].id]
+
+        #expect(editor.canMoveBlocksInDocument(group, by: 1))
+        editor.moveBlocksInDocument(group, by: 1)
+        #expect(doc.children.map(\.id) == [later.id, tomorrow.id, next.id])
+
+        editor.moveBlocksInDocument(group, by: 1)
+        #expect(doc.children.map(\.id) == [later.id, next.id, tomorrow.id])
+        #expect(doc.children[2].children.map(\.id) == [tomorrow.children[0].id])
+
+        #expect(!editor.canMoveBlocksInDocument(group, by: 1))
+        editor.moveBlocksInDocument(group, by: -1)
+        #expect(doc.children.map(\.id) == [later.id, tomorrow.id, next.id])
+    }
 }
 
 @MainActor

@@ -789,6 +789,9 @@ public final class Document: @MainActor Identifiable {
     /// land it as a sibling of the heading, but the heading-containment
     /// invariant immediately re-folds it back. So refuse the op upfront —
     /// `Tab`/`Shift-Tab` on a heading-child grays out instead of no-op'ing.
+    /// The reverse case is allowed: a heading nested in a list item under a
+    /// heading it can't sit in (an H1 inside a bullet inside an H1) outdents,
+    /// and heading containment lifts it out to the scope where it belongs.
     public func canOutdent(_ blockID: BlockID) -> Bool {
         guard let block = find(blockID),
               let parentID = parent(of: blockID),
@@ -800,16 +803,26 @@ public final class Document: @MainActor Identifiable {
         // always allowed. Otherwise the grandparent must structurally accept.
         if let grandparentID = parent(of: parentBlock.id) {
             guard let grand = find(grandparentID) else { return false }
-            return grand.canContain(block)
+            return grand.canContain(block) || Self.headingContainmentLifts(block, outOf: grand)
         }
         return true
+    }
+
+    /// True when `block` is a heading that `parent`, also a heading, can't
+    /// contain. Inserted into that parent's body, it is lifted out by
+    /// `enforceHeadingContainment` and takes the following body with it, the
+    /// way the same lines would read in Markdown.
+    static func headingContainmentLifts(_ block: Block, outOf parent: Block) -> Bool {
+        parent.isHeading && block.isHeading && !parent.canContain(block)
     }
 
     /// Can the given subtree-roots be dropped at this path? Rejects:
     /// - dropping any moving id into its own descendants (cycle),
     /// - dropping into a leaf (parent must be a container),
-    /// - dropping a heading where containment-by-level is violated.
-    public func canDrop(ids: [BlockID], to path: DropPath) -> Bool {
+    /// - dropping a heading where containment-by-level is violated, unless
+    ///   `liftingHeadings` is set: then a heading may land in a heading body
+    ///   it can't belong to, and heading containment lifts it out.
+    public func canDrop(ids: [BlockID], to path: DropPath, liftingHeadings: Bool = false) -> Bool {
         guard !ids.isEmpty else { return false }
         // Cycle check: target.parent must not be inside any moving subtree.
         if let targetParentID = path.parent {
@@ -822,7 +835,10 @@ public final class Document: @MainActor Identifiable {
         if let parentID = path.parent {
             guard let parentBlock = find(parentID), parentBlock.isContainer else { return false }
             for id in ids {
-                guard let block = find(id), parentBlock.canContain(block) else { return false }
+                guard let block = find(id) else { return false }
+                guard parentBlock.canContain(block)
+                    || (liftingHeadings && Self.headingContainmentLifts(block, outOf: parentBlock))
+                else { return false }
             }
         }
         return true
@@ -922,6 +938,10 @@ public final class Document: @MainActor Identifiable {
     /// enter the heading body. Structural containers (toggles, templates, list
     /// items) are skipped as whole subtrees; Tab/Shift-Tab are the explicit
     /// hierarchy-changing commands for those.
+    ///
+    /// A heading slab treats a neighbouring heading it can't enter (same or
+    /// higher level) as opaque and trades places with it one section at a
+    /// time. At the end of a list item it steps out first, like Shift-Tab.
     private func slidePlan(
         for ids: Set<BlockID>,
         by delta: Int,
@@ -943,6 +963,11 @@ public final class Document: @MainActor Identifiable {
         let movedBlocksAreHeadings = movedBlocks.allSatisfy(\.isHeading)
         let target: DropPath
 
+        func isOpaque(_ heading: Block) -> Bool {
+            skippingHeadingIDs.contains(heading.id)
+                || (movedBlocksAreHeadings && movedBlocks.contains { !heading.canContain($0) })
+        }
+
         // Open headings are outline envelopes: moving across one enters its
         // visible body. A closed heading is opaque, so keep walking past a
         // consecutive closed run. Heading slabs can remain at the surrounding
@@ -958,8 +983,9 @@ public final class Document: @MainActor Identifiable {
             var end = start
             while end < targetSiblings.count,
                   targetSiblings[end].isHeading,
-                  skippingHeadingIDs.contains(targetSiblings[end].id) {
+                  isOpaque(targetSiblings[end]) {
                 end += 1
+                if movedBlocksAreHeadings { break }
             }
             guard end > start else { return nil }
 
@@ -975,7 +1001,7 @@ public final class Document: @MainActor Identifiable {
 
             guard end < targetSiblings.count,
                   targetSiblings[end].isHeading,
-                  !skippingHeadingIDs.contains(targetSiblings[end].id)
+                  !isOpaque(targetSiblings[end])
             else { return nil }
             return DropPath(parent: targetSiblings[end].id, position: 0)
         }
@@ -988,8 +1014,9 @@ public final class Document: @MainActor Identifiable {
             var before = start
             while before >= 0,
                   targetSiblings[before].isHeading,
-                  skippingHeadingIDs.contains(targetSiblings[before].id) {
+                  isOpaque(targetSiblings[before]) {
                 before -= 1
+                if movedBlocksAreHeadings { break }
             }
             guard before < start else { return nil }
 
@@ -1011,7 +1038,7 @@ public final class Document: @MainActor Identifiable {
                 guard let parentIndex = outerSiblings.firstIndex(where: { $0.id == parentBlock.id }) else { return nil }
                 if parentIndex > 0,
                    outerSiblings[parentIndex - 1].isHeading,
-                   skippingHeadingIDs.contains(outerSiblings[parentIndex - 1].id) {
+                   isOpaque(outerSiblings[parentIndex - 1]) {
                     guard let skippedTarget = targetMovingUpPastClosedHeadings(
                         in: outerSiblings,
                         startingAt: parentIndex - 1,
@@ -1024,7 +1051,7 @@ public final class Document: @MainActor Identifiable {
             } else {
                 let previousSibling = siblings[first - 1]
                 if previousSibling.isHeading {
-                    if skippingHeadingIDs.contains(previousSibling.id) {
+                    if isOpaque(previousSibling) {
                         guard let skippedTarget = targetMovingUpPastClosedHeadings(
                             in: siblings,
                             startingAt: first - 1,
@@ -1047,9 +1074,10 @@ public final class Document: @MainActor Identifiable {
                 guard let parentIndex = outerSiblings.firstIndex(where: { $0.id == parentBlock.id }) else { return nil }
                 let nextOuterPosition = parentIndex + 1
                 if nextOuterPosition < outerSiblings.count,
-                   outerSiblings[nextOuterPosition].isHeading {
+                   outerSiblings[nextOuterPosition].isHeading,
+                   !movedBlocksAreHeadings {
                     let nextHeading = outerSiblings[nextOuterPosition]
-                    if skippingHeadingIDs.contains(nextHeading.id) {
+                    if isOpaque(nextHeading) {
                         guard let skippedTarget = targetMovingDownPastClosedHeadings(
                             in: outerSiblings,
                             startingAt: nextOuterPosition,
@@ -1066,7 +1094,7 @@ public final class Document: @MainActor Identifiable {
             } else {
                 let nextSibling = siblings[nextPosition]
                 if nextSibling.isHeading {
-                    if skippingHeadingIDs.contains(nextSibling.id) {
+                    if isOpaque(nextSibling) {
                         guard let skippedTarget = targetMovingDownPastClosedHeadings(
                             in: siblings,
                             startingAt: nextPosition,
@@ -1086,7 +1114,9 @@ public final class Document: @MainActor Identifiable {
             }
         }
 
-        guard canDrop(ids: orderedIDs, to: target) else { return nil }
+        // Moving down, a heading slab may land in a heading body it can't
+        // belong to (stepping out of a list item); containment lifts it out.
+        guard canDrop(ids: orderedIDs, to: target, liftingHeadings: delta > 0) else { return nil }
         return SlidePlan(orderedIDs: orderedIDs, movedBlocks: movedBlocks, target: target)
     }
 
@@ -1121,8 +1151,8 @@ public final class Document: @MainActor Identifiable {
     /// later than intended (because removing the source shifts the trailing
     /// siblings down by one before the insert).
     @discardableResult
-    public func moveSubtrees(_ ids: [BlockID], to target: DropPath) -> Bool {
-        guard canDrop(ids: ids, to: target) else { return false }
+    public func moveSubtrees(_ ids: [BlockID], to target: DropPath, liftingHeadings: Bool = false) -> Bool {
+        guard canDrop(ids: ids, to: target, liftingHeadings: liftingHeadings) else { return false }
 
         // Snapshot the source positions in target.parent BEFORE removal so
         // we can compute "how many source blocks were before the target".

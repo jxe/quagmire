@@ -2584,7 +2584,7 @@ public struct EditorView: View {
         let selected = Set(ids)
         guard let plan = indentPlan(ids: Array(selected), by: delta) else { return false }
         mutate(delta > 0 ? "Indent" : "Outdent") {
-            document.moveSubtrees(plan.roots, to: plan.target)
+            document.moveSubtrees(plan.roots, to: plan.target, liftingHeadings: delta < 0)
         }
         revealHiddenBlocks(Set(plan.roots))
         return true
@@ -3207,7 +3207,9 @@ public struct EditorView: View {
             target = DropPath(parent: grandparentID, position: parentIndex + 1)
         }
 
-        guard document.canDrop(ids: roots, to: target) else { return nil }
+        // Outdenting a heading out of a list item may land it in a heading
+        // body it can't belong to; heading containment lifts it out.
+        guard document.canDrop(ids: roots, to: target, liftingHeadings: delta < 0) else { return nil }
         return IndentPlan(roots: roots, target: target)
     }
 
