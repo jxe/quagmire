@@ -937,7 +937,8 @@ public struct EditorView: View {
                 onCompletionTriggerChange: { trigger in
                     handleCompletionTriggerChange(trigger, blockID: block.id)
                 },
-                consumeInitialCursor: { state.takePendingInitialCursor() }
+                consumeInitialCursor: { state.takePendingInitialCursor() },
+                calloutTriggers: editorCallouts.compactMap(\.trigger)
             )
             : nil
 
@@ -3007,7 +3008,20 @@ public struct EditorView: View {
     /// Multi-block transforms (divider/codeFence) splice via `replaceSubtree` and
     /// refocus on `transform.focusReplacementIndex` (the trailing fresh paragraph).
     func applyAutotransform(_ transform: BlockTransform, remainingText: AttributedString, blockID: BlockID) {
-        guard document.find(blockID) != nil else { return }
+        guard let block = document.find(blockID) else { return }
+        if case let .callout(trigger) = transform {
+            // Only a paragraph becomes a callout by typing; the callout keeps the block's id.
+            guard case .paragraph = block.kind,
+                  let callout = editorCallouts.first(where: { $0.trigger == trigger }) else { return }
+            var source = block
+            source.kind = .paragraph(text: remainingText)
+            guard let replacement = callout.turnInto(source), replacement.id == blockID else { return }
+            mutate("Format Block", persistenceDelay: typingCheckpointDelay) {
+                document.replaceSubtree(blockID, with: [replacement])
+            }
+            DispatchQueue.main.async { transferFocus(to: .editor(blockID, initialCursor: nil)) }
+            return
+        }
         let replacements = transform.apply(to: remainingText)
         guard !replacements.isEmpty else { return }
 

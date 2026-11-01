@@ -14,6 +14,9 @@ public struct EditorCallout: Identifiable {
     public let systemImage: String
     public let tint: Color
     public let turnIntoShortcut: KeyEquivalent?
+    /// Typed at the start of a paragraph (`"! "`), turns it into this callout,
+    /// like the built-in Markdown shortcuts.
+    public let trigger: String?
 
     private let recognizer: @MainActor (Block) -> Bool
     private let turnIntoHandler: (@MainActor (Block) -> Block?)?
@@ -30,6 +33,7 @@ public struct EditorCallout: Identifiable {
         systemImage: String,
         tint: Color,
         turnIntoShortcut: KeyEquivalent? = nil,
+        trigger: String? = nil,
         recognizes: @escaping @MainActor (Block) -> Bool,
         turnInto: (@MainActor (Block) -> Block?)? = nil,
         @ViewBuilder trailing: @escaping @MainActor (Block) -> Trailing
@@ -39,6 +43,7 @@ public struct EditorCallout: Identifiable {
         self.systemImage = systemImage
         self.tint = tint
         self.turnIntoShortcut = turnIntoShortcut
+        self.trigger = trigger
         self.recognizer = recognizes
         self.turnIntoHandler = turnInto
         self.trailingContent = { AnyView(trailing($0)) }

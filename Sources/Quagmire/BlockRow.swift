@@ -122,6 +122,8 @@ struct BlockRow: View, Equatable {
         /// tap/split/merge time. EditorView's closure atomically reads and
         /// clears `EditorState.pendingInitialCursor`.
         let consumeInitialCursor: () -> InitialCursorTarget?
+        /// Host callouts' typing triggers, turned into autotransforms.
+        let calloutTriggers: [String]
 
         init(
             block: Binding<Block>,
@@ -132,7 +134,8 @@ struct BlockRow: View, Equatable {
             onAutotransform: @escaping (BlockTransform, AttributedString) -> Void,
             onOpenLink: @escaping (URL) -> Bool,
             onCompletionTriggerChange: @escaping (InlineCompletionTrigger?) -> Void,
-            consumeInitialCursor: @escaping () -> InitialCursorTarget?
+            consumeInitialCursor: @escaping () -> InitialCursorTarget?,
+            calloutTriggers: [String] = []
         ) {
             self.block = block
             self.editorFocused = editorFocused
@@ -143,6 +146,7 @@ struct BlockRow: View, Equatable {
             self.onOpenLink = onOpenLink
             self.onCompletionTriggerChange = onCompletionTriggerChange
             self.consumeInitialCursor = consumeInitialCursor
+            self.calloutTriggers = calloutTriggers
         }
     }
 
@@ -785,7 +789,8 @@ struct BlockRow: View, Equatable {
                 onCompletionTriggerChange: editor.onCompletionTriggerChange,
                 completionActive: editor.completionActive,
                 consumeInitialCursor: editor.consumeInitialCursor,
-                hidesLeadingIcon: hidesLeadingIcon
+                hidesLeadingIcon: hidesLeadingIcon,
+                calloutTriggers: editor.calloutTriggers
             )
             .foregroundStyle(usesMutedForeground ? theme.mutedForeground : theme.foreground)
             .strikethrough(strikethrough)

@@ -226,6 +226,8 @@ struct BlockTextEditor: View {
     /// The page title: its leading emoji is drawn by the row, so the editor
     /// keeps it hidden; see `TitleIcon`.
     var hidesLeadingIcon: Bool = false
+    /// Host callouts' typing triggers (`EditorCallout.trigger`).
+    var calloutTriggers: [String] = []
     /// Document-level undo controller. Native text-view undo stays disabled because its
     /// entries outlive SwiftUI's mounted editor; coordinators instead checkpoint live
     /// text after a short pause into this controller's stable document-level manager.
@@ -256,7 +258,8 @@ struct BlockTextEditor: View {
         onCompletionTriggerChange: @escaping (InlineCompletionTrigger?) -> Void = { _ in },
         completionActive: Bool = false,
         consumeInitialCursor: @escaping () -> InitialCursorTarget? = { nil },
-        hidesLeadingIcon: Bool = false
+        hidesLeadingIcon: Bool = false,
+        calloutTriggers: [String] = []
     ) {
         self._text = text
         self.font = font
@@ -274,6 +277,7 @@ struct BlockTextEditor: View {
         self.completionActive = completionActive
         self.consumeInitialCursor = consumeInitialCursor
         self.hidesLeadingIcon = hidesLeadingIcon
+        self.calloutTriggers = calloutTriggers
     }
 
     var body: some View {
@@ -307,7 +311,8 @@ struct BlockTextEditor: View {
             documentUndoController: documentUndoController,
             activeView: macActiveTextView,
             liveSelection: liveTextSelection,
-            hidesLeadingIcon: hidesLeadingIcon
+            hidesLeadingIcon: hidesLeadingIcon,
+            calloutTriggers: calloutTriggers
         )
         .alignmentGuide(.firstTextBaseline) { _ in
             // NSTextView with textContainerInset=.zero, lineFragmentPadding=0 puts its first
@@ -351,7 +356,8 @@ struct BlockTextEditor: View {
             consumeInitialCursor: consumeInitialCursor,
             documentUndoController: documentUndoController,
             liveSelection: liveTextSelection,
-            hidesLeadingIcon: hidesLeadingIcon
+            hidesLeadingIcon: hidesLeadingIcon,
+            calloutTriggers: calloutTriggers
         )
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
@@ -400,6 +406,7 @@ struct MacBlockTextEditor: NSViewRepresentable {
     let activeView: MacActiveTextView?
     var liveSelection: LiveTextSelection? = nil
     var hidesLeadingIcon = false
+    var calloutTriggers: [String] = []
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -590,7 +597,7 @@ struct MacBlockTextEditor: NSViewRepresentable {
                     tv.textStorage ?? NSTextStorage(),
                     baseBold: parent.bold
                 )
-                if let result = detectPrefixAutotransform(text: attrSnapshot, cursor: cursor) {
+                if let result = detectPrefixAutotransform(text: attrSnapshot, cursor: cursor, calloutTriggers: parent.calloutTriggers) {
                     // Autotransform replaces the block via `mutate(...)`, which now
                     // commits the active editor first — so the pre-mutation snapshot
                     // captures the typed prefix and Cmd-Z restores it cleanly.
@@ -1513,6 +1520,7 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
     let documentUndoController: DocumentUndoController?
     var liveSelection: LiveTextSelection? = nil
     var hidesLeadingIcon = false
+    var calloutTriggers: [String] = []
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -1740,7 +1748,7 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
                     textView.textStorage,
                     baseBold: parent.bold
                 )
-                if let result = detectPrefixAutotransform(text: attrSnapshot, cursor: cursor) {
+                if let result = detectPrefixAutotransform(text: attrSnapshot, cursor: cursor, calloutTriggers: parent.calloutTriggers) {
                     // Autotransform replaces the block via `mutate(...)`, which commits
                     // the active editor first — so the pre-mutation snapshot captures
                     // the typed prefix and Cmd-Z restores it cleanly.

@@ -9,6 +9,8 @@ enum BlockTransform: Equatable, Sendable {
     case toggle
     case divider
     case codeFence
+    /// A host callout whose typing trigger is `trigger` (`EditorCallout.trigger`).
+    case callout(trigger: String)
 }
 
 struct AutotransformResult: Equatable, Sendable {
@@ -48,6 +50,9 @@ extension BlockTransform {
             return [.divider(), .paragraph(text: AttributedString())]
         case .codeFence:
             return [.code(source: "", language: nil), .paragraph(text: AttributedString())]
+        case .callout:
+            // The editor asks the callout for its block (`applyAutotransform`).
+            return [.paragraph(text: remainingText)]
         }
     }
 
@@ -82,12 +87,13 @@ private let prefixTriggers: [(prefix: String, transform: BlockTransform)] = [
 /// Returns a result when `text` begins with a prefix trigger AND `cursor` sits exactly at
 /// the trigger's end. The trigger is consumed; any remaining text becomes the body of the
 /// new block. `cursor` is the character offset (UTF-16-equivalent for ASCII triggers).
-func detectPrefixAutotransform(text: AttributedString, cursor: Int) -> AutotransformResult? {
+func detectPrefixAutotransform(text: AttributedString, cursor: Int, calloutTriggers: [String] = []) -> AutotransformResult? {
     let plain = String(text.characters)
     if cursor == 3, plain == "---" {
         return AutotransformResult(transform: .divider, remainingText: AttributedString())
     }
-    for (prefix, transform) in prefixTriggers {
+    let callouts = calloutTriggers.map { (prefix: $0, transform: BlockTransform.callout(trigger: $0)) }
+    for (prefix, transform) in prefixTriggers + callouts {
         guard cursor == prefix.count else { continue }
         guard plain.hasPrefix(prefix) else { continue }
         // Slice the AttributedString (not the plain String) so any inline marks

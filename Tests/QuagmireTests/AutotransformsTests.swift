@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import SwiftUI
 @testable import Quagmire
 
 private func plain(_ result: AutotransformResult?) -> String {
@@ -336,4 +337,49 @@ struct BlockTransformApplyTests {
         #expect(BlockTransform.divider.focusReplacementIndex == 1)
         #expect(BlockTransform.codeFence.focusReplacementIndex == 1)
     }
+}
+
+@Suite("Host callout typing triggers")
+struct CalloutTriggerTests {
+    private func detect(_ s: String, cursor: Int? = nil) -> AutotransformResult? {
+        detectPrefixAutotransform(text: AttributedString(s), cursor: cursor ?? s.count, calloutTriggers: ["! "])
+    }
+
+    @Test func triggerAtTheStartBecomesTheCallout() {
+        #expect(detect("! ")?.transform == .callout(trigger: "! "))
+        #expect(plain(detect("! sort this", cursor: 2)) == "sort this")
+    }
+
+    @Test func imageSyntaxAndAnExclamationInTextAreLeftAlone() {
+        #expect(detect("![") == nil)
+        #expect(detect("Wow! ") == nil)
+        #expect(detect("!") == nil)
+        #expect(detectPrefixAutotransform(text: AttributedString("! "), cursor: 2) == nil)
+    }
+
+    @MainActor @Test func aParagraphTurnsIntoTheCalloutKeepingItsID() {
+        let paragraph = Block.paragraph(text: AttributedString("! "))
+        let bullet = Block.bullet(text: AttributedString("! "))
+        let doc = Document(id: DocumentID("t"), children: [paragraph, bullet])
+        let editor = EditorView(document: doc, state: EditorState(), host: CalloutTestHost()).callouts([EditorCallout(
+            id: "task", title: "Task", systemImage: "sparkles", tint: .purple, trigger: "! ",
+            recognizes: { $0.metadata["task"] != nil },
+            turnInto: { block in var value = block; value.kind = .quote(text: block.text); value.metadata["task"] = "1"; return value },
+            trailing: { _ in EmptyView() })])
+        editor.installUndoApply()
+
+        editor.applyAutotransform(.callout(trigger: "! "), remainingText: AttributedString(), blockID: paragraph.id)
+        editor.applyAutotransform(.callout(trigger: "! "), remainingText: AttributedString(), blockID: bullet.id)
+
+        #expect(doc.children[0].id == paragraph.id)
+        #expect(doc.children[0].metadata["task"] == "1")
+        #expect(doc.children[0].kind == .quote(text: AttributedString()))
+        // Only a paragraph becomes a callout by typing.
+        #expect(doc.children[1].kind == .bullet(text: AttributedString("! ")))
+    }
+}
+
+@MainActor private final class CalloutTestHost: EditorHostDefaults {
+    func persistCommit(changes: [DocumentChange], in document: Document) {}
+    func flush(_ document: Document) async {}
 }
