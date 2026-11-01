@@ -1324,7 +1324,7 @@ public struct EditorView: View {
         return .paragraph(text: AttributedString())
     }
 
-    /// If `kind` is a list-like row (bullet/numbered/todo/quote), return a
+    /// If `kind` is a list-like row (bullet/numbered/todo), return a
     /// fresh empty block of the same kind. Tree-depth follows from where the
     /// caller inserts; no per-block indent to copy.
     private func listLikeTemplate(from kind: VisibleRowKind?) -> Block? {
@@ -1335,8 +1335,6 @@ public struct EditorView: View {
             return .numbered(text: AttributedString())
         case .some(.todo):
             return .todo(text: AttributedString(), done: false)
-        case .some(.quote):
-            return .quote(text: AttributedString())
         default:
             return nil
         }
@@ -3081,10 +3079,7 @@ public struct EditorView: View {
             return .numbered(text: text)
         case .todo:
             return .todo(text: text, done: false)
-        case .quote:
-            // A callout (an agent task) is one block: what follows it is prose.
-            return callout(for: block) == nil ? .quote(text: text) : .paragraph(text: text)
-        case .heading, .paragraph, .toggle, .templateButton, .code, .divider, .documentLink, .image, .unsupported:
+        case .heading, .paragraph, .quote, .toggle, .templateButton, .code, .divider, .documentLink, .image, .unsupported:
             return .paragraph(text: text)
         }
     }

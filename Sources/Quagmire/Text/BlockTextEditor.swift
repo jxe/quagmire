@@ -1082,6 +1082,12 @@ final class ContainedTextView: NSTextView {
             // so commit so the outgoing doc carries the typed text.
             switch event.keyCode {
             case 36, 76: // Return, numpad Enter
+                // Shift- or Option-Return is a line break inside the block.
+                if !event.modifierFlags.isDisjoint(with: [.shift, .option]),
+                   event.modifierFlags.isDisjoint(with: [.command, .control]) {
+                    insertText("\n", replacementRange: selectedRange())
+                    return
+                }
                 let range = selectedRange()
                 let selStart = range.location
                 let selEnd = range.location + range.length
@@ -2000,6 +2006,21 @@ final class ContainedTextViewIOS: UITextView {
     /// Whether the marked text is a live voice transcript; see
     /// `showVoicePreview(_:)`.
     var showsVoicePreview = false
+
+    /// Shift- or Option-Return on a hardware keyboard is a line break inside
+    /// the block; plain Return still splits it (`insertText`).
+    override var keyCommands: [UIKeyCommand]? {
+        let lineBreaks = [UIKeyModifierFlags.shift, .alternate].map { modifiers in
+            let command = UIKeyCommand(input: "\r", modifierFlags: modifiers, action: #selector(insertLineBreak))
+            command.wantsPriorityOverSystemBehavior = true
+            return command
+        }
+        return (super.keyCommands ?? []) + lineBreaks
+    }
+
+    @objc private func insertLineBreak() {
+        super.insertText("\n")
+    }
 
     @discardableResult
     override func resignFirstResponder() -> Bool {

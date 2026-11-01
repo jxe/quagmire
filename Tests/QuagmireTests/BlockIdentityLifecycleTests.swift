@@ -183,7 +183,7 @@ struct BlockIdentityLifecycleTests {
         #expect(String(doc.children[1].text.characters) == "tail")
     }
 
-    @Test func returnAtTheEndOfACalloutStartsAParagraph() {
+    @Test func returnAtTheEndOfAQuoteOrCalloutStartsAParagraph() {
         var task = Block.quote(text: AttributedString("merge the duplicates"))
         task.metadata["test.callout"] = "1"
         let quote = Block.quote(text: AttributedString("a quote"))
@@ -196,7 +196,7 @@ struct BlockIdentityLifecycleTests {
         #expect(editor.splitBlock(quote.id, selectionStart: 7, selectionEnd: 7) == .handled)
 
         guard case .paragraph = doc.children[1].kind else { Issue.record("after a callout: \(doc.children[1].kind)"); return }
-        guard case .quote = doc.children[3].kind else { Issue.record("after a quote: \(doc.children[3].kind)"); return }
+        guard case .paragraph = doc.children[3].kind else { Issue.record("after a quote: \(doc.children[3].kind)"); return }
     }
 
     @Test func splitOverASelectionStillKeepsTheOriginalIDLeading() {
