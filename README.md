@@ -738,3 +738,13 @@ the page inserts copies. Dragging document blocks onto a region offers them to
 `EditorHost.receiveBlocks(_:inRegion:of:)`; when the host returns true they
 leave the document as one undoable edit. `find`, `parent`, `walk`, and
 `documentOrder` answer over regions too; `isRegionBlock(_:)` tells them apart.
+
+## Peers and callouts
+
+`.peers([EditorPeer])` shows others in the document (from the host's presence):
+their initials in the accessory lane beside a block, stacked when several share it,
+an optional faint row tint (`tint: true`), and an optional bubble that floats just
+under the row without moving the text. `.callouts([EditorCallout])` lets a host
+draw a quote it recognizes as a tinted callout with its own symbol and trailing
+controls (such as a Run button), and offer it in Turn Into. Both are host-owned
+presentation: the document, its undo history and serialization never see them.

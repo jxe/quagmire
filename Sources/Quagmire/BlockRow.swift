@@ -17,6 +17,9 @@ struct BlockRowModel: Equatable {
     /// recognizes its text.
     var bulletMarkerSymbol: String?
     var isBulletMarkerPopoverPresented = false
+    /// A host callout drawing this quote: its symbol and tint.
+    var calloutSymbol: String?
+    var calloutTint: Color?
     let isExpanded: Bool
     let isDropTarget: Bool
     let isActionMenuTarget: Bool
@@ -191,6 +194,7 @@ struct BlockRow: View, Equatable {
     var onBulletMarkerDismiss: () -> Void { actions.onBulletMarkerDismiss }
     var onBulletMarkerTap: () -> Void { actions.onBulletMarkerTap }
     var bulletMarkerPopoverContent: () -> AnyView { actions.bulletMarkerPopoverContent }
+    var calloutTrailing: () -> AnyView { actions.calloutTrailing }
 
     /// Convenience: this row is in edit mode (its text area is hosting a
     /// `BlockTextEditor` rather than a read-only renderer).
@@ -332,7 +336,11 @@ struct BlockRow: View, Equatable {
             todoRow(done: done)
 
         case .quote:
-            quoteRow()
+            if let symbol = model.calloutSymbol {
+                calloutRow(symbol: symbol, tint: model.calloutTint ?? theme.foreground)
+            } else {
+                quoteRow()
+            }
 
         case .code(let source, let language):
             codeRow(source: source, language: language)
@@ -536,6 +544,24 @@ struct BlockRow: View, Equatable {
                 .frame(width: 3)
             editableText(font: theme.body(size: quoteFontSize), fontSize: quoteFontSize, bold: false, lineSpacing: theme.bodyLineSpacing)
         }
+        .padding(.leading, theme.nonListLeading(depth: depth))
+    }
+
+    /// A quote a host callout recognizes: a tinted panel with the callout's
+    /// symbol where the bar was, and the host's controls at the trailing edge.
+    private func calloutRow(symbol: String, tint: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: theme.bulletMarkerSymbolSize, weight: .semibold))
+                .foregroundStyle(tint)
+            editableText(font: theme.body(), fontSize: 16, bold: false, lineSpacing: theme.bodyLineSpacing)
+            calloutTrailing()
+                .fixedSize()
+                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(tint.opacity(0.1)))
         .padding(.leading, theme.nonListLeading(depth: depth))
     }
 
@@ -851,6 +877,7 @@ struct BlockRowActions {
     var onBulletMarkerDismiss: () -> Void = {}
     var onBulletMarkerTap: () -> Void = {}
     var bulletMarkerPopoverContent: () -> AnyView = { AnyView(EmptyView()) }
+    var calloutTrailing: () -> AnyView = { AnyView(EmptyView()) }
 }
 
 /// A page title that begins with an emoji ("👍 Emoji Page") lends that

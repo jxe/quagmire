@@ -40,6 +40,9 @@ public struct EditorView: View {
     var accessoryReveal: EditorAccessoryReveal?
     var unavailableAccessories: ([String]) -> Void = { _ in }
     var editorBulletMarkers: [EditorBulletMarker] = []
+    var editorPeers: [EditorPeer] = []
+    var editorCallouts: [EditorCallout] = []
+    var tintsPeerRows = false
 
     // View-shaped @State that doesn't move into EditorState because it's tied to
     // SwiftUI/UIKit lifecycle (FocusState must live on a View; row-frame cache
@@ -495,9 +498,11 @@ public struct EditorView: View {
                     if case let .block(id) = accessory.anchor, accessory.isExpanded.wrappedValue { return id }
                     return nil
                 }),
-                accessoryLaneWidth: editorAccessories.contains { if case .block = $0.anchor { return true }; return false } ? 32 : 0,
-                rowMarker: { accessoryMarkers(at: .block($0)) },
+                accessoryLaneWidth: hasPeers || editorAccessories.contains { if case .block = $0.anchor { return true }; return false } ? 32 : 0,
+                rowMarker: { laneMarkers(at: $0) },
                 rowAccessory: { accessoryDetails(at: .block($0)) },
+                rowTint: { peerTint(at: $0) },
+                rowBubble: { peerBubbles(at: $0) },
                 actions: surfaceActions
             ) { id in
                 if let row = visibleRowByID[id] {
@@ -948,6 +953,8 @@ public struct EditorView: View {
             isIconPickerPresented: iconPickerBlockID == block.id,
             bulletMarkerSymbol: bulletMarker(for: block)?.systemImage,
             isBulletMarkerPopoverPresented: bulletMarkerPopoverBlockID == block.id,
+            calloutSymbol: callout(for: block)?.systemImage,
+            calloutTint: callout(for: block)?.tint,
             isExpanded: isSectionExpanded(block),
             isDropTarget: state.dropOntoBlockID == block.id,
             isActionMenuTarget: isActionMenuTarget,
@@ -1070,6 +1077,12 @@ public struct EditorView: View {
                     return AnyView(EmptyView())
                 }
                 return marker.popover(in: bulletMarkerContext(for: current))
+            },
+            calloutTrailing: {
+                guard let current = document.find(block.id), let callout = callout(for: current) else {
+                    return AnyView(EmptyView())
+                }
+                return callout.trailing(for: current)
             }
         )
         #if os(macOS)

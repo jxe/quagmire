@@ -392,6 +392,8 @@ extension EditorView {
                 .map { ($0.0, $0.1.filter { availableTargets.contains($0) || $0 == selectedTarget }) }
                 .filter { !$0.1.isEmpty }
             let markerTargets = bulletMarkerTurnIntoTargets(for: targetBlocks)
+            let calloutTargets = calloutTurnIntoTargets(for: targetBlocks)
+            let selectedCalloutID = selectedCalloutID(for: targetBlocks)
             let selectedMarkerID = selectedBulletMarkerID(for: targetBlocks)
             // A region's rows are not edited: they offer only what reads,
             // folds or moves the page a link names.
@@ -424,6 +426,21 @@ extension EditorView {
                                 ) {
                                     if target != selectedTarget {
                                         _ = convert(blockIDs: targetIDs, to: target)
+                                    }
+                                }
+                            }
+                            // Host callouts follow the built-in basic kinds.
+                            if group.0 == .basic {
+                                ForEach(calloutTargets) { callout in
+                                    compactMenuButton(
+                                        title: callout.title,
+                                        systemImage: callout.systemImage,
+                                        keyboardShortcut: callout.turnIntoShortcut,
+                                        isSelected: callout.id == selectedCalloutID
+                                    ) {
+                                        if callout.id != selectedCalloutID {
+                                            _ = convert(blockIDs: targetIDs, to: callout)
+                                        }
                                     }
                                 }
                             }
@@ -775,6 +792,22 @@ extension EditorView {
         }
         guard eligible else { return [] }
         return editorBulletMarkers.filter(\.offersTurnInto)
+    }
+
+    /// Host callouts offered in Turn Into, on the same terms as markers.
+    fileprivate func calloutTurnIntoTargets(for blocks: [Block]) -> [EditorCallout] {
+        let eligible = blocks.allSatisfy { block in
+            if case .documentLink = block.kind { return false }
+            return textForBlockTypeChange(block) != nil
+        }
+        guard eligible else { return [] }
+        return editorCallouts.filter(\.offersTurnInto)
+    }
+
+    /// The callout every block in `blocks` is drawn as, if they share one.
+    fileprivate func selectedCalloutID(for blocks: [Block]) -> String? {
+        guard let first = blocks.first.flatMap({ callout(for: $0)?.id }) else { return nil }
+        return blocks.allSatisfy({ callout(for: $0)?.id == first }) ? first : nil
     }
 
     /// The marker every block in `blocks` is drawn with, if they share one.

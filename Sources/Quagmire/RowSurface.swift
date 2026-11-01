@@ -181,6 +181,11 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     let accessoryLaneWidth: CGFloat
     let rowMarker: (ID) -> AnyView?
     let rowAccessory: (ID) -> AnyView?
+    /// A faint wash behind a row, such as a peer's colour.
+    let rowTint: (ID) -> Color?
+    /// A view floating just under a row's trailing edge, over the rows after
+    /// it, that never changes the layout.
+    let rowBubble: (ID) -> AnyView?
     let actions: RowSurfaceActions<ID>
     let rowContent: (ID) -> RowContent
     /// `isLanding` turns true when a settling lift starts moving onto its
@@ -227,6 +232,8 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         accessoryLaneWidth: CGFloat = 0,
         rowMarker: @escaping (ID) -> AnyView? = { _ in nil },
         rowAccessory: @escaping (ID) -> AnyView? = { _ in nil },
+        rowTint: @escaping (ID) -> Color? = { _ in nil },
+        rowBubble: @escaping (ID) -> AnyView? = { _ in nil },
         actions: RowSurfaceActions<ID>,
         @ViewBuilder rowContent: @escaping (ID) -> RowContent,
         @ViewBuilder liftContent: @escaping (ID, CGSize, _ isLanding: Bool) -> LiftContent
@@ -254,6 +261,7 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         self.expandedAccessoryRows = expandedAccessoryRows
         self.accessoryLaneWidth = accessoryLaneWidth
         self.rowMarker = rowMarker; self.rowAccessory = rowAccessory
+        self.rowTint = rowTint; self.rowBubble = rowBubble
         self.actions = actions
         self.rowContent = rowContent
         self.liftContent = liftContent
@@ -294,8 +302,22 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
                             }
                             .allowsHitTesting(false)
                         }
+                        .background {
+                            if let tint = rowTint(row.id) {
+                                RoundedRectangle(cornerRadius: 4).fill(tint.opacity(0.12)).allowsHitTesting(false)
+                            }
+                        }
                         .overlay(alignment: .topTrailing) {
                             rowMarker(row.id).frame(width: accessoryLaneWidth).offset(x: accessoryLaneWidth)
+                        }
+                        .overlay(alignment: .bottomTrailing) {
+                            if let bubble = rowBubble(row.id) {
+                                bubble
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: 320, alignment: .trailing)
+                                    .alignmentGuide(.bottom) { $0[.top] - 4 }
+                                    .allowsHitTesting(false)
+                            }
                         }
                         .padding(
                             .top,
@@ -310,6 +332,8 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
                             layoutCache.setAccessoryHeight($0, for: row.id)
                         }
                     }
+                    // A floating bubble draws over the rows after its own.
+                    .zIndex(rowBubble(row.id) == nil ? 0 : 1)
                 }
                 pinchPreviewView(at: rows.count)
                 trailingDropTarget
