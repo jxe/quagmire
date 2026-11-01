@@ -550,17 +550,17 @@ struct BlockRow: View, Equatable {
     /// A quote a host callout recognizes: a tinted panel with the callout's
     /// symbol where the bar was, and the host's controls at the trailing edge.
     private func calloutRow(symbol: String, tint: Color) -> some View {
-        // The controls center on the text, so a one-line callout has its
-        // button in the middle of the panel.
-        HStack(alignment: .center, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Image(systemName: symbol)
-                    .font(.system(size: theme.bulletMarkerSymbolSize, weight: .semibold))
-                    .foregroundStyle(tint)
-                editableText(font: theme.body(), fontSize: 16, bold: false, lineSpacing: theme.bodyLineSpacing)
-            }
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: theme.bulletMarkerSymbolSize, weight: .semibold))
+                .foregroundStyle(tint)
+            editableText(font: theme.body(), fontSize: 16, bold: false, lineSpacing: theme.bodyLineSpacing)
+            // Centered on the first line: in the middle of a one-line
+            // callout, at the top of a long one. A 16pt line's middle sits
+            // about 5.5pt above its baseline.
             calloutTrailing()
                 .fixedSize()
+                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5.5 }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
