@@ -39,7 +39,6 @@ public struct EditorView: View {
     var editorAccessories: [EditorAccessory] = []
     var accessoryReveal: EditorAccessoryReveal?
     var unavailableAccessories: ([String]) -> Void = { _ in }
-    var mutedBlock: (Block) -> Bool = { _ in false }
     var editorBulletMarkers: [EditorBulletMarker] = []
 
     // View-shaped @State that doesn't move into EditorState because it's tied to
@@ -261,8 +260,8 @@ public struct EditorView: View {
 
     public var body: some View {
         GeometryReader { geometry in
-            let numbering = NumberingContext.compute(document.children)
-            let snapshot = document.children
+            let snapshot = document.displayedChildren
+            let numbering = NumberingContext.compute(snapshot)
             // Tree-aware visible-row layout walk — yields one VisibleRow per
             // displayed block, each carrying its slot, depth, and prev-sibling
             // reference so the ForEach below can iterate over the rows array
@@ -379,6 +378,9 @@ public struct EditorView: View {
                         #else
                         toggleSectionExpansion(block)
                         #endif
+                    } else if document.isRegionBlock(id) {
+                        // A region row has no block actions to offer.
+                        transferFocus(to: .nav(cursor: id))
                     } else if !readOnly {
                         handleHandleClick(blockID: id)
                     }
@@ -400,7 +402,7 @@ public struct EditorView: View {
                         Haptics.medium(enabled: configuration.isHapticFeedbackEnabled)
                         Haptics.prepareSelection(enabled: configuration.isHapticFeedbackEnabled)
                     }
-                    tickReorderLift(blockID: blockID, at: location, anchorAt: anchor, snapshot: document.children)
+                    tickReorderLift(blockID: blockID, at: location, anchorAt: anchor, snapshot: document.displayedChildren)
                 },
                 shouldBeginIOSReorder: { blockID, location in
                     !readOnly && shouldBeginIOSReorder(on: blockID, at: location)
@@ -408,17 +410,17 @@ public struct EditorView: View {
                 onReorderChanged: { location, anchor in
                     guard !readOnly else { return }
                     guard let id = state.reorderLift?.ids.first else { return }
-                    tickReorderLift(blockID: id, at: location, anchorAt: anchor, snapshot: document.children)
+                    tickReorderLift(blockID: id, at: location, anchorAt: anchor, snapshot: document.displayedChildren)
                 },
                 onReorderEnded: { location in
                     guard !readOnly else { return }
-                    endReorderLift(atY: location.y, snapshot: document.children)
+                    endReorderLift(atY: location.y, snapshot: document.displayedChildren)
                 },
                 onReorderCancelled: {
                     cancelReorderLift()
                 },
                 onReorderAutoscroll: { location in
-                    if !readOnly { applyDropTarget(at: location.y, snapshot: document.children) }
+                    if !readOnly { applyDropTarget(at: location.y, snapshot: document.displayedChildren) }
                 },
                 onReorderSettled: { token in
                     finishReorderSettle(token: token)
@@ -434,12 +436,12 @@ public struct EditorView: View {
                     if !readOnly { handlePinchCommit(value) }
                 },
                 onExternalDropUpdate: { y in
-                    if !readOnly { applyDropTarget(at: y, snapshot: document.children) }
+                    if !readOnly { applyDropTarget(at: y, snapshot: document.displayedChildren) }
                 },
                 onExternalDrop: { string, y in
                     guard !readOnly else { return }
                     if let payload = BlockDragPayload(jsonString: string) {
-                        performPayloadDrop(payload, atY: y, snapshot: document.children)
+                        performPayloadDrop(payload, atY: y, snapshot: document.displayedChildren)
                     }
                 },
                 onExternalDropCancel: {
@@ -463,7 +465,7 @@ public struct EditorView: View {
                     // Hold the rows where they are drawn while the gap opens
                     // under the pointer, as a lift in this window does.
                     if state.reorderLift == nil { layoutCache.beginReorderFrameSnapshot() }
-                    applyDropTarget(at: y, snapshot: document.children)
+                    applyDropTarget(at: y, snapshot: document.displayedChildren)
                 },
                 onExternalBlockDrop: { y in
                     !readOnly && performExternalBlockDrop(atY: y)
@@ -854,6 +856,10 @@ public struct EditorView: View {
         isCurrentFindMatch: Bool = false
     ) -> some View {
         let block = binding.wrappedValue
+        let isRegionRow = document.isRegionBlock(block.id)
+        // A region's rows are never edited; they are selected, opened, and
+        // dragged like any others.
+        let readOnly = self.readOnly || isRegionRow
         // iOS has no nav-mode multi-select — there's no hardware keyboard arrow nav and the
         // blue tint after dismissing the keyboard is just visual noise. Hardcode false to
         // suppress it (the underlying nav state still updates; nothing reads it on iOS).
@@ -938,7 +944,7 @@ public struct EditorView: View {
             depth: depth,
             isPageTitle: isPageTitleBlock(block),
             numberingIndex: numberingIndex,
-            isSelected: !readOnly && isSelected,
+            isSelected: !self.readOnly && isSelected,
             isEditing: editing != nil,
             isActiveEditor: editing?.isActive ?? false,
             completionActive: editing?.completionActive ?? false,
@@ -964,7 +970,7 @@ public struct EditorView: View {
             provisionalCaretOpacity: provisionalCaretOpacity,
             provisionalCaretArmed: provisionalCaretArmed,
             landsPinchCaret: landsPinchCaret,
-            isMuted: mutedBlock(block)
+            isMuted: isRegionRow
         )
         let rowActions = BlockRowActions(
             editor: editing,
@@ -1419,7 +1425,7 @@ public struct EditorView: View {
     }
 
     private func lastVisibleBlock() -> Block? {
-        let hidden = hiddenBlockIDs(in: document.children)
+        let hidden = hiddenBlockIDs(in: document.displayedChildren)
         var lastVisible: Block?
         document.walk { block, _, _ in
             if !hidden.contains(block.id) { lastVisible = block }
@@ -1645,6 +1651,10 @@ public struct EditorView: View {
             // silently bail for that exact (common) case — Cmd+Return creating a
             // new row was the canonical bug.
             if let block = document.find(id) {
+                if document.isRegionBlock(id) {
+                    transferFocus(to: .nav(cursor: id))
+                    return
+                }
                 switch block.kind {
                 case .code, .divider, .documentLink:
                     transferFocus(to: .nav(cursor: id))
@@ -2128,7 +2138,7 @@ public struct EditorView: View {
         let headings = collapsibleHeadingIDs
         guard !headings.isEmpty, !headings.isSubset(of: state.collapsedHeadings) else { return }
 
-        let hiddenAfterFold = Quagmire.hiddenBlockIDs(in: document.children) { block in
+        let hiddenAfterFold = Quagmire.hiddenBlockIDs(in: document.displayedChildren) { block in
             if block.isHeading, headings.contains(block.id) { return true }
             return isCollapsedSection(block)
         }
@@ -2189,7 +2199,7 @@ public struct EditorView: View {
         var safety = 16
         while safety > 0 {
             safety -= 1
-            let hidden = hiddenBlockIDs(in: document.children)
+            let hidden = hiddenBlockIDs(in: document.displayedChildren)
             var didExpand = false
             for id in ids where hidden.contains(id) {
                 // Walk up the parent chain looking for the closest collapsed
@@ -2231,8 +2241,8 @@ public struct EditorView: View {
     /// preorder, skipping non-text-bearing kinds. Lands the cursor at end of the
     /// previous block when going left, offset 0 when going right.
     private func exitEditHorizontal(_ blockID: BlockID, by delta: Int) -> KeyPress.Result {
-        let blocks = preorderFlat()
-        let hidden = hiddenBlockIDs(in: document.children)
+        let blocks = preorderFlat().filter { !document.isRegionBlock($0.id) }
+        let hidden = hiddenBlockIDs(in: document.displayedChildren)
         let visible = blocks.filter { !hidden.contains($0.id) }
         guard let start = visible.firstIndex(where: { $0.id == blockID }) else { return .ignored }
         var i = start + delta
@@ -2257,7 +2267,7 @@ public struct EditorView: View {
     func moveCursor(by delta: Int) {
         let blocks = preorderFlat()
         guard !blocks.isEmpty else { return }
-        let hidden = hiddenBlockIDs(in: document.children)
+        let hidden = hiddenBlockIDs(in: document.displayedChildren)
         let visible = blocks.filter { !hidden.contains($0.id) }
         guard !visible.isEmpty else { return }
         if state.cursor == nil {
@@ -2306,7 +2316,7 @@ public struct EditorView: View {
         if state.editingBlock != nil {
             transferFocus(to: .nav(cursor: anchorID))
         }
-        let hidden = hiddenBlockIDs(in: document.children)
+        let hidden = hiddenBlockIDs(in: document.displayedChildren)
         let range = blocks[min(anchorIndex, targetIndex)...max(anchorIndex, targetIndex)]
         let selection = Set(range.map(\.id).filter { !hidden.contains($0) })
         state.setNavSelection(blocks: selection, anchor: anchorID, cursor: blockID)
@@ -2315,7 +2325,7 @@ public struct EditorView: View {
 
     /// Cmd-A in navigation mode: every visible row.
     func selectAllBlocks() {
-        let hidden = hiddenBlockIDs(in: document.children)
+        let hidden = hiddenBlockIDs(in: document.displayedChildren)
         let visible = preorderFlat().map(\.id).filter { !hidden.contains($0) }
         guard let first = visible.first, let last = visible.last else { return }
         state.setNavSelection(blocks: Set(visible), anchor: first, cursor: last)
@@ -2425,7 +2435,7 @@ public struct EditorView: View {
     /// when the active editor is in edit mode, since `state.selection` may not
     /// reflect the editing block.
     func moveBlocksInDocument(_ ids: Set<BlockID>, by delta: Int) {
-        let roots = document.selectionSubtreeRoots(ids)
+        let roots = document.selectionSubtreeRoots(authoredIDs(ids))
         guard !roots.isEmpty,
               document.canSlideSiblings(
             Set(roots),
@@ -2446,7 +2456,7 @@ public struct EditorView: View {
     }
 
     func canMoveBlocksInDocument(_ ids: Set<BlockID>, by delta: Int) -> Bool {
-        let roots = document.selectionSubtreeRoots(ids)
+        let roots = document.selectionSubtreeRoots(authoredIDs(ids))
         return !roots.isEmpty && document.canSlideSiblings(
             Set(roots),
             by: delta,
@@ -2481,7 +2491,7 @@ public struct EditorView: View {
     }
 
     private func deleteBlocks(ids: [BlockID], actionName: String) {
-        let roots = document.selectionSubtreeRoots(Set(ids))
+        let roots = document.selectionSubtreeRoots(authoredIDs(ids))
         guard !roots.isEmpty else { return }
         // Don't allow deleting the entire top-level tree.
         let coveredRoots = roots.filter { document.parent(of: $0) == nil }
@@ -2581,13 +2591,19 @@ public struct EditorView: View {
     /// contiguous sibling slab that can move together to one destination.
     @discardableResult
     func indentBlocks(_ ids: some Sequence<BlockID>, by delta: Int) -> Bool {
-        let selected = Set(ids)
+        let selected = authoredIDs(ids)
         guard let plan = indentPlan(ids: Array(selected), by: delta) else { return false }
         mutate(delta > 0 ? "Indent" : "Outdent") {
             document.moveSubtrees(plan.roots, to: plan.target, liftingHeadings: delta < 0)
         }
         revealHiddenBlocks(Set(plan.roots))
         return true
+    }
+
+    /// The ids that name the document's own blocks, leaving out region rows,
+    /// which no edit reaches.
+    func authoredIDs(_ ids: some Sequence<BlockID>) -> Set<BlockID> {
+        Set(ids.lazy.filter { !document.isRegionBlock($0) })
     }
 
     func copySelectionToPasteboard() -> Bool {
@@ -2597,14 +2613,14 @@ public struct EditorView: View {
     /// Cut: copy the selection to the pasteboard, then delete it as a single undo entry.
     /// Mirrors the `deleteSelection` guard against deleting the entire document.
     func cutSelectionToPasteboard() -> Bool {
-        let roots = document.selectionSubtreeRoots(state.selection)
+        let roots = document.selectionSubtreeRoots(authoredIDs(state.selection))
         guard !roots.isEmpty else { return false }
         // Don't allow cutting every top-level block.
         let topLevelRoots = roots.filter { document.parent(of: $0) == nil }
         if topLevelRoots.count >= document.children.count, document.children.count > 0 {
             return false
         }
-        guard copyBlocksToPasteboard(ids: state.selection) else { return false }
+        guard copyBlocksToPasteboard(ids: roots) else { return false }
 
         let cursorTarget = nearestCursorAfterRemoval(of: roots)
         mutate("Cut") {
@@ -2681,7 +2697,7 @@ public struct EditorView: View {
         // children, splice as the FIRST CHILDREN of the anchor; otherwise
         // splice as the next siblings of the anchor under its parent.
         let dropPath: DropPath
-        if let anchorID, let anchor = document.find(anchorID) {
+        if let anchorID, !document.isRegionBlock(anchorID), let anchor = document.find(anchorID) {
             if !anchor.children.isEmpty {
                 dropPath = DropPath(parent: anchorID, position: 0)
             } else {
@@ -3027,7 +3043,7 @@ public struct EditorView: View {
     }
 
     func insertEmptySiblingAfter(_ id: BlockID) -> Bool {
-        guard document.find(id) != nil else { return false }
+        guard document.find(id) != nil, !document.isRegionBlock(id) else { return false }
         let newBlock = Block.paragraph(text: AttributedString())
         // Always insert as the next sibling under the source's parent — even
         // containers with children (toggles, lists) get a peer below, not a

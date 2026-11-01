@@ -148,7 +148,7 @@ extension EditorView {
 
     private func reorderSettleDestinationDepth() -> Int? {
         guard let settle = reorderSettle, !settle.fadesOut, let id = settle.destinationID else { return nil }
-        return visibleRowsForRendering(snapshot: document.children).first { $0.id == id }?.depth
+        return visibleRowsForRendering(snapshot: document.displayedChildren).first { $0.id == id }?.depth
     }
 
     func rowSurfaceSettle() -> RowSurfaceSettle<BlockID>? {
@@ -197,13 +197,13 @@ extension EditorView {
             touchOffset: nil,
             location: nil,
             pendingAnchor: true,
-            isCopy: false
+            isCopy: document.isRegionBlock(blockID)
         ) else { return }
         layoutCache.beginReorderFrameSnapshot(rebaseOnNextOrderChange: true)
         withoutReorderAnimation {
             reorderSettle = nil
             state.setReorderLift(lift)
-            seedSourceDropTarget(for: lift, snapshot: document.children)
+            seedSourceDropTarget(for: lift, snapshot: document.displayedChildren)
         }
     }
 
@@ -231,7 +231,12 @@ extension EditorView {
         guard let block = document.find(blockID),
               let sourceFrame = reorderSourceFrame(for: blockID)
         else { return nil }
-        let ids = dragIDs(for: blockID)
+        // A region's heading stays put; its blocks lift as copies, and only
+        // with other blocks of a region.
+        let fromRegion = document.isRegionBlock(blockID)
+        if fromRegion, document.regions.contains(where: { $0.id == blockID }) { return nil }
+        let ids = dragIDs(for: blockID).filter { document.isRegionBlock($0) == fromRegion }
+        guard !ids.isEmpty else { return nil }
         // The leading H1 is the page title, not a movable section. Moving it
         // would silently transfer title identity to a different H1.
         if ids.contains(where: isPageTitleID) {
@@ -250,10 +255,10 @@ extension EditorView {
             allDescendants.formUnion(document.subtreeIDs(of: id))
         }
         let roots = document.selectionSubtreeRoots(Set(ids))
-        let outlineHeadingLevel: HeadingLevel? = roots == [blockID]
+        let outlineHeadingLevel: HeadingLevel? = roots == [blockID] && !fromRegion
             ? block.headingLevel
             : nil
-        let sourceDepth = rowsBeforeReorderSourceRemoval(snapshot: document.children)
+        let sourceDepth = rowsBeforeReorderSourceRemoval(snapshot: document.displayedChildren)
             .first { $0.id == blockID }?.depth ?? 0
         return ReorderLift(
             block: block,
@@ -358,7 +363,7 @@ extension EditorView {
     /// and recomputing against a moving frame would drift the lift away from
     /// the cursor.
     func tickReorderLift(blockID: BlockID, at location: CGPoint, anchorAt anchorPoint: CGPoint, snapshot: [Block]) {
-        let isCopy = currentReorderCopyIntent()
+        let isCopy = currentReorderCopyIntent() || document.isRegionBlock(blockID)
         var waitingForReorderProjection = false
         if state.reorderLift == nil {
             guard let sourceFrame = reorderSourceFrame(for: blockID),
@@ -435,8 +440,10 @@ extension EditorView {
         let target = state.currentDropTarget ?? resolveDropTarget(atY: y, snapshot: snapshot)
         let ids = lift.ids
         // Re-check Option at drop time so a release-just-before-drop reverts
-        // to a move; the drop is the load-bearing read.
-        let isCopy = currentReorderCopyIntent()
+        // to a move; the drop is the load-bearing read. A region's blocks
+        // always land as copies.
+        let fromRegion = ids.contains(where: document.isRegionBlock)
+        let isCopy = currentReorderCopyIntent() || fromRegion
         var released = lift
         released.location.y = y
         withoutReorderAnimation {
@@ -455,6 +462,16 @@ extension EditorView {
                     destinationID = lift.block.id
                 }
                 fadesOut = false
+            case .asLastChildOf(let parentID) where document.isRegionBlock(parentID):
+                // Onto a region: its host may take the blocks. A region's own
+                // blocks, or a refusal, glide back.
+                if !fromRegion, dropBlocks(ids, onRegion: parentID) {
+                    destinationID = parentID
+                    fadesOut = true
+                } else {
+                    destinationID = lift.block.id
+                    fadesOut = false
+                }
             case .asLastChildOf(let parentID):
                 if isCopy {
                     copyBlocks(ids: ids, asChildrenOf: parentID, snapshot: snapshot, hidden: hidden)
@@ -525,6 +542,11 @@ extension EditorView {
         let rows = projectedRowsForActiveReorder(unprojectedRows)
         let slotY = lift.map { reorderInsertionProbeY(pointerY: y, lift: $0) } ?? y
 
+        // A region is one target from its heading down: no gap opens in it.
+        if let regionID = regionDropTarget(atY: y, rows: rows) {
+            return (.asLastChildOf(regionID), nil)
+        }
+
         if let lift, let level = lift.outlineHeadingLevel {
             return (resolveHeadingDropTarget(atY: slotY, rows: rows, level: level, lift: lift), nil)
         }
@@ -547,6 +569,7 @@ extension EditorView {
         }
         let linkIndices: [Int] = rows.indices.filter { index in
             guard !liftIDs.contains(rows[index].id), !isReceivingForeignBlocks,
+                  !document.isRegionBlock(rows[index].id),
                   case .documentLink(let reference) = rows[index].kind else { return false }
             return host.lookupDocument(reference).can(.receiveBlocks)
         }
@@ -692,6 +715,8 @@ extension EditorView {
         level: HeadingLevel,
         lift: ReorderLift
     ) -> [HeadingDropCandidate] {
+        // Regions follow the document: its outline ends where they begin.
+        let rows = rows.firstIndex(where: { document.isRegionBlock($0.id) }).map { Array(rows[..<$0]) } ?? rows
         var candidateByPath: [DropPath: HeadingDropCandidate] = [:]
         let firstH1Slot: Int = {
             guard level == .h1,
@@ -823,6 +848,11 @@ extension EditorView {
     /// - otherwise (we're exiting row[k-1]'s subtree to land in below's
     ///   parent) → drop "before row[k]" at row[k]'s depth
     func dropPath(forVisibleSlot slot: Int, rows: [VisibleRow]) -> DropPath {
+        // Regions follow the document; a slot among their rows lands at the
+        // document's end.
+        if let regionStart = rows.firstIndex(where: { document.isRegionBlock($0.id) }), slot >= regionStart {
+            return dropPath(forVisibleSlot: regionStart, rows: Array(rows[..<regionStart]))
+        }
         if slot <= 0 {
             return DropPath(parent: nil, position: 0)
         }
@@ -919,6 +949,8 @@ extension EditorView {
         switch target {
         case .insertAt(let path):
             moveBlocks(ids: payload.ids, to: path)
+        case .asLastChildOf(let parentID) where document.isRegionBlock(parentID):
+            _ = dropBlocks(payload.ids, onRegion: parentID)
         case .asLastChildOf(let parentID):
             moveBlocks(ids: payload.ids, asChildrenOf: parentID, snapshot: snapshot, hidden: hidden)
         case .intoDocument(_, let reference):
@@ -972,7 +1004,7 @@ extension EditorView {
     /// A cross-document move landed: remove its blocks here as one undoable
     /// edit, as Move to Document does.
     func removeBlocksAfterTransfer(_ ids: [BlockID]) {
-        let present = ids.filter { document.find($0) != nil }
+        let present = ids.filter { document.find($0) != nil && !document.isRegionBlock($0) }
         guard !present.isEmpty else { return }
         let cursorTarget = nearestCursorAfterRemoval(of: present)
         mutate("Move Blocks") {
@@ -988,16 +1020,19 @@ extension EditorView {
     /// drop path through `receiveExternalBlocks`. Option copies.
     func performExternalBlockDrop(atY y: CGFloat) -> Bool {
         guard let drag = ExternalBlockDrag.active, let source = drag.document else { return false }
-        let snapshot = document.children
+        let snapshot = document.displayedChildren
         let hidden = hiddenBlockIDs(in: snapshot)
         let target = state.currentDropTarget ?? resolveDropTarget(atY: y, snapshot: snapshot)
-        let isCopy = currentReorderCopyIntent()
+        let fromRegion = source === document && drag.ids.contains(where: document.isRegionBlock)
+        let isCopy = currentReorderCopyIntent() || fromRegion
         state.currentDropTarget = nil
         state.dropSlotHint = nil
         if source === document {
             switch target {
             case .insertAt(let path):
                 if isCopy { copyBlocks(ids: drag.ids, to: path, snapshot: snapshot) } else { moveBlocks(ids: drag.ids, to: path) }
+            case .asLastChildOf(let parentID) where document.isRegionBlock(parentID):
+                if fromRegion || !dropBlocks(drag.ids, onRegion: parentID) { return false }
             case .asLastChildOf(let parentID):
                 if isCopy {
                     copyBlocks(ids: drag.ids, asChildrenOf: parentID, snapshot: snapshot, hidden: hidden)
@@ -1020,7 +1055,7 @@ extension EditorView {
         case .insertAt(let value):
             path = value
         case .asLastChildOf(let parentID):
-            guard let parent = document.find(parentID) else { return false }
+            guard !document.isRegionBlock(parentID), let parent = document.find(parentID) else { return false }
             path = DropPath(parent: parentID, position: parent.children.count)
         case .intoDocument:
             return false
@@ -1107,6 +1142,30 @@ extension EditorView {
         var seen: Set<BlockID> = []
         collectPreorderIDs(block, into: &out, seen: &seen)
         return out
+    }
+
+    /// The region whose heading row the pointer is at or below, if any.
+    func regionDropTarget(atY y: CGFloat, rows: [VisibleRow]) -> BlockID? {
+        var hit: BlockID?
+        for region in document.regions where rows.contains(where: { $0.id == region.id }) {
+            if let frame = layoutCache.reorderFrame(of: region.id), y >= frame.minY { hit = region.id }
+        }
+        return hit
+    }
+
+    /// Offer document blocks dropped on a region to its host; when the host
+    /// takes them they leave the document as one undoable edit.
+    func dropBlocks(_ ids: [BlockID], onRegion regionID: BlockID) -> Bool {
+        guard let region = document.regions.first(where: { $0.id == regionID }) else { return false }
+        let roots = document.selectionSubtreeRoots(authoredIDs(ids))
+        let blocks = preparedBlocksForTransfer(ids: roots)
+        guard !blocks.isEmpty, host.receiveBlocks(blocks, inRegion: region, of: document) else { return false }
+        let cursorTarget = nearestCursorAfterRemoval(of: roots)
+        mutate(roots.count > 1 ? "Move Blocks" : "Move Block") {
+            for id in roots { document.removeSubtree(id) }
+        }
+        if let id = cursorTarget { setCursor(id) }
+        return true
     }
 
     /// Move the subtree-rooted set of blocks identified by `ids` to `target`.

@@ -303,6 +303,12 @@ public protocol EditorHost: AnyObject {
     /// favor of the original blocks.
     func prepareBlocksForTransfer(_ blocks: [Block], in document: Document) -> [Block]
 
+    /// The reader dropped `blocks`, subtrees of `document`, on one of its
+    /// regions (see `DocumentRegion`). Return true to take them: the editor
+    /// then removes them from the document as one undoable edit. A host that
+    /// sets no regions never receives this.
+    func receiveBlocks(_ blocks: [Block], inRegion region: DocumentRegion, of document: Document) -> Bool
+
     /// Present the host-owned structural destination flow for one eligible
     /// linked page. False means cancelled or failed; the editor never mutates
     /// the referring block as part of this operation.
@@ -643,6 +649,11 @@ public extension EditorHost {
     func openDocument(_ reference: DocumentReference, at _: DocumentOpenTarget) {
         openDocument(reference)
     }
+}
+
+public extension EditorHost {
+    /// Regions decline drops unless their host takes them.
+    func receiveBlocks(_: [Block], inRegion _: DocumentRegion, of _: Document) -> Bool { false }
 }
 
 public extension EditorHost {

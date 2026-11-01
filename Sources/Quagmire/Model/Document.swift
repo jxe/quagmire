@@ -43,8 +43,23 @@ public final class Document: @MainActor Identifiable {
     public let id: DocumentID
     public var fallbackTitle: String?
     public internal(set) var children: [Block] {
-        didSet { _parentCache = nil }
+        didSet {
+            _parentCache = nil
+            _regionCache = nil
+        }
     }
+
+    /// Blocks shown with the document but not part of it (see
+    /// `DocumentRegion`). Set with `setRegions(_:)`; not saved, not undoable.
+    public private(set) var regions: [DocumentRegion] = [] {
+        didSet {
+            _parentCache = nil
+            _regionCache = nil
+        }
+    }
+
+    @ObservationIgnored
+    private var _regionCache: (roots: [Block], ids: Set<BlockID>)?
 
     /// Derived from `children` (first top-level H1), then the host-supplied
     /// fallback title, then a neutral package fallback.
@@ -539,12 +554,82 @@ public final class Document: @MainActor Identifiable {
         return false
     }
 
+    // MARK: - Regions
+
+    /// Replace the document's regions. Not a transaction: regions are not
+    /// document content, so this neither registers undo nor reports changes.
+    public func setRegions(_ newRegions: [DocumentRegion]) {
+        guard newRegions != regions else { return }
+        regions = newRegions
+    }
+
+    /// Whether `blockID` is a region's heading row or one of its blocks.
+    public func isRegionBlock(_ blockID: BlockID) -> Bool {
+        regionLayout.ids.contains(blockID)
+    }
+
+    /// The region whose heading row or blocks include `blockID`.
+    public func region(containing blockID: BlockID) -> DocumentRegion? {
+        guard isRegionBlock(blockID) else { return nil }
+        return regions.first { region in
+            region.id == blockID || regionRoot(region).children.contains { Self.contains($0, blockID) }
+        }
+    }
+
+    /// The rows the editor shows: the document's blocks, then each region as
+    /// a heading over its blocks. Queries (`find`, `parent`, `walk`,
+    /// `documentOrder`) answer over these; mutations reach only `children`.
+    var displayedChildren: [Block] {
+        regions.isEmpty ? children : children + regionLayout.roots
+    }
+
+    private var regionLayout: (roots: [Block], ids: Set<BlockID>) {
+        if let cached = _regionCache { return cached }
+        var ids: Set<BlockID> = []
+        var roots: [Block] = []
+        if !regions.isEmpty {
+            var authored: Set<BlockID> = []
+            Self.walk(children) { block, _, _ in
+                authored.insert(block.id)
+                return .continue
+            }
+            for region in regions where !authored.contains(region.id) && !ids.contains(region.id) {
+                var root = regionRoot(region)
+                // A block the document also holds stays the document's.
+                root.children = root.children.filter { block in
+                    var clashes = false
+                    Self.walk([block]) { b, _, _ in
+                        if authored.contains(b.id) || ids.contains(b.id) { clashes = true; return .stop }
+                        return .continue
+                    }
+                    return !clashes
+                }
+                Self.walk([root]) { block, _, _ in
+                    ids.insert(block.id)
+                    return .continue
+                }
+                roots.append(root)
+            }
+        }
+        _regionCache = (roots, ids)
+        return (roots, ids)
+    }
+
+    private func regionRoot(_ region: DocumentRegion) -> Block {
+        .heading(level: region.headingLevel, text: region.title, id: region.id, children: region.blocks)
+    }
+
+    private static func contains(_ block: Block, _ id: BlockID) -> Bool {
+        block.id == id || block.children.contains { contains($0, id) }
+    }
+
     // MARK: - Find / walk
 
-    /// Returns the block with the given id, anywhere in the tree.
+    /// Returns the block with the given id, anywhere in the tree, regions
+    /// included.
     public func find(_ blockID: BlockID) -> Block? {
         var found: Block?
-        Self.walk(children) { block, _, _ in
+        Self.walk(displayedChildren) { block, _, _ in
             if block.id == blockID {
                 found = block
                 return .stop
@@ -578,7 +663,7 @@ public final class Document: @MainActor Identifiable {
     private func ensureParentCache() {
         if _parentCache != nil { return }
         var cache: [BlockID: BlockID] = [:]
-        Self.walk(children) { block, _, parent in
+        Self.walk(displayedChildren) { block, _, parent in
             if let parent { cache[block.id] = parent }
             return .continue
         }
@@ -601,7 +686,7 @@ public final class Document: @MainActor Identifiable {
     public func documentOrder(of blockID: BlockID) -> Int? {
         var counter = 0
         var found: Int?
-        Self.walk(children) { block, _, _ in
+        Self.walk(displayedChildren) { block, _, _ in
             if block.id == blockID {
                 found = counter
                 return .stop
@@ -618,7 +703,7 @@ public final class Document: @MainActor Identifiable {
     public func preorderPredecessor(of blockID: BlockID) -> BlockID? {
         var previous: BlockID?
         var found: BlockID?
-        Self.walk(children) { block, _, _ in
+        Self.walk(displayedChildren) { block, _, _ in
             if block.id == blockID {
                 found = previous
                 return .stop
@@ -629,9 +714,10 @@ public final class Document: @MainActor Identifiable {
         return found
     }
 
-    /// Preorder walk yielding (block, depth, parentID?) for every node.
+    /// Preorder walk yielding (block, depth, parentID?) for every node,
+    /// regions included.
     public func walk(_ visit: (_ block: Block, _ depth: Int, _ parent: BlockID?) -> Void) {
-        Self.walk(children) { block, depth, parent in
+        Self.walk(displayedChildren) { block, depth, parent in
             visit(block, depth, parent)
             return .continue
         }
@@ -776,7 +862,8 @@ public final class Document: @MainActor Identifiable {
     /// Can this block be indented? True iff it has a previous sibling under
     /// its current parent that is structurally permitted to contain it.
     public func canIndent(_ blockID: BlockID) -> Bool {
-        guard let block = find(blockID),
+        guard !isRegionBlock(blockID),
+              let block = find(blockID),
               let (siblings, indexInParent) = sibling(of: blockID),
               indexInParent > 0 else { return false }
         let prevSibling = siblings[indexInParent - 1]
@@ -793,7 +880,8 @@ public final class Document: @MainActor Identifiable {
     /// heading it can't sit in (an H1 inside a bullet inside an H1) outdents,
     /// and heading containment lifts it out to the scope where it belongs.
     public func canOutdent(_ blockID: BlockID) -> Bool {
-        guard let block = find(blockID),
+        guard !isRegionBlock(blockID),
+              let block = find(blockID),
               let parentID = parent(of: blockID),
               let parentBlock = find(parentID) else { return false }
         if parentBlock.isHeading {
@@ -823,7 +911,8 @@ public final class Document: @MainActor Identifiable {
     ///   `liftingHeadings` is set: then a heading may land in a heading body
     ///   it can't belong to, and heading containment lifts it out.
     public func canDrop(ids: [BlockID], to path: DropPath, liftingHeadings: Bool = false) -> Bool {
-        guard !ids.isEmpty else { return false }
+        guard !ids.isEmpty, !ids.contains(where: isRegionBlock) else { return false }
+        if let parentID = path.parent, isRegionBlock(parentID) { return false }
         // Cycle check: target.parent must not be inside any moving subtree.
         if let targetParentID = path.parent {
             for id in ids {
@@ -849,7 +938,7 @@ public final class Document: @MainActor Identifiable {
     public func canInsert(_ blocks: [Block], at path: DropPath) -> Bool {
         guard !blocks.isEmpty else { return false }
         guard let parentID = path.parent else { return true }
-        guard let parent = find(parentID), parent.isContainer else { return false }
+        guard !isRegionBlock(parentID), let parent = find(parentID), parent.isContainer else { return false }
         return blocks.allSatisfy(parent.canContain)
     }
 
@@ -947,7 +1036,7 @@ public final class Document: @MainActor Identifiable {
         by delta: Int,
         skippingHeadingIDs: Set<BlockID>
     ) -> SlidePlan? {
-        guard delta == -1 || delta == 1, !ids.isEmpty else { return nil }
+        guard delta == -1 || delta == 1, !ids.isEmpty, !ids.contains(where: isRegionBlock) else { return nil }
         let parentID = parent(of: ids.first!)
         for id in ids where parent(of: id) != parentID { return nil }
 

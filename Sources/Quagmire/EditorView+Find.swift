@@ -105,7 +105,7 @@ extension EditorView {
             focusRequest: findFocusRequest,
             selectedIndex: selectedIndex,
             matchCount: matches.count,
-            onQueryChange: { updateFindQuery(matches: pageFindMatches(in: document.children, query: $0)) },
+            onQueryChange: { updateFindQuery(matches: pageFindMatches(in: document.displayedChildren, query: $0)) },
             onPrevious: { moveFindSelection(by: -1, matches: matches) },
             onNext: { moveFindSelection(by: 1, matches: matches) },
             onClose: { dismissFind() }

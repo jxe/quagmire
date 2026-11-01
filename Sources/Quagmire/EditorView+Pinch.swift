@@ -403,7 +403,7 @@ extension EditorView {
         // Resolve the visible slot to a tree DropPath, with the visible-row
         // above/below at that slot as neighbour context for kind inference.
         let (rows, _) = layoutCache.currentVisibleRows(
-            snapshot: document.children, isCollapsed: isCollapsedSection
+            snapshot: document.displayedChildren, isCollapsed: isCollapsedSection
         )
         let path = dropPath(forVisibleSlot: slot, rows: rows)
         let above: VisibleRowKind? = (slot - 1 >= 0 && slot - 1 < rows.count) ? rows[slot - 1].kind : nil
@@ -478,7 +478,7 @@ extension EditorView {
             return
         }
         let (rows, _) = layoutCache.currentVisibleRows(
-            snapshot: document.children, isCollapsed: isCollapsedSection
+            snapshot: document.displayedChildren, isCollapsed: isCollapsedSection
         )
         let above = (slot > 0 && slot <= rows.count) ? rows[slot - 1].kind : nil
         let below = (slot >= 0 && slot < rows.count) ? rows[slot].kind : nil
@@ -659,7 +659,7 @@ extension EditorView {
         // returns the same `[VisibleRow]` for as long as the document
         // is structurally stable.
         let (rows, _) = layoutCache.currentVisibleRows(
-            snapshot: document.children, isCollapsed: isCollapsedSection
+            snapshot: document.displayedChildren, isCollapsed: isCollapsedSection
         )
         return resolveDropSlot(forY: point.y, in: rows)
     }

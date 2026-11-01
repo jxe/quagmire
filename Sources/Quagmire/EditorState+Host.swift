@@ -127,6 +127,10 @@ extension EditorView {
         switch request {
         case .edit(let id, let selection):
             guard let block = document.find(id) else { return }
+            if document.isRegionBlock(id) {
+                transferFocus(to: .nav(cursor: id))
+                return
+            }
             switch block.kind {
             case .code, .divider, .documentLink:
                 transferFocus(to: .nav(cursor: id))

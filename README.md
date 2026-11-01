@@ -718,3 +718,23 @@ targets and drag lifts. Accessory data never enters document transactions,
 serialization, selection or copied blocks. Native text fields in details retain
 their own text commands and undo history. Accessory visual/focus/VoiceOver behavior
 still requires consumer interaction testing in addition to package builds.
+
+### Read-only regions
+
+Show blocks with a document that are not part of it, such as a page's unlinked
+subpages, backlinks, or query results. A region is a heading row over its
+blocks, after the document's own blocks.
+
+```swift
+document.setRegions([
+    DocumentRegion(id: subpagesID, title: AttributedString("Subpages"), blocks: links)
+])
+```
+
+Region rows look like any other rows, faded, and take part in selection, arrow
+keys, Find, folding, opening, and copying. No edit reaches them: they are never
+in `children`, transactions, undo, or serialization. Dragging region blocks into
+the page inserts copies. Dragging document blocks onto a region offers them to
+`EditorHost.receiveBlocks(_:inRegion:of:)`; when the host returns true they
+leave the document as one undoable edit. `find`, `parent`, `walk`, and
+`documentOrder` answer over regions too; `isRegionBlock(_:)` tells them apart.
