@@ -20,6 +20,10 @@ struct BlockRowModel: Equatable {
     /// A host callout drawing this quote: its symbol and tint.
     var calloutSymbol: String?
     var calloutTint: Color?
+    /// The callout is done: a check, its text struck through and muted.
+    var calloutDone = false
+    /// Its symbol is a button (`EditorCallout.toggle`).
+    var calloutToggles = false
     let isExpanded: Bool
     let isDropTarget: Bool
     let isActionMenuTarget: Bool
@@ -199,6 +203,7 @@ struct BlockRow: View, Equatable {
     var onBulletMarkerTap: () -> Void { actions.onBulletMarkerTap }
     var bulletMarkerPopoverContent: () -> AnyView { actions.bulletMarkerPopoverContent }
     var calloutTrailing: () -> AnyView { actions.calloutTrailing }
+    var onCalloutToggle: () -> Void { actions.onCalloutToggle }
 
     /// Convenience: this row is in edit mode (its text area is hosting a
     /// `BlockTextEditor` rather than a read-only renderer).
@@ -554,11 +559,17 @@ struct BlockRow: View, Equatable {
     /// A quote a host callout recognizes: a tinted panel with the callout's
     /// symbol where the bar was, and the host's controls at the trailing edge.
     private func calloutRow(symbol: String, tint: Color) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: theme.bulletMarkerSymbolSize, weight: .semibold))
-                .foregroundStyle(tint)
-            editableText(font: theme.body(), fontSize: 16, bold: false, lineSpacing: theme.bodyLineSpacing)
+        let done = model.calloutDone
+        return HStack(alignment: .firstTextBaseline, spacing: 10) {
+            // A done callout reads like a checked to-do: a check, the text struck through and muted.
+            Button(action: onCalloutToggle) {
+                Image(systemName: done ? "checkmark.circle.fill" : symbol)
+                    .font(.system(size: theme.bulletMarkerSymbolSize, weight: .semibold))
+                    .foregroundStyle(done ? theme.mutedForeground : tint)
+            }
+            .buttonStyle(.plain)
+            .disabled(isReadOnly || !model.calloutToggles)
+            editableText(font: theme.body(), fontSize: 16, bold: false, lineSpacing: theme.bodyLineSpacing, strikethrough: done, muted: done)
             // Centered on the first line: in the middle of a one-line
             // callout, at the top of a long one. A 16pt line's middle sits
             // about 5.5pt above its baseline.
@@ -886,6 +897,7 @@ struct BlockRowActions {
     var onBulletMarkerTap: () -> Void = {}
     var bulletMarkerPopoverContent: () -> AnyView = { AnyView(EmptyView()) }
     var calloutTrailing: () -> AnyView = { AnyView(EmptyView()) }
+    var onCalloutToggle: () -> Void = {}
 }
 
 /// A page title that begins with an emoji ("👍 Emoji Page") lends that

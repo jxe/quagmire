@@ -379,6 +379,32 @@ struct CalloutTriggerTests {
     }
 }
 
+@Suite("Done callouts")
+struct DoneCalloutTests {
+    @MainActor @Test func theSymbolTogglesDoneKeepingTheBlock() {
+        var task = Block.quote(text: AttributedString("sort the list"))
+        task.metadata["task"] = "1"
+        let doc = Document(id: DocumentID("t"), children: [task])
+        let callout = EditorCallout(
+            id: "task", title: "Task", systemImage: "sparkles", tint: .purple,
+            recognizes: { $0.metadata["task"] != nil },
+            isDone: { $0.metadata["done"] != nil },
+            toggle: { block in var value = block; value.metadata["done"] = block.metadata["done"] == nil ? "1" : nil; return value },
+            trailing: { _ in EmptyView() })
+        let editor = EditorView(document: doc, state: EditorState(), host: CalloutTestHost()).callouts([callout])
+        editor.installUndoApply()
+
+        #expect(callout.toggles)
+        #expect(!callout.isDone(doc.children[0]))
+        editor.toggleCallout(task.id)
+        #expect(doc.children[0].id == task.id)
+        #expect(callout.isDone(doc.children[0]))
+        editor.toggleCallout(task.id)
+        #expect(!callout.isDone(doc.children[0]))
+        #expect(doc.children[0].id == task.id)
+    }
+}
+
 @MainActor private final class CalloutTestHost: EditorHostDefaults {
     func persistCommit(changes: [DocumentChange], in document: Document) {}
     func flush(_ document: Document) async {}

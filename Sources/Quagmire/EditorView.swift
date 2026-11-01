@@ -956,6 +956,8 @@ public struct EditorView: View {
             isBulletMarkerPopoverPresented: bulletMarkerPopoverBlockID == block.id,
             calloutSymbol: callout(for: block)?.systemImage,
             calloutTint: callout(for: block)?.tint,
+            calloutDone: callout(for: block)?.isDone(block) ?? false,
+            calloutToggles: callout(for: block)?.toggles ?? false,
             isExpanded: isSectionExpanded(block),
             isDropTarget: state.dropOntoBlockID == block.id,
             isActionMenuTarget: isActionMenuTarget,
@@ -1084,7 +1086,8 @@ public struct EditorView: View {
                     return AnyView(EmptyView())
                 }
                 return callout.trailing(for: current)
-            }
+            },
+            onCalloutToggle: { toggleCallout(block.id) }
         )
         #if os(macOS)
         // Applied whether or not the row has links, so adding one never

@@ -19,6 +19,8 @@ public struct EditorCallout: Identifiable {
     public let trigger: String?
 
     private let recognizer: @MainActor (Block) -> Bool
+    private let doneTest: (@MainActor (Block) -> Bool)?
+    private let toggleHandler: (@MainActor (Block) -> Block?)?
     private let turnIntoHandler: (@MainActor (Block) -> Block?)?
     private let trailingContent: @MainActor (Block) -> AnyView
 
@@ -26,6 +28,9 @@ public struct EditorCallout: Identifiable {
     ///   - recognizes: Whether a quote block is drawn as this callout.
     ///   - turnInto: The replacement for a block turned into this callout,
     ///     keeping its ID. Nil leaves the callout out of Turn Into.
+    ///   - isDone: Whether a callout block is done, drawn like a checked to-do.
+    ///   - toggle: The block with its done state flipped, keeping its ID; its
+    ///     symbol becomes a button for it, like a to-do's checkbox.
     ///   - trailing: Host controls drawn at the callout's trailing edge.
     public init<Trailing: View>(
         id: String,
@@ -36,6 +41,8 @@ public struct EditorCallout: Identifiable {
         trigger: String? = nil,
         recognizes: @escaping @MainActor (Block) -> Bool,
         turnInto: (@MainActor (Block) -> Block?)? = nil,
+        isDone: (@MainActor (Block) -> Bool)? = nil,
+        toggle: (@MainActor (Block) -> Block?)? = nil,
         @ViewBuilder trailing: @escaping @MainActor (Block) -> Trailing
     ) {
         self.id = id
@@ -46,6 +53,8 @@ public struct EditorCallout: Identifiable {
         self.trigger = trigger
         self.recognizer = recognizes
         self.turnIntoHandler = turnInto
+        self.doneTest = isDone
+        self.toggleHandler = toggle
         self.trailingContent = { AnyView(trailing($0)) }
     }
 
@@ -55,6 +64,12 @@ public struct EditorCallout: Identifiable {
     }
 
     var offersTurnInto: Bool { turnIntoHandler != nil }
+
+    func isDone(_ block: Block) -> Bool { doneTest?(block) ?? false }
+
+    var toggles: Bool { toggleHandler != nil }
+
+    func toggled(_ block: Block) -> Block? { toggleHandler?(block) }
 
     func turnInto(_ block: Block) -> Block? { turnIntoHandler?(block) }
 
@@ -75,6 +90,15 @@ extension EditorView {
     func callout(for block: Block) -> EditorCallout? {
         guard case .quote = block.kind, !editorCallouts.isEmpty else { return nil }
         return editorCallouts.first { $0.recognizes(block) }
+    }
+
+    /// Flips a callout's done state through its `toggle`, as one undo step.
+    func toggleCallout(_ id: BlockID) {
+        guard let current = document.find(id), let callout = callout(for: current),
+              let replacement = callout.toggled(current), replacement.id == id else { return }
+        mutate(callout.isDone(current) ? "Mark Not Done" : "Mark Done") {
+            document.replaceSubtree(id, with: [replacement])
+        }
     }
 
     /// Turns each block into the callout in one undo step. Blocks the
