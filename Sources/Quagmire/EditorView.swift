@@ -378,9 +378,6 @@ public struct EditorView: View {
                         #else
                         toggleSectionExpansion(block)
                         #endif
-                    } else if document.isRegionBlock(id) {
-                        // A region row has no block actions to offer.
-                        transferFocus(to: .nav(cursor: id))
                     } else if !readOnly {
                         handleHandleClick(blockID: id)
                     }
@@ -963,6 +960,7 @@ public struct EditorView: View {
             isReorderingThisBlock: state.reorderLift?.ids.contains(block.id) == true,
             isSelectionHandleRow: isSelectionHandleRow(for: block.id),
             isReadOnly: readOnly,
+            canReorder: !self.readOnly,
             accessibilityID: accessibilityIdentifier(for: block),
             accessibilityLabelText: accessibilityLabel(for: block),
             documentLookups: resolveDocumentLookups(for: block, host: host, in: document),
@@ -1047,7 +1045,7 @@ public struct EditorView: View {
                 }
                 showActionToast("Deleted")
             },
-            onIOSShowMenu: { if !readOnly { onShowActionSheet() } },
+            onIOSShowMenu: { if !self.readOnly { onShowActionSheet() } },
             actionMenuContent: { AnyView(blockActionMenuContent(for: block.id)) },
             completionMenuContent: { AnyView(completionMenuContent()) },
             emojiPickerContent: {

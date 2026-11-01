@@ -73,9 +73,13 @@ extension EditorView {
                 }
 
             case .openMoveTo:
-                guard host.supportsMoveDestinationPicker else { return }
                 guard let id = topSelectedBlockID() else { return }
                 let targetIDs = menuTargetIDs(anchorID: id)
+                if targetIDs.contains(where: document.isRegionBlock) {
+                    if let reference = relocatableRegionLink(targetIDs) { relocateRegionLink(reference) }
+                    return
+                }
+                guard host.supportsMoveDestinationPicker else { return }
                 let inDoc = inDocMoveCandidates(excluding: targetIDs)
                 Task { @MainActor in
                     let destination = await host.moveDestination(for: targetIDs, candidates: inDoc)

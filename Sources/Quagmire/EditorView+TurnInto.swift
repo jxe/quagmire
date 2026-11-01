@@ -393,8 +393,12 @@ extension EditorView {
                 .filter { !$0.1.isEmpty }
             let markerTargets = bulletMarkerTurnIntoTargets(for: targetBlocks)
             let selectedMarkerID = selectedBulletMarkerID(for: targetBlocks)
-            let indentTargets = indentActions(for: targetIDs)
-            let hostActions = applicableBlockActions(anchorID: blockID, targetIDs: targetIDs)
+            // A region's rows are not edited: they offer only what reads,
+            // folds or moves the page a link names.
+            let inRegion = targetIDs.contains(where: document.isRegionBlock)
+            let indentTargets = inRegion ? [] : indentActions(for: targetIDs)
+            let hostActions = inRegion ? [] : applicableBlockActions(anchorID: blockID, targetIDs: targetIDs)
+            let regionPage = inRegion ? relocatableRegionLink(targetIDs) : nil
             VStack(alignment: .leading, spacing: 8) {
                 Button("Close") {
                     actionSheet = nil
@@ -404,6 +408,7 @@ extension EditorView {
                 .opacity(0)
                 .accessibilityHidden(true)
 
+                if !inRegion {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(Array(visibleGroups.enumerated()), id: \.offset) { idx, group in
@@ -441,6 +446,7 @@ extension EditorView {
                     }
                     .padding(.horizontal, 2)
                 }
+                }
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -466,7 +472,17 @@ extension EditorView {
                                 toggleSectionExpansion(heading)
                             }
                         }
-                        if host.supportsMoveDestinationPicker {
+                        if let regionPage {
+                            compactMenuButton(
+                                title: "Move to",
+                                systemImage: "folder",
+                                keyboardShortcut: "p",
+                                keyboardShortcutModifiers: [.command, .shift],
+                                keyboardShortcutLabel: "⇧⌘P"
+                            ) {
+                                relocateRegionLink(regionPage)
+                            }
+                        } else if !inRegion, host.supportsMoveDestinationPicker {
                             compactMenuButton(
                                 title: "Move to",
                                 systemImage: "arrow.right.doc.on.clipboard",
@@ -488,7 +504,7 @@ extension EditorView {
                                 }
                             }
                         }
-                        if targetBlocks.count == 1,
+                        if !inRegion, targetBlocks.count == 1,
                            case .documentLink(_, let reference) = targetBlocks[0].kind,
                            host.lookupDocument(reference).can(.relocate) {
                             compactMenuButton(
@@ -576,6 +592,23 @@ extension EditorView {
             button.keyboardShortcut(keyboardShortcut, modifiers: keyboardShortcutModifiers)
         } else {
             button
+        }
+    }
+
+    /// The page a lone region link names, when its host can move that page.
+    /// Moving a region row moves its page, as no edit reaches the row.
+    func relocatableRegionLink(_ targetIDs: [BlockID]) -> DocumentReference? {
+        guard targetIDs.count == 1, document.isRegionBlock(targetIDs[0]),
+              case .documentLink(_, let reference)? = document.find(targetIDs[0])?.kind,
+              host.lookupDocument(reference).can(.relocate) else { return nil }
+        return reference
+    }
+
+    func relocateRegionLink(_ reference: DocumentReference) {
+        Task { @MainActor in
+            if await host.relocateDocument(reference, from: document) {
+                showActionToast("Page moved")
+            }
         }
     }
 

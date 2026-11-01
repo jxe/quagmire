@@ -29,6 +29,8 @@ struct BlockRowModel: Equatable {
     let isReorderingThisBlock: Bool
     let isSelectionHandleRow: Bool
     let isReadOnly: Bool
+    /// The row can be dragged: read-only region rows can, a read-only editor's cannot.
+    var canReorder = true
     let accessibilityID: String
     let accessibilityLabelText: String
     let documentLookups: [String: DocumentLookup]
@@ -302,7 +304,7 @@ struct BlockRow: View, Equatable {
                     .opacity(
                         isHandleVisible
                             && !isEditing
-                            && !isReadOnly
+                            && model.canReorder
                             && !(block.isHeading && !isPageTitle)
                             ? 1 : 0
                     )

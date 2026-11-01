@@ -197,7 +197,7 @@ extension EditorView {
             touchOffset: nil,
             location: nil,
             pendingAnchor: true,
-            isCopy: document.isRegionBlock(blockID)
+            isCopy: false
         ) else { return }
         layoutCache.beginReorderFrameSnapshot(rebaseOnNextOrderChange: true)
         withoutReorderAnimation {
@@ -363,7 +363,7 @@ extension EditorView {
     /// and recomputing against a moving frame would drift the lift away from
     /// the cursor.
     func tickReorderLift(blockID: BlockID, at location: CGPoint, anchorAt anchorPoint: CGPoint, snapshot: [Block]) {
-        let isCopy = currentReorderCopyIntent() || document.isRegionBlock(blockID)
+        let isCopy = currentReorderCopyIntent()
         var waitingForReorderProjection = false
         if state.reorderLift == nil {
             guard let sourceFrame = reorderSourceFrame(for: blockID),
@@ -441,7 +441,8 @@ extension EditorView {
         let ids = lift.ids
         // Re-check Option at drop time so a release-just-before-drop reverts
         // to a move; the drop is the load-bearing read. A region's blocks
-        // always land as copies.
+        // land as copies: the move is the host's, which leaves them out of
+        // the region once they are in the document.
         let fromRegion = ids.contains(where: document.isRegionBlock)
         let isCopy = currentReorderCopyIntent() || fromRegion
         var released = lift

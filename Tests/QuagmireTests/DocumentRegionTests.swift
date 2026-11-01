@@ -112,10 +112,30 @@ struct DocumentRegionTests {
         #expect(host.received.map(\.id) == [link.id])
         #expect(host.region?.id == region.id)
     }
+
+    @Test func movingARegionLinkMovesItsPage() async {
+        let (document, body, link, region) = fixture()
+        let host = RegionTestHost()
+        let editor = EditorView(document: document, state: EditorState(), host: host)
+        #expect(editor.relocatableRegionLink([link.id]) == DocumentReference("child"))
+        #expect(editor.relocatableRegionLink([region.id]) == nil)
+        #expect(editor.relocatableRegionLink([body.id]) == nil)
+        editor.relocateRegionLink(DocumentReference("child"))
+        for _ in 0..<20 where host.relocated.isEmpty { await Task.yield() }
+        #expect(host.relocated == [DocumentReference("child")])
+        #expect(document.find(link.id) != nil)
+    }
 }
 
 @MainActor
 private final class RegionTestHost: EditorHostDefaults {
+    var relocated: [DocumentReference] = []
+
+    func lookupDocument(_: DocumentReference) -> DocumentLookup { .present(title: "Child") }
+    func relocateDocument(_ reference: DocumentReference, from _: Document) async -> Bool {
+        relocated.append(reference)
+        return true
+    }
     var accepts = false
     var received: [Block] = []
     var region: DocumentRegion?
