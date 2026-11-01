@@ -183,6 +183,22 @@ struct BlockIdentityLifecycleTests {
         #expect(String(doc.children[1].text.characters) == "tail")
     }
 
+    @Test func returnAtTheEndOfACalloutStartsAParagraph() {
+        var task = Block.quote(text: AttributedString("merge the duplicates"))
+        task.metadata["test.callout"] = "1"
+        let quote = Block.quote(text: AttributedString("a quote"))
+        let doc = Document(id: DocumentID("t"), children: [task, quote])
+        let editor = Self.editor(doc).callouts([EditorCallout(
+            id: "task", title: "Task", systemImage: "sparkles", tint: .purple,
+            recognizes: { $0.metadata["test.callout"] != nil }, trailing: { _ in EmptyView() })])
+
+        #expect(editor.splitBlock(task.id, selectionStart: 20, selectionEnd: 20) == .handled)
+        #expect(editor.splitBlock(quote.id, selectionStart: 7, selectionEnd: 7) == .handled)
+
+        guard case .paragraph = doc.children[1].kind else { Issue.record("after a callout: \(doc.children[1].kind)"); return }
+        guard case .quote = doc.children[3].kind else { Issue.record("after a quote: \(doc.children[3].kind)"); return }
+    }
+
     @Test func splitOverASelectionStillKeepsTheOriginalIDLeading() {
         let block = Block.paragraph(text: AttributedString("headMIDDLEtail"))
         let doc = Document(id: DocumentID("t"), children: [block])

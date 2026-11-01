@@ -3082,7 +3082,8 @@ public struct EditorView: View {
         case .todo:
             return .todo(text: text, done: false)
         case .quote:
-            return .quote(text: text)
+            // A callout (an agent task) is one block: what follows it is prose.
+            return callout(for: block) == nil ? .quote(text: text) : .paragraph(text: text)
         case .heading, .paragraph, .toggle, .templateButton, .code, .divider, .documentLink, .image, .unsupported:
             return .paragraph(text: text)
         }
