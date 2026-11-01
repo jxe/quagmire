@@ -23,6 +23,7 @@ public struct EditorCallout: Identifiable {
     private let toggleHandler: (@MainActor (Block) -> Block?)?
     private let turnIntoHandler: (@MainActor (Block) -> Block?)?
     private let trailingContent: @MainActor (Block) -> AnyView
+    private let detailContent: (@MainActor (Block) -> AnyView?)?
 
     /// - Parameters:
     ///   - recognizes: Whether a quote block is drawn as this callout.
@@ -31,7 +32,10 @@ public struct EditorCallout: Identifiable {
     ///   - isDone: Whether a callout block is done, drawn like a checked to-do.
     ///   - toggle: The block with its done state flipped, keeping its ID; its
     ///     symbol becomes a button for it, like a to-do's checkbox.
-    ///   - trailing: Host controls drawn at the callout's trailing edge.
+    ///   - trailing: Host controls drawn at the callout's trailing edge. Keep
+    ///     them small: the text takes the rest of the width.
+    ///   - detail: A host line under the callout's text, such as a result;
+    ///     nil draws nothing.
     public init<Trailing: View>(
         id: String,
         title: String,
@@ -43,6 +47,7 @@ public struct EditorCallout: Identifiable {
         turnInto: (@MainActor (Block) -> Block?)? = nil,
         isDone: (@MainActor (Block) -> Bool)? = nil,
         toggle: (@MainActor (Block) -> Block?)? = nil,
+        detail: (@MainActor (Block) -> AnyView?)? = nil,
         @ViewBuilder trailing: @escaping @MainActor (Block) -> Trailing
     ) {
         self.id = id
@@ -56,6 +61,7 @@ public struct EditorCallout: Identifiable {
         self.doneTest = isDone
         self.toggleHandler = toggle
         self.trailingContent = { AnyView(trailing($0)) }
+        self.detailContent = detail
     }
 
     public func recognizes(_ block: Block) -> Bool {
@@ -74,6 +80,8 @@ public struct EditorCallout: Identifiable {
     func turnInto(_ block: Block) -> Block? { turnIntoHandler?(block) }
 
     func trailing(for block: Block) -> AnyView { trailingContent(block) }
+
+    func detail(for block: Block) -> AnyView? { detailContent?(block) }
 }
 
 public extension EditorView {

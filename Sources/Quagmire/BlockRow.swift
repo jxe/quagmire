@@ -204,6 +204,7 @@ struct BlockRow: View, Equatable {
     var bulletMarkerPopoverContent: () -> AnyView { actions.bulletMarkerPopoverContent }
     var calloutTrailing: () -> AnyView { actions.calloutTrailing }
     var onCalloutToggle: () -> Void { actions.onCalloutToggle }
+    var calloutDetail: () -> AnyView? { actions.calloutDetail }
 
     /// Convenience: this row is in edit mode (its text area is hosting a
     /// `BlockTextEditor` rather than a read-only renderer).
@@ -569,7 +570,14 @@ struct BlockRow: View, Equatable {
             }
             .buttonStyle(.plain)
             .disabled(isReadOnly || !model.calloutToggles)
-            editableText(font: theme.body(), fontSize: 16, bold: false, lineSpacing: theme.bodyLineSpacing, strikethrough: done, muted: done)
+            // The text takes every width the trailing controls leave; a host's
+            // detail line (a run's result) goes under it, never beside it.
+            VStack(alignment: .leading, spacing: 4) {
+                editableText(font: theme.body(), fontSize: 16, bold: false, lineSpacing: theme.bodyLineSpacing, strikethrough: done, muted: done)
+                if let detail = calloutDetail() { detail }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
             // Centered on the first line: in the middle of a one-line
             // callout, at the top of a long one. A 16pt line's middle sits
             // about 5.5pt above its baseline.
@@ -897,6 +905,7 @@ struct BlockRowActions {
     var onBulletMarkerTap: () -> Void = {}
     var bulletMarkerPopoverContent: () -> AnyView = { AnyView(EmptyView()) }
     var calloutTrailing: () -> AnyView = { AnyView(EmptyView()) }
+    var calloutDetail: () -> AnyView? = { nil }
     var onCalloutToggle: () -> Void = {}
 }
 

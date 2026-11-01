@@ -1087,6 +1087,10 @@ public struct EditorView: View {
                 }
                 return callout.trailing(for: current)
             },
+            calloutDetail: {
+                guard let current = document.find(block.id), let callout = callout(for: current) else { return nil }
+                return callout.detail(for: current)
+            },
             onCalloutToggle: { toggleCallout(block.id) }
         )
         #if os(macOS)
