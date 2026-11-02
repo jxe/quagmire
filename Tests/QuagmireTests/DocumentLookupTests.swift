@@ -1,6 +1,11 @@
 import Foundation
 import SwiftUI
 import Testing
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 @testable import Quagmire
 
 /// The reference-target boundary: four lookup states, per-target capabilities,
@@ -75,15 +80,26 @@ struct PageLookupTests {
         let row = documentLinkRowPresentation(storedLabel: AttributedString("Notes"), lookup: .unavailable)
         #expect(row.muted)
         #expect(row.annotation == "(unavailable)")
-        #expect(row.symbol != "doc.badge.exclamationmark", "it is not broken; nothing needs fixing")
+        #expect(row.symbol != "exclamationmark.triangle", "it is not broken; nothing needs fixing")
     }
 
     @Test func aMissingTargetIsMarkedMissing() {
         let row = documentLinkRowPresentation(storedLabel: AttributedString("Notes"), lookup: .missing)
         #expect(row.muted)
         #expect(row.annotation == "(missing)")
-        #expect(row.symbol == "doc.badge.exclamationmark")
+        #expect(row.symbol == "exclamationmark.triangle")
         #expect(row.emoji == nil, "no icon on a target we can't read")
+    }
+
+    /// A symbol name the OS doesn't know draws as nothing: no icon, just a gap.
+    @Test(arguments: [DocumentLookup.pending, .unavailable, .missing, .present(DocumentPresentation(title: "Notes"))])
+    func everyLookupStateDrawsARealSymbol(lookup: DocumentLookup) {
+        let symbol = documentLinkRowPresentation(storedLabel: AttributedString("Notes"), lookup: lookup).symbol
+        #if os(macOS)
+        #expect(NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil, "\(symbol)")
+        #else
+        #expect(UIImage(systemName: symbol) != nil, "\(symbol)")
+        #endif
     }
 
     @Test func aHostSuppliedIconWinsOverOneDerivedFromTheTitle() {

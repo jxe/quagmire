@@ -983,7 +983,7 @@ func documentLinkRowPresentation(storedLabel: AttributedString, lookup: Document
         )
     case .missing:
         return DocumentLinkRowPresentation(
-            title: displayTitle, emoji: nil, symbol: "doc.badge.exclamationmark",
+            title: displayTitle, emoji: nil, symbol: "exclamationmark.triangle",
             muted: true, annotation: "(missing)"
         )
     }
