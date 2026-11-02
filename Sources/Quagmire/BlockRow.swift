@@ -561,15 +561,21 @@ struct BlockRow: View, Equatable {
     /// symbol where the bar was, and the host's controls at the trailing edge.
     private func calloutRow(symbol: String, tint: Color) -> some View {
         let done = model.calloutDone
-        return HStack(alignment: .firstTextBaseline, spacing: 10) {
+        return HStack(alignment: .firstTextBaseline, spacing: theme.listMarkerGap) {
             // A done callout reads like a checked to-do: a check, the text struck through and muted.
+            // The symbol sits in the bullets' column and the text lines up with theirs.
             Button(action: onCalloutToggle) {
                 Image(systemName: done ? "checkmark.circle.fill" : symbol)
                     .font(.system(size: theme.bulletMarkerSymbolSize, weight: .semibold))
                     .foregroundStyle(done ? theme.mutedForeground : tint)
+                    .frame(width: theme.bulletMarkerColumnWidth, height: theme.listMarkerFrameHeight, alignment: .trailing)
+                    .offset(x: theme.markerCenteringOffset(markerWidth: theme.bulletMarkerSymbolSize))
             }
             .buttonStyle(.plain)
             .disabled(isReadOnly || !model.calloutToggles)
+            .alignmentGuide(.firstTextBaseline) { dimensions in
+                dimensions[VerticalAlignment.center] + theme.bulletMarkerBaselineOffset
+            }
             // The text takes every width the trailing controls leave; a host's
             // detail line (a run's result) goes under it, never beside it.
             VStack(alignment: .leading, spacing: 4) {
@@ -585,10 +591,10 @@ struct BlockRow: View, Equatable {
                 .fixedSize()
                 .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5.5 }
         }
-        .padding(.horizontal, 12)
+        .padding(.trailing, 12)
         .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(tint.opacity(0.1)))
-        .padding(.leading, theme.nonListLeading(depth: depth))
+        .background(RoundedRectangle(cornerRadius: 8).fill(tint.opacity(0.06)))
+        .padding(.leading, CGFloat(depth) * theme.indentStep)
     }
 
     private func codeRow(source: String, language: String?) -> some View {
