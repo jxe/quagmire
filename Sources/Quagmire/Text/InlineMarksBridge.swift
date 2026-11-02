@@ -205,6 +205,34 @@ enum InlineMarksBridge {
         return toNS(model, baseFontSize: baseFontSize, baseBold: baseBold, lineSpacing: lineSpacing, theme: theme)
     }
 
+    /// The URL to link `selected` to when `pasted` lands on it: `pasted` must be
+    /// nothing but a web URL. A selection that is blank, or is itself a URL, gets
+    /// an ordinary paste; swapping one URL for another shouldn't keep the old one
+    /// as the label.
+    static func linkTarget(pasted: String, over selected: String) -> URL? {
+        guard !selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              webURL(selected) == nil else { return nil }
+        return webURL(pasted)
+    }
+
+    private static func webURL(_ string: String) -> URL? {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.contains(where: \.isWhitespace),
+              let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.host != nil else { return nil }
+        return url
+    }
+
+    /// `source` with its marks kept and all of it linked to `url`, in the row's
+    /// typography. Any link already inside `source` gives way to `url`.
+    static func linking(_ source: NSAttributedString, to url: URL, baseFontSize: CGFloat, baseBold: Bool, lineSpacing: CGFloat, theme: EditorTheme = .default) -> NSAttributedString {
+        var model = toModel(source, baseBold: baseBold)
+        model.link = url
+        return toNS(model, baseFontSize: baseFontSize, baseBold: baseBold, lineSpacing: lineSpacing, theme: theme)
+    }
+
     /// Toggle a single inline mark on the given range of an NSTextStorage. After this
     /// returns, the textStorage's `didChangeText()` should be called by the caller so
     /// SwiftUI sees the update.

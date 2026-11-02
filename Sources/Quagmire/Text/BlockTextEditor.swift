@@ -1369,6 +1369,9 @@ final class ContainedTextView: NSTextView {
                 }
             }
             if let str = NSPasteboard.general.string(forType: .string) {
+                if linkSelection(toPasted: str) {
+                    return
+                }
                 if onKey(.paste(str, rich: PasteboardRichContent(NSPasteboard.general))) == .handled {
                     return
                 }
@@ -1390,6 +1393,26 @@ final class ContainedTextView: NSTextView {
             return
         }
         super.paste(sender)
+    }
+
+    /// Pasting a URL over selected text links that text instead of replacing it.
+    /// Returns false, leaving the paste to the usual paths, when `pasted` isn't a
+    /// URL or the selection isn't text to link.
+    func linkSelection(toPasted pasted: String) -> Bool {
+        guard let parent = coordinator?.parent, let storage = textStorage else { return false }
+        let range = selectedRange()
+        guard range.length > 0,
+              let url = InlineMarksBridge.linkTarget(pasted: pasted, over: (storage.string as NSString).substring(with: range)) else { return false }
+        let linked = InlineMarksBridge.linking(
+            storage.attributedSubstring(from: range),
+            to: url,
+            baseFontSize: parent.fontSize,
+            baseBold: parent.bold,
+            lineSpacing: parent.lineSpacing,
+            theme: parent.theme
+        )
+        insertText(linked, replacementRange: range)
+        return true
     }
 
     /// NSTextView routes Esc via `cancelOperation(_:)` rather than firing it through
@@ -2184,6 +2207,9 @@ final class ContainedTextViewIOS: UITextView {
                 }
             }
             if let str = UIPasteboard.general.string {
+                if linkSelection(toPasted: str) {
+                    return
+                }
                 if coordinator.parent.onKey(.paste(str, rich: PasteboardRichContent(UIPasteboard.general))) == .handled {
                     return
                 }
@@ -2210,6 +2236,28 @@ final class ContainedTextViewIOS: UITextView {
             return
         }
         super.paste(sender)
+    }
+
+    /// iOS twin of `ContainedTextView.linkSelection(toPasted:)`.
+    func linkSelection(toPasted pasted: String) -> Bool {
+        guard let parent = coordinator?.parent else { return false }
+        let range = selectedRange
+        guard range.length > 0,
+              let url = InlineMarksBridge.linkTarget(pasted: pasted, over: (textStorage.string as NSString).substring(with: range)) else { return false }
+        let linked = InlineMarksBridge.linking(
+            textStorage.attributedSubstring(from: range),
+            to: url,
+            baseFontSize: parent.fontSize,
+            baseBold: parent.bold,
+            lineSpacing: parent.lineSpacing,
+            theme: parent.theme
+        )
+        textStorage.beginEditing()
+        textStorage.replaceCharacters(in: range, with: linked)
+        textStorage.endEditing()
+        selectedRange = NSRange(location: range.location + linked.length, length: 0)
+        delegate?.textViewDidChange?(self)
+        return true
     }
 
     override func insertText(_ text: String) {

@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import SwiftUI
 @testable import Quagmire
 
 #if os(macOS)
@@ -262,3 +263,113 @@ struct InlineMarksBridgeSanitizeTests {
         #expect(InlineMarksBridge.toModel(typed) == linked + bang)
     }
 }
+
+@Suite("Pasting a URL over selected text")
+struct PasteLinkOverSelectionTests {
+    private let url = URL(string: "https://example.com/a?b=1")!
+
+    @Test func aPastedWebURLLinksSelectedText() {
+        #expect(InlineMarksBridge.linkTarget(pasted: "https://example.com/a?b=1", over: "back in 2017") == url)
+        #expect(InlineMarksBridge.linkTarget(pasted: "  https://example.com/a?b=1\n", over: "words") == url)
+    }
+
+    @Test func anythingElsePastesAsUsual() {
+        #expect(InlineMarksBridge.linkTarget(pasted: "see https://example.com", over: "words") == nil)
+        #expect(InlineMarksBridge.linkTarget(pasted: "example", over: "words") == nil)
+        #expect(InlineMarksBridge.linkTarget(pasted: "note:thing", over: "words") == nil)
+        #expect(InlineMarksBridge.linkTarget(pasted: "https://example.com", over: "  ") == nil)
+        #expect(InlineMarksBridge.linkTarget(pasted: "https://example.com", over: "https://old.example.com") == nil)
+    }
+
+    @Test func linkingKeepsMarksAndReplacesAnEarlierLink() {
+        var source = AttributedString("old ")
+        source.link = URL(string: "https://old.example.com")
+        var bold = AttributedString("bold")
+        bold[InlineAttributes.BoldAttribute.self] = true
+        source += bold
+        let linked = InlineMarksBridge.linking(
+            InlineMarksBridge.toNS(source, baseFontSize: 16, baseBold: false, lineSpacing: 4),
+            to: url,
+            baseFontSize: 16,
+            baseBold: false,
+            lineSpacing: 4
+        )
+        let model = InlineMarksBridge.toModel(linked)
+
+        #expect(String(model.characters) == "old bold")
+        #expect(model.runs.allSatisfy { $0.link == url })
+        #expect(model.runs.contains { $0[InlineAttributes.BoldAttribute.self] == true && String(model[$0.range].characters) == "bold" })
+    }
+
+    #if os(macOS)
+    @MainActor
+    @Test func theEditorLinksOnlyTheSelectionAndUndoRestoresIt() throws {
+        let block = Block.paragraph(text: AttributedString("As I wrote back in 2017: photos."))
+        let parent = MacBlockTextEditor(
+            text: .constant(block.text),
+            fontSize: 16,
+            bold: false,
+            lineSpacing: 2,
+            theme: .default,
+            isFocused: true,
+            onFocusChange: { _ in },
+            onKey: { _ in .ignored },
+            onAutotransform: { _, _ in },
+            onOpenLink: { _ in false },
+            onCompletionTriggerChange: { _ in },
+            completionActive: false,
+            consumeInitialCursor: { nil },
+            blockID: block.id,
+            documentUndoController: nil,
+            activeView: nil
+        )
+        let coordinator = parent.makeCoordinator()
+        let editor = ContainedTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+        editor.coordinator = coordinator
+        editor.delegate = coordinator
+        editor.allowsUndo = true
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        let window = UndoWindow(undo)
+        window.contentView = editor
+        let source = "As I wrote back in 2017: photos."
+        editor.textStorage?.setAttributedString(
+            InlineMarksBridge.toNS(AttributedString(source), baseFontSize: 16, baseBold: false, lineSpacing: 2)
+        )
+        let selected = (source as NSString).range(of: "back in 2017")
+        editor.setSelectedRange(selected)
+
+        undo.beginUndoGrouping()
+        #expect(editor.linkSelection(toPasted: url.absoluteString))
+        undo.endUndoGrouping()
+
+        let model = InlineMarksBridge.toModel(try #require(editor.textStorage))
+        #expect(String(model.characters) == source)
+        let links = model.runs.filter { $0.link != nil }.map { String(model[$0.range].characters) }
+        #expect(links == ["back in 2017"])
+        #expect(editor.selectedRange() == NSRange(location: NSMaxRange(selected), length: 0))
+
+        undo.undo()
+        let undone = InlineMarksBridge.toModel(try #require(editor.textStorage))
+        #expect(String(undone.characters) == source)
+        #expect(undone.runs.allSatisfy { $0.link == nil })
+
+        editor.setSelectedRange(selected)
+        #expect(!editor.linkSelection(toPasted: "plain words"))
+        editor.setSelectedRange(NSRange(location: 3, length: 0))
+        #expect(!editor.linkSelection(toPasted: url.absoluteString))
+    }
+    #endif
+}
+
+#if os(macOS)
+@MainActor
+private final class UndoWindow: NSWindow {
+    private let undo: UndoManager
+    init(_ undo: UndoManager) {
+        self.undo = undo
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200), styleMask: [.borderless], backing: .buffered, defer: false)
+    }
+    override var undoManager: UndoManager? { undo }
+}
+#endif
