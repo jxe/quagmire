@@ -584,12 +584,11 @@ struct BlockRow: View, Equatable {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
-            // Centered on the first line: in the middle of a one-line
-            // callout, at the top of a long one. A 16pt line's middle sits
-            // about 5.5pt above its baseline.
+            // Centered on the first line, level with the bullets' marker: in the
+            // middle of a one-line callout, at the top of a long one.
             calloutTrailing()
                 .fixedSize()
-                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5.5 }
+                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + theme.bulletMarkerBaselineOffset }
         }
         .padding(.trailing, 12)
         .padding(.vertical, 8)
