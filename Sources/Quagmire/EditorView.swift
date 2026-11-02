@@ -299,8 +299,16 @@ public struct EditorView: View {
                 ? nil
                 : findMatches[min(findSelectionIndex, findMatches.count - 1)]
             let findMatchBlockIDs = Set(findMatches.map(\.blockID))
-            let surfaceRows = visibleRows.map { row in
-                let gap = BlockSpacing.gap(before: row.kind, depth: row.depth, after: row.prevKind, prevDepth: row.prevDepth)
+            // A callout sits in the list's rhythm: spaced like a bullet, not a quote.
+            let calloutRows = editorCallouts.isEmpty ? Set<BlockID>() : Set(visibleRows.filter { row in
+                row.kind == .quote && document.find(row.id).flatMap { callout(for: $0) } != nil
+            }.map(\.id))
+            let surfaceRows = visibleRows.enumerated().map { index, row in
+                let isCallout = calloutRows.contains(row.id)
+                let followsCallout = index > 0 && calloutRows.contains(visibleRows[index - 1].id)
+                let gap = isCallout && followsCallout ? BlockSpacing.adjacentCalloutGap : BlockSpacing.gap(
+                    before: isCallout ? .bullet : row.kind, depth: row.depth,
+                    after: followsCallout ? .bullet : row.prevKind, prevDepth: row.prevDepth)
                 return RowSurfaceRow(
                     id: row.id,
                     slot: row.slot,

@@ -447,6 +447,9 @@ enum BlockSpacing {
     /// and after an H2; list items get a non-zero top margin so item-to-item gaps match
     /// `notion_prompt_example.png` (the nested-child branch in `gap(...)` forces currTop = 0,
     /// so nested items still pack tight).
+    /// Two callouts in a row keep their panels apart.
+    static let adjacentCalloutGap: CGFloat = 4
+
     private static func topMargin(_ kind: VisibleRowKind) -> CGFloat {
         switch kind {
         case .heading(.h1): return 40
