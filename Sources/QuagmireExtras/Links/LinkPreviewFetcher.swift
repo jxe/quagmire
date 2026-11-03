@@ -27,16 +27,30 @@ enum LinkPreviewFetcher {
     }()
 
     static func fetch(url: URL) async -> LinkPreview? {
-        guard let (data, response) = try? await session.data(from: url),
+        guard let (bytes, response) = try? await session.bytes(from: url),
               let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
         let base = http.url ?? url
         let isHTML = http.mimeType.map { $0.contains("html") } ?? true
-        let head = isHTML ? String(decoding: data.prefix(headBytes), as: UTF8.self) : ""
-        let page = HTMLHead(head)
+        // Only the head is read: the rest of the page (or a large file) is
+        // never downloaded.
+        var data = Data()
+        if isHTML {
+            do {
+                for try await byte in bytes {
+                    data.append(byte)
+                    if data.count >= headBytes { break }
+                    if byte == UInt8(ascii: ">"), data.count >= 7,
+                       data.suffix(7).elementsEqual("</head>".utf8, by: { $0 | 0x20 == $1 | 0x20 }) { break }
+                }
+            } catch {}
+        }
+        bytes.task.cancel()
+        let page = HTMLHead(String(decoding: data, as: UTF8.self))
         let title = page.title
         let iconURL = page.iconHref.flatMap { URL(string: $0, relativeTo: base)?.absoluteURL }
             ?? URL(string: "/favicon.ico", relativeTo: base)?.absoluteURL
-        let iconPNG = await iconURL.flatMap { await loadIconPNG(from: $0) }
+        var iconPNG: Data?
+        if let iconURL { iconPNG = await loadIconPNG(from: iconURL) }
         guard title != nil || iconPNG != nil else { return nil }
         return LinkPreview(url: url, title: title, iconPNG: iconPNG)
     }
