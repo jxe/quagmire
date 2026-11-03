@@ -904,7 +904,7 @@ public struct EditorView: View {
 
         let blockExternalURLs = collectExternalURLs(in: block.text)
         let relevantLinkPreviews: [URL: LinkPreview] = blockExternalURLs.reduce(into: [:]) { dict, url in
-            if let preview = linkPreviews[url] { dict[url] = preview }
+            if let preview = linkPreviews[url] ?? host.cachedLinkPreview(for: url) { dict[url] = preview }
         }
 
         // The iOS swipe-right action sheet opens via this per-row closure.

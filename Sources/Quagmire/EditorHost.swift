@@ -407,6 +407,10 @@ public protocol EditorHost: AnyObject {
     /// cancelled, or the URL is in a known-failed state.
     func linkPreview(for url: URL) async -> LinkPreview?
 
+    /// A preview the host already holds for `url`, without waiting, so a newly
+    /// mounted editor can show it in its first frame. Nil when none is held.
+    func cachedLinkPreview(for url: URL) -> LinkPreview?
+
     /// Resolve an image block's `source` (a markdown path like
     /// `Assets/foo.png`) to a file URL the renderer can load. Nil →
     /// renderer shows a missing-image placeholder.
@@ -497,6 +501,10 @@ public protocol ImagesUnsupported: EditorHost {}
 public extension ImagesUnsupported {
     func saveImages(_ items: [PastedImage], in document: Document) async -> [String] { [] }
     func imageResource(for source: String, in document: Document) async -> EditorImageResource? { nil }
+}
+
+public extension EditorHost {
+    func cachedLinkPreview(for url: URL) -> LinkPreview? { nil }
 }
 
 /// No favicon/title fetching for external links.
