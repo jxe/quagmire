@@ -16,18 +16,23 @@ public struct EditorPeer: Identifiable {
     /// The name read out and shown on hover, such as "Ana" or "Claude (Ana)".
     public let label: String
     public let isAgent: Bool
+    /// The host's picture of the peer, such as a profile photo, drawn in the
+    /// badge's circle in place of the initials. An agent keeps its sparkle.
+    let avatar: AnyView?
     let bubble: AnyView?
 
-    public init(id: String, block: BlockID, color: Color, initials: String, label: String, isAgent: Bool = false) {
+    public init(id: String, block: BlockID, color: Color, initials: String, label: String, isAgent: Bool = false,
+                avatar: AnyView? = nil) {
         self.id = id; self.block = block; self.color = color; self.initials = initials
-        self.label = label; self.isAgent = isAgent; self.bubble = nil
+        self.label = label; self.isAgent = isAgent; self.avatar = avatar; self.bubble = nil
     }
 
-    /// A peer with a bubble, such as an agent's status line.
+    /// A peer with a bubble, such as an agent's status line. The bubble floats
+    /// just under the row, over whatever follows, so draw it as a card.
     public init<Bubble: View>(id: String, block: BlockID, color: Color, initials: String, label: String,
-                              isAgent: Bool = false, @ViewBuilder bubble: () -> Bubble) {
+                              isAgent: Bool = false, avatar: AnyView? = nil, @ViewBuilder bubble: () -> Bubble) {
         self.id = id; self.block = block; self.color = color; self.initials = initials
-        self.label = label; self.isAgent = isAgent; self.bubble = AnyView(bubble())
+        self.label = label; self.isAgent = isAgent; self.avatar = avatar; self.bubble = AnyView(bubble())
     }
 }
 
@@ -60,6 +65,8 @@ extension EditorView {
 
     func peerTint(at block: BlockID) -> Color? {
         guard tintsPeerRows else { return nil }
+        // A callout already draws its own panel; a second wash wouldn't line up with it.
+        if !editorCallouts.isEmpty, let current = document.find(block), callout(for: current) != nil { return nil }
         return peers(at: block).first?.color
     }
 
@@ -94,11 +101,18 @@ struct EditorPeerBadge: View {
     let peer: EditorPeer
 
     var body: some View {
-        Text(peer.initials)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(.white)
+        ZStack {
+            Circle().fill(peer.color)
+            if let avatar = peer.avatar {
+                avatar
+            } else {
+                Text(peer.initials)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+        }
             .frame(width: 18, height: 18)
-            .background(Circle().fill(peer.color))
+            .clipShape(Circle())
             .overlay(alignment: .bottomTrailing) {
                 if peer.isAgent {
                     Image(systemName: "sparkle")

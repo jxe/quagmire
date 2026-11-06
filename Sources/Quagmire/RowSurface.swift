@@ -312,10 +312,16 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
                         }
                         .overlay(alignment: .bottomTrailing) {
                             if let bubble = rowBubble(row.id) {
-                                bubble
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .frame(maxWidth: 320, alignment: .trailing)
-                                    .alignmentGuide(.bottom) { $0[.top] - 4 }
+                                // Hang the bubble from a zero-height line at the row's
+                                // bottom edge, so it never covers the row's own controls.
+                                Color.clear
+                                    .frame(height: 0)
+                                    .overlay(alignment: .topTrailing) {
+                                        bubble
+                                            .fixedSize(horizontal: false, vertical: true)
+                                            .frame(maxWidth: 320, alignment: .trailing)
+                                            .padding(.top, 4)
+                                    }
                                     .allowsHitTesting(false)
                             }
                         }
