@@ -574,15 +574,13 @@ public struct EditorView: View {
             #if os(iOS)
             .overlay(alignment: .bottom) {
                 if let actionSheet {
-                    VStack(alignment: .leading, spacing: 0) {
-                        actionMenuSelectionHeader()
-                        blockActionMenuContent(for: actionSheet.id)
-                    }
+                    blockActionMenuContent(for: actionSheet.id)
                         .background(
                             .regularMaterial,
                             in: RoundedRectangle(cornerRadius: 16, style: .continuous)
                         )
                         .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
+                        .overlay(alignment: .topTrailing) { actionMenuCloseButton() }
                         .padding(.horizontal, 12)
                         .padding(.bottom, 12)
                         .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)))
@@ -1193,20 +1191,25 @@ public struct EditorView: View {
         actionSheet = current.following(state.selection, in: document)
     }
 
-    /// Row count and the way out of the menu's selection.
-    func actionMenuSelectionHeader() -> some View {
-        let count = state.selection.count
-        return HStack {
-            Text(count == 1 ? "1 row" : "\(count) rows")
+    /// The way out of the menu's selection, now that taps on rows extend it:
+    /// a small X sitting over the menu's top-right corner.
+    func actionMenuCloseButton() -> some View {
+        Button {
+            actionSheet = nil
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.secondary)
-            Spacer()
-            Button("Done") { actionSheet = nil }
-                .fontWeight(.semibold)
+                .frame(width: 24, height: 24)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
-        .font(configuration.theme.body(size: 15))
-        .padding(.horizontal, 14)
-        .padding(.top, 12)
-        .frame(width: 296)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Close")
+        .offset(x: 18, y: -18)
     }
 
     /// A long-press drags the menu's selected rows when it lands on one of
