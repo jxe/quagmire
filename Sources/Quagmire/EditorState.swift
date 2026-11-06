@@ -355,6 +355,11 @@ struct ReorderLift: Equatable, Sendable {
     /// Visible depth of the lead row at lift time. The lift renders at this
     /// indent so it starts exactly over the row it replaced.
     var sourceDepth: Int
+    /// Levels the finger has asked for by moving sideways since pickup:
+    /// negative is shallower, positive deeper, zero keeps the default depth.
+    var sidewaysSteps: Int = 0
+    /// Depth the lift is drawn at while a sideways choice is in effect.
+    var previewDepth: Int?
 
     init(
         block: Block,

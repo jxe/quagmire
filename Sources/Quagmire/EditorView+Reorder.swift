@@ -124,11 +124,14 @@ extension EditorView {
         if let lift = state.reorderLift ?? reorderSettle?.lift, lift.block.id == id {
             BlockRowPreview(
                 block: lift.block,
-                depth: isLanding ? reorderSettleDestinationDepth() ?? lift.sourceDepth : lift.sourceDepth,
+                depth: isLanding
+                    ? reorderSettleDestinationDepth() ?? lift.sourceDepth
+                    : lift.previewDepth ?? lift.sourceDepth,
                 documentLookups: resolveDocumentLookups(for: lift.block, host: host, in: document),
                 bulletMarkerSymbol: bulletMarker(for: lift.block)?.systemImage,
                 theme: configuration.theme
             )
+            .animation(.easeOut(duration: 0.14), value: lift.previewDepth)
             .frame(width: size.width, height: size.height, alignment: .leading)
             .background {
                 // The lift spans the row's column; bleed to the page edges.
@@ -405,6 +408,14 @@ extension EditorView {
             }
             lift.location = location
             lift.isCopy = isCopy
+            if !lift.pendingAnchor, lift.outlineHeadingLevel == nil {
+                lift.sidewaysSteps = ReorderDropResolver.sidewaysSteps(
+                    dx: location.x - (lift.sourceFrame.minX + lift.touchOffset.width),
+                    previous: lift.sidewaysSteps,
+                    threshold: Self.sidewaysDepthThreshold,
+                    step: configuration.theme.indentStep
+                )
+            }
             state.setReorderLift(lift)
         }
         // A move removes its source rows from the projection; a heading drag
@@ -516,6 +527,134 @@ extension EditorView {
         if state.currentDropTarget != target {
             state.currentDropTarget = target
         }
+        updateSidewaysPreviewDepth(for: target, snapshot: snapshot)
+    }
+
+    /// Distance the finger must travel sideways from its pickup point before
+    /// a drag leaves its default depth: about an indent with a pointer, about
+    /// a fingertip with touch, so a drag that wanders stays at the default.
+    static var sidewaysDepthThreshold: CGFloat {
+        #if os(iOS)
+        return 44
+        #else
+        return 24
+        #endif
+    }
+
+    /// While a sideways choice is in effect the lift is drawn at the depth it
+    /// will land at, with a tick each time that depth changes.
+    private func updateSidewaysPreviewDepth(for target: DropTarget, snapshot: [Block]) {
+        guard var lift = state.reorderLift else { return }
+        var depth: Int?
+        if lift.sidewaysSteps != 0, case .insertAt(let path) = target {
+            depth = visualDropDepth(for: path, rows: rowsBeforeReorderSourceRemoval(snapshot: snapshot))
+        }
+        guard lift.previewDepth != depth else { return }
+        lift.previewDepth = depth
+        state.setReorderLift(lift)
+        Haptics.selection(enabled: configuration.isHapticFeedbackEnabled)
+    }
+
+    /// The depth a block inserted at `path` is drawn at.
+    func visualDropDepth(for path: DropPath, rows: [VisibleRow]) -> Int? {
+        guard let parentID = path.parent else { return 0 }
+        guard let parent = rows.first(where: { $0.id == parentID }) else { return nil }
+        return parent.kind.childDepth(from: parent.depth)
+    }
+
+    /// Every depth a drop at this visible slot could land at without moving
+    /// any other row: from as deep as a first child of the row above, out
+    /// through each ancestor that ends at this slot, to a sibling of the row
+    /// below. Several structural paths can share a depth (heading sections
+    /// draw flush); the default path wins its depth, else the innermost.
+    func sidewaysDropCandidates(
+        forVisibleSlot slot: Int,
+        rows: [VisibleRow],
+        defaultPath: DropPath,
+        ids: [BlockID],
+        draggedSubtreeIDs: Set<BlockID>
+    ) -> [(path: DropPath, depth: Int)] {
+        if let regionStart = rows.firstIndex(where: { document.isRegionBlock($0.id) }), slot >= regionStart {
+            return []
+        }
+        guard slot > 0, slot <= rows.count else { return [] }
+        func rowIndex(of id: BlockID, before end: Int) -> Int? {
+            var k = min(end, rows.count) - 1
+            while k >= 0 {
+                if rows[k].id == id { return k }
+                k -= 1
+            }
+            return nil
+        }
+        func siblings(under parentID: BlockID?) -> [Block] {
+            parentID.flatMap(document.find)?.children ?? document.children
+        }
+
+        var belowAncestors: Set<BlockID> = []
+        if slot < rows.count {
+            var parentID = rows[slot].parentID
+            var end = slot
+            while let id = parentID, let k = rowIndex(of: id, before: end) {
+                belowAncestors.insert(id)
+                parentID = rows[k].parentID
+                end = k
+            }
+        }
+
+        var candidates: [(path: DropPath, depth: Int)] = []
+        let aboveIndex = slot - 1
+        let above = rows[aboveIndex]
+        if !isCollapsedSection(id: above.id, kind: above.kind),
+           let aboveBlock = document.find(above.id),
+           aboveBlock.children.allSatisfy({ draggedSubtreeIDs.contains($0.id) }) || belowAncestors.contains(above.id) {
+            candidates.append((DropPath(parent: above.id, position: 0), above.kind.childDepth(from: above.depth)))
+        }
+        if !belowAncestors.contains(above.id) {
+            var xIndex = aboveIndex
+            while true {
+                let x = rows[xIndex]
+                if let position = siblings(under: x.parentID).firstIndex(where: { $0.id == x.id }) {
+                    candidates.append((DropPath(parent: x.parentID, position: position + 1), x.depth))
+                }
+                guard let parentID = x.parentID,
+                      !belowAncestors.contains(parentID),
+                      let parentIndex = rowIndex(of: parentID, before: xIndex)
+                else { break }
+                xIndex = parentIndex
+            }
+        }
+        if let depth = visualDropDepth(for: defaultPath, rows: rows) {
+            candidates.insert((defaultPath, depth), at: 0)
+        }
+
+        var byDepth: [Int: DropPath] = [:]
+        for candidate in candidates where byDepth[candidate.depth] == nil {
+            guard candidate.path == defaultPath || document.canDrop(ids: ids, to: candidate.path) else { continue }
+            byDepth[candidate.depth] = candidate.path
+        }
+        return byDepth.keys.sorted().map { (byDepth[$0]!, $0) }
+    }
+
+    /// The default path moved `steps` depths along this slot's candidates.
+    func sidewaysDropPath(
+        steps: Int,
+        forVisibleSlot slot: Int,
+        rows: [VisibleRow],
+        defaultPath: DropPath,
+        ids: [BlockID],
+        draggedSubtreeIDs: Set<BlockID>
+    ) -> DropPath {
+        guard steps != 0 else { return defaultPath }
+        let candidates = sidewaysDropCandidates(
+            forVisibleSlot: slot,
+            rows: rows,
+            defaultPath: defaultPath,
+            ids: ids,
+            draggedSubtreeIDs: draggedSubtreeIDs
+        )
+        guard let start = candidates.firstIndex(where: { $0.path == defaultPath }) else { return defaultPath }
+        let index = max(0, min(candidates.count - 1, start + steps))
+        return candidates[index].path
     }
 
     fileprivate func resolveDropTarget(atY y: CGFloat, snapshot: [Block]) -> DropTarget {
@@ -632,13 +771,23 @@ extension EditorView {
         }
 
         // Between-rows insertion: convert the visible slot to a tree DropPath
-        // using the layout's depth + parent metadata.
+        // using the layout's depth + parent metadata. Moving sideways past
+        // the threshold picks another depth at the same slot.
+        let defaultPath = reorderInsertionPath(
+            forVisibleSlot: slot,
+            rows: rows,
+            unprojectedRows: unprojectedRows,
+            lift: lift
+        )
+        guard let lift, lift.sidewaysSteps != 0 else { return (.insertAt(defaultPath), slot) }
         return (
-            .insertAt(reorderInsertionPath(
+            .insertAt(sidewaysDropPath(
+                steps: lift.sidewaysSteps,
                 forVisibleSlot: slot,
                 rows: rows,
-                unprojectedRows: unprojectedRows,
-                lift: lift
+                defaultPath: defaultPath,
+                ids: lift.ids,
+                draggedSubtreeIDs: lift.draggedSubtreeIDs
             )),
             slot
         )

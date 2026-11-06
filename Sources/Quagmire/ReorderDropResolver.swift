@@ -135,4 +135,27 @@ enum ReorderDropResolver {
 
         return index
     }
+
+    /// Depth levels asked for by sideways travel `dx` from the pickup point.
+    /// Nothing until `threshold`, then one level per `step`. A level, once
+    /// reached, holds until the finger comes back `hysteresis` past its
+    /// boundary, so a finger resting on a boundary does not flicker.
+    static func sidewaysSteps(
+        dx: CGFloat,
+        previous: Int,
+        threshold: CGFloat,
+        step: CGFloat,
+        hysteresis: CGFloat = 6
+    ) -> Int {
+        func raw(_ d: CGFloat) -> Int {
+            let distance = abs(d)
+            guard distance >= threshold, step > 0 else { return 0 }
+            let levels = 1 + Int(((distance - threshold) / step).rounded(.down))
+            return d < 0 ? -levels : levels
+        }
+        let candidate = raw(dx)
+        if candidate > previous { return max(previous, raw(dx - hysteresis)) }
+        if candidate < previous { return min(previous, raw(dx + hysteresis)) }
+        return candidate
+    }
 }
