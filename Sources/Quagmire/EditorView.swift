@@ -330,7 +330,7 @@ public struct EditorView: View {
                 onTapRow: { id, point in
                     #if os(iOS)
                     if actionSheet != nil {
-                        actionSheet = nil
+                        toggleActionMenuRow(id)
                         return
                     }
                     #endif
@@ -362,7 +362,7 @@ public struct EditorView: View {
                 onTapGutter: { id in
                     #if os(iOS)
                     if actionSheet != nil {
-                        actionSheet = nil
+                        toggleActionMenuRow(id)
                         return
                     }
                     #endif
@@ -574,7 +574,10 @@ public struct EditorView: View {
             #if os(iOS)
             .overlay(alignment: .bottom) {
                 if let actionSheet {
-                    blockActionMenuContent(for: actionSheet.id)
+                    VStack(alignment: .leading, spacing: 0) {
+                        actionMenuSelectionHeader()
+                        blockActionMenuContent(for: actionSheet.id)
+                    }
                         .background(
                             .regularMaterial,
                             in: RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -900,9 +903,8 @@ public struct EditorView: View {
         // MacPageGestureHost; their per-row closures are gone.)
         let onShowActionSheet: () -> Void = {
             #if os(iOS)
-            if let current = actionSheet {
-                state.toggleNavSelection(block.id, in: document)
-                actionSheet = current.following(state.selection, in: document)
+            if actionSheet != nil {
+                toggleActionMenuRow(block.id)
             } else {
                 transferFocus(to: .nav(cursor: block.id))
                 actionSheet = BlockActionSheet(id: block.id)
@@ -990,14 +992,14 @@ public struct EditorView: View {
                 }
             },
             onClickAtPoint: { point in
-                if dismissIOSActionSheetForTap() { return }
+                if toggleIOSActionMenuRowForTap(block.id) { return }
                 #if os(macOS)
                 if NSEvent.modifierFlags.contains(.shift), selectRange(to: block.id) { return }
                 #endif
                 if !readOnly { transferFocus(to: .editor(block.id, initialCursor: .point(point))) }
             },
             onToggleExpansion: {
-                if dismissIOSActionSheetForTap() { return }
+                if toggleIOSActionMenuRowForTap(block.id) { return }
                 toggleSectionExpansion(block)
             },
             onHeadingChevronLongPress: {
@@ -1009,12 +1011,7 @@ public struct EditorView: View {
             onLinkPreviewLoaded: { url, preview in linkPreviews[url] = preview },
             host: host,
             onTapOutsideText: {
-                #if os(iOS)
-                if actionSheet != nil {
-                    actionSheet = nil
-                    return
-                }
-                #endif
+                if toggleIOSActionMenuRowForTap(block.id) { return }
                 if case .documentLink = block.kind {
                     _ = navigateIntoDocumentLink(block.id)
                     return
@@ -1025,12 +1022,7 @@ public struct EditorView: View {
                 transferFocus(to: .editor(block.id, initialCursor: nil))
             },
             onDocumentLinkIconTap: {
-                #if os(iOS)
-                if actionSheet != nil {
-                    actionSheet = nil
-                    return
-                }
-                #endif
+                if toggleIOSActionMenuRowForTap(block.id) { return }
                 if readOnly { _ = navigateIntoDocumentLink(block.id) }
                 else { openDocumentIconPicker(for: block.id) }
             },
@@ -1065,12 +1057,7 @@ public struct EditorView: View {
                 if bulletMarkerPopoverBlockID == block.id { bulletMarkerPopoverBlockID = nil }
             },
             onBulletMarkerTap: {
-                #if os(iOS)
-                if actionSheet != nil {
-                    actionSheet = nil
-                    return
-                }
-                #endif
+                if toggleIOSActionMenuRowForTap(block.id) { return }
                 openBulletMarkerPopover(block.id)
             },
             bulletMarkerPopoverContent: {
@@ -1129,12 +1116,12 @@ public struct EditorView: View {
     }
     #endif
 
-    /// iOS: while the block menu is up, a tap anywhere outside it only
-    /// dismisses it. Returns true when it did.
-    func dismissIOSActionSheetForTap() -> Bool {
+    /// iOS: while the block menu is up, a tap on a row only adds it to the
+    /// menu's selection or takes it out. Returns true when it did.
+    func toggleIOSActionMenuRowForTap(_ id: BlockID) -> Bool {
         #if os(iOS)
         if actionSheet != nil {
-            actionSheet = nil
+            toggleActionMenuRow(id)
             return true
         }
         #endif
@@ -1198,6 +1185,30 @@ public struct EditorView: View {
     }
 
     #if os(iOS)
+    /// While the block menu is up, a tap or swipe on a row adds it to the
+    /// menu's selection or takes it out; the menu closes once none is left.
+    func toggleActionMenuRow(_ id: BlockID) {
+        guard let current = actionSheet else { return }
+        state.toggleNavSelection(id, in: document)
+        actionSheet = current.following(state.selection, in: document)
+    }
+
+    /// Row count and the way out of the menu's selection.
+    func actionMenuSelectionHeader() -> some View {
+        let count = state.selection.count
+        return HStack {
+            Text(count == 1 ? "1 row" : "\(count) rows")
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Done") { actionSheet = nil }
+                .fontWeight(.semibold)
+        }
+        .font(configuration.theme.body(size: 15))
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .frame(width: 296)
+    }
+
     /// A long-press drags the menu's selected rows when it lands on one of
     /// them, and only the pressed row otherwise.
     func selectForIOSReorderStart(on blockID: BlockID) {
