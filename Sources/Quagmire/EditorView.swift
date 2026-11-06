@@ -707,7 +707,9 @@ public struct EditorView: View {
                 handleDropTargetChange(newValue)
             }
             .onChange(of: state.sessionState) { oldState, newState in
-                if actionSheet != nil { actionSheet = nil }
+                if let actionSheet, !Self.actionMenuSurvives(actionSheet, newState) {
+                    self.actionSheet = nil
+                }
                 handleModeChange(from: oldState, to: newState)
             }
             // Single home for the focus-pump dance. `forcePageFocusGrab()`
@@ -1174,6 +1176,19 @@ public struct EditorView: View {
         let hitsChevron = location.x >= frame.maxX - chevronHitWidth
             && location.x <= frame.maxX
         return !hitsChevron
+    }
+
+    /// Whether the open block menu outlives a session-state change. On the
+    /// Mac any change closes it. On iOS the menu's own rows are the nav
+    /// selection, so swiping rows in and out must not close it; editing, a
+    /// gesture, or losing its row still does.
+    static func actionMenuSurvives(_ sheet: BlockActionSheet, _ newState: SessionState) -> Bool {
+        #if os(iOS)
+        guard case .navigating(let selection, nil) = newState else { return false }
+        return selection.blocks.contains(sheet.id)
+        #else
+        return false
+        #endif
     }
 
     /// Whether `blockID` is one of several selected rows that act together
