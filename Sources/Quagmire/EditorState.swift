@@ -225,8 +225,8 @@ enum Gesture: Equatable, Sendable {
 }
 
 struct Selection: Equatable, Sendable {
-    /// Selected block IDs in document order. Always contiguous (we only build
-    /// it via cursor/anchor extension).
+    /// Selected block IDs. Shift-extension builds a contiguous range; rows
+    /// picked one by one (iOS swipes while the block menu is up) need not be.
     var blocks: Set<BlockID>
     /// Anchor end of a Shift-extend operation. Stays put while `cursor` moves.
     var anchor: BlockID?
@@ -238,6 +238,26 @@ struct Selection: Equatable, Sendable {
         self.blocks = blocks
         self.anchor = anchor
         self.cursor = cursor
+    }
+}
+
+extension Selection {
+    /// Add `id` if it is not selected, take it out if it is. Removing the
+    /// anchor or cursor hands it to the first remaining row in document
+    /// order; removing the last row leaves the empty selection.
+    @MainActor
+    mutating func toggle(_ id: BlockID, in document: Document) {
+        if blocks.insert(id).inserted {
+            cursor = id
+            if anchor == nil { anchor = id }
+            return
+        }
+        blocks.remove(id)
+        let first = blocks.min { lhs, rhs in
+            (document.documentOrder(of: lhs) ?? .max) < (document.documentOrder(of: rhs) ?? .max)
+        }
+        if anchor == id { anchor = first }
+        if cursor == id { cursor = first }
     }
 }
 
@@ -360,6 +380,9 @@ struct ReorderLift: Equatable, Sendable {
     var sidewaysSteps: Int = 0
     /// Depth the lift is drawn at while a sideways choice is in effect.
     var previewDepth: Int?
+    /// Top-level rows travelling together: one for a single-row drag, more
+    /// when a multi-row selection was lifted.
+    var groupCount: Int = 1
 
     init(
         block: Block,
@@ -516,6 +539,14 @@ extension EditorState {
     /// Clears any in-flight gesture.
     func setNavSelection(blocks: Set<BlockID>, anchor: BlockID, cursor: BlockID) {
         setSessionStateIfChanged(.navigating(Selection(blocks: blocks, anchor: anchor, cursor: cursor), gesture: nil))
+    }
+
+    /// Toggle one row in or out of the nav-mode selection without touching
+    /// the rest of it. No-op in edit mode or during a gesture.
+    func toggleNavSelection(_ id: BlockID, in document: Document) {
+        guard case .navigating(var sel, nil) = sessionState else { return }
+        sel.toggle(id, in: document)
+        setSessionStateIfChanged(.navigating(sel, gesture: nil))
     }
 
     /// Select the row a reorder gesture started from before the lift is built.

@@ -165,44 +165,28 @@ public struct EditorView: View {
     @State var filterCommandPresented = false
     @State var filterCommandText = ""
     @State var filterCommandFocusRequest = 0
-    /// Drives the compact block action menu. On iOS this is opened by a leading
-    /// row swipe and further leading swipes add rows to its targets. On macOS
-    /// the ordinary navigation selection remains the source of truth.
+    /// The open block menu, anchored on one row. The rows it acts on are the
+    /// nav-mode selection, as on the Mac; on iOS a swipe on another row
+    /// while the menu is up adds it to that selection or takes it out.
     struct BlockActionSheet: Identifiable {
         private(set) var anchorID: BlockID
-        var selectedIDs: Set<BlockID>
 
         var id: BlockID { anchorID }
 
         init(id: BlockID) {
             anchorID = id
-            selectedIDs = [id]
         }
 
-        /// A swipe on a row while the menu is up toggles that row: others
-        /// join the selection, selected ones leave it. Returns false once
-        /// nothing is left, so the menu closes. Removing the anchor hands
-        /// the menu to the first remaining row in document order.
+        /// The menu after the selection changed under it: it stays on its
+        /// row while that row is selected, moves to the first selected row
+        /// otherwise, and closes once nothing is selected.
         @MainActor
-        mutating func toggleFromBackgroundSwipe(_ blockID: BlockID, in document: Document) -> Bool {
-            guard selectedIDs.contains(blockID) else {
-                selectedIDs.insert(blockID)
-                return true
+        func following(_ selection: Set<BlockID>, in document: Document) -> BlockActionSheet? {
+            if selection.contains(anchorID) { return self }
+            let first = selection.min { lhs, rhs in
+                (document.documentOrder(of: lhs) ?? .max) < (document.documentOrder(of: rhs) ?? .max)
             }
-            selectedIDs.remove(blockID)
-            if anchorID == blockID {
-                guard let next = selectedIDs.min(by: { lhs, rhs in
-                    (document.documentOrder(of: lhs) ?? .max) < (document.documentOrder(of: rhs) ?? .max)
-                }) else { return false }
-                anchorID = next
-            }
-            return !selectedIDs.isEmpty
-        }
-
-        @MainActor
-        func targetIDs(in document: Document) -> [BlockID] {
-            let roots = document.selectionSubtreeRoots(selectedIDs)
-            return roots.isEmpty ? [anchorID] : roots
+            return first.map(BlockActionSheet.init(id:))
         }
     }
     @State var actionSheet: BlockActionSheet?
@@ -285,7 +269,8 @@ public struct EditorView: View {
             }
             let trailingSlot = visibleRows.count
             #if os(iOS)
-            let selectedIDs: Set<BlockID> = []
+            // iOS shows the nav selection only while the block menu is up.
+            let selectedIDs: Set<BlockID> = actionSheet != nil ? state.selection : []
             #else
             let selectedIDs = effectiveSelectedIDs()
             #endif
@@ -404,6 +389,9 @@ public struct EditorView: View {
                 },
                 onReorderBegin: { blockID, location, anchor in
                     guard !readOnly else { return }
+                    #if os(iOS)
+                    selectForIOSReorderStart(on: blockID)
+                    #endif
                     state.selectForReorderStart(on: blockID)
                     if anchor == location {
                         preliftReorder(blockID: blockID)
@@ -411,6 +399,10 @@ public struct EditorView: View {
                         Haptics.prepareSelection(enabled: configuration.isHapticFeedbackEnabled)
                     }
                     tickReorderLift(blockID: blockID, at: location, anchorAt: anchor, snapshot: document.displayedChildren)
+                    #if os(iOS)
+                    // Close only once the lift has taken the menu's rows.
+                    if actionSheet != nil { actionSheet = nil }
+                    #endif
                 },
                 shouldBeginIOSReorder: { blockID, location in
                     !readOnly && shouldBeginIOSReorder(on: blockID, at: location)
@@ -894,10 +886,9 @@ public struct EditorView: View {
         let isEditing = !readOnly && state.editingBlock == block.id
         #endif
         // The macOS action menu opens in nav mode, where the block is already painted with
-        // the nav-selection tint. iOS has no nav mode, so its menu targets take the same
-        // tint here.
+        // the nav-selection tint. iOS shows that selection only while the menu is up.
         #if os(iOS)
-        let isActionMenuTarget = actionSheet?.selectedIDs.contains(block.id) == true
+        let isActionMenuTarget = selectedIDs.contains(block.id)
         #else
         let isActionMenuTarget = false
         #endif
@@ -912,9 +903,11 @@ public struct EditorView: View {
         // MacPageGestureHost; their per-row closures are gone.)
         let onShowActionSheet: () -> Void = {
             #if os(iOS)
-            if var current = actionSheet {
-                actionSheet = current.toggleFromBackgroundSwipe(block.id, in: document) ? current : nil
+            if let current = actionSheet {
+                state.toggleNavSelection(block.id, in: document)
+                actionSheet = current.following(state.selection, in: document)
             } else {
+                transferFocus(to: .nav(cursor: block.id))
                 actionSheet = BlockActionSheet(id: block.id)
             }
             #else
@@ -1055,7 +1048,7 @@ public struct EditorView: View {
             },
             onIOSDelete: {
                 guard !readOnly else { return }
-                let isMultiSelect = state.selection.contains(block.id) && state.selection.count > 1
+                let isMultiSelect = isMultiRowSelection(containing: block.id)
                 if !isMultiSelect, let blk = document.find(block.id), blk.isHeading {
                     deleteHeadingKeepingChildren(blk.id)
                 } else {
@@ -1182,6 +1175,27 @@ public struct EditorView: View {
             && location.x <= frame.maxX
         return !hitsChevron
     }
+
+    /// Whether `blockID` is one of several selected rows that act together
+    /// (drag, delete, the block menu). On iOS the selection is shown, and so
+    /// counts, only while the block menu is up; a group left over from an
+    /// earlier drop or command never rides along unseen.
+    func isMultiRowSelection(containing blockID: BlockID) -> Bool {
+        #if os(iOS)
+        guard actionSheet != nil else { return false }
+        #endif
+        return state.selection.count > 1 && state.selection.contains(blockID)
+    }
+
+    #if os(iOS)
+    /// A long-press drags the menu's selected rows when it lands on one of
+    /// them, and only the pressed row otherwise.
+    func selectForIOSReorderStart(on blockID: BlockID) {
+        if !isMultiRowSelection(containing: blockID), state.editingBlock == nil, state.selection.count > 1 {
+            state.setCursor(blockID)
+        }
+    }
+    #endif
 
     func topSelectedBlockID() -> BlockID? {
         // First-in-document-order id within the selection.

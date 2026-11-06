@@ -146,6 +146,12 @@ extension EditorView {
                         .offset(x: -10, y: -10)
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                if lift.groupCount > 1, !isLanding {
+                    groupCountBadge(lift.groupCount)
+                        .offset(x: -4, y: -8)
+                }
+            }
         }
     }
 
@@ -176,6 +182,17 @@ extension EditorView {
     func finishReorderSettle(token: UUID) {
         guard reorderSettle?.token == token else { return }
         withoutReorderAnimation { reorderSettle = nil }
+    }
+
+    /// How many rows a multi-row drag carries; only the grabbed row is drawn.
+    private func groupCountBadge(_ count: Int) -> some View {
+        Text("\(count)")
+            .font(.system(size: 12, weight: .semibold).monospacedDigit())
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .frame(minWidth: 20, minHeight: 20)
+            .background(Capsule().fill(Color.accentColor))
+            .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
     }
 
     private var copyBadge: some View {
@@ -263,7 +280,7 @@ extension EditorView {
             : nil
         let sourceDepth = rowsBeforeReorderSourceRemoval(snapshot: document.displayedChildren)
             .first { $0.id == blockID }?.depth ?? 0
-        return ReorderLift(
+        var lift = ReorderLift(
             block: block,
             ids: ids,
             sourceParentID: parentID,
@@ -285,6 +302,8 @@ extension EditorView {
             isCopy: isCopy,
             sourceDepth: sourceDepth
         )
+        lift.groupCount = max(1, roots.count)
+        return lift
     }
 
     /// Install the source's own insertion slot before SwiftUI removes the
@@ -1283,7 +1302,7 @@ extension EditorView {
     /// is part of a multi-block selection, drag the whole selection (in document
     /// order); otherwise just the single row + its descendants.
     func dragIDs(for blockID: BlockID) -> [BlockID] {
-        if state.selection.contains(blockID) && state.selection.count > 1 {
+        if isMultiRowSelection(containing: blockID) {
             return effectiveSelectedIDsInDocumentOrder()
         }
         // Single-row drag: the lifted root + all descendants travel together.

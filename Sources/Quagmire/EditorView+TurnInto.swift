@@ -630,13 +630,7 @@ extension EditorView {
     }
 
     func menuTargetIDs(anchorID: BlockID) -> [BlockID] {
-        #if os(iOS)
-        if let actionSheet, actionSheet.id == anchorID {
-            return actionSheet.targetIDs(in: document)
-        }
-        #endif
-        #if os(macOS)
-        if state.selection.contains(anchorID), state.selection.count > 1 {
+        if isMultiRowSelection(containing: anchorID) {
             // Tree-aware analog of "blocks at the shallowest selected depth":
             // collapse the selection to its minimal subtree-roots so a turn-into
             // applied to a parent doesn't double-apply to its already-covered
@@ -644,7 +638,6 @@ extension EditorView {
             let roots = document.selectionSubtreeRoots(state.selection)
             return roots.isEmpty ? [anchorID] : roots
         }
-        #endif
         return [anchorID]
     }
 
