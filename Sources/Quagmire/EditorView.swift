@@ -530,13 +530,8 @@ public struct EditorView: View {
             } liftContent: { id, size, isLanding in
                 reorderLiftContent(for: id, size: size, isLanding: isLanding, pageWidth: geometry.size.width)
             }
-            #if os(iOS)
-            .onScrollPhaseChange { _, phase in
-                if phase.isScrolling, actionSheet != nil {
-                    actionSheet = nil
-                }
-            }
-            #endif
+            // The iOS block menu stays up while the page scrolls, so rows
+            // further down can be swiped into its selection.
             .background(theme.background)
             .overlay(alignment: .top) {
                 if filterCommandPresented {
