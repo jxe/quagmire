@@ -158,8 +158,23 @@ extension EditorView {
         }
         registerEmojiSelection(suggestion.character)
 
+        let prefix = String(replacement.text.characters.prefix(replacement.cursor))
+        placeCaret(in: block.id, atUTF16: (prefix as NSString).length)
+    }
+
+    /// Put the caret at `offset` (UTF-16) in a block whose text a completion
+    /// just replaced. The block is normally still being edited, and the live
+    /// editor reads an initial cursor only when it mounts: reloading its text
+    /// from the model would otherwise leave the caret at the end of the block.
+    /// So push the new text into the live editor and select in place; only
+    /// focus (with an initial cursor) when no editor is showing the block.
+    private func placeCaret(in id: BlockID, atUTF16 offset: Int) {
+        if state.editingBlock == id {
+            undoController.synchronizeActiveText?(document)
+            if liveTextSelection.select(NSRange(location: offset, length: 0), in: id) { return }
+        }
         DispatchQueue.main.async {
-            transferFocus(to: .editor(block.id, initialCursor: .offset(replacement.cursor)))
+            transferFocus(to: .editor(id, initialCursor: .offset(offset)))
         }
     }
 
@@ -223,15 +238,13 @@ extension EditorView {
         linked.link = url
         let suffix = attributedSlice(text, triggerEnd..<text.characters.count)
         let newText = prefix + linked + suffix
-        let cursor = String((prefix + linked).characters).count
+        let cursor = (String((prefix + linked).characters) as NSString).length
 
         mutate("Insert Document Link") {
             document.setText(block.id, newText)
         }
 
-        DispatchQueue.main.async {
-            transferFocus(to: .editor(block.id, initialCursor: .offset(cursor)))
-        }
+        placeCaret(in: block.id, atUTF16: cursor)
     }
 
     @ViewBuilder
