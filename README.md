@@ -28,7 +28,7 @@ exact version while its pre-1.0 API is settling:
 dependencies: [
     .package(
         url: "https://github.com/jxe/quagmire.git",
-        exact: "0.15.0"
+        exact: "0.16.0"
     )
 ],
 targets: [
