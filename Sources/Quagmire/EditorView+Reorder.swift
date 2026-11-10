@@ -1471,6 +1471,10 @@ extension EditorView {
     /// host's transfer transform. Quagmire permits metadata changes but keeps
     /// block identity, kind, and topology stable so move targeting remains valid.
     func preparedBlocksForTransfer(ids: [BlockID]) -> [Block] {
+        // Callers write these copies back inside `mutate(...)`, whose own
+        // flush runs after this read: commit the live editor's text first,
+        // or a block being typed in moves with its old (often empty) text.
+        undoController.flushActiveText?()
         let roots = document.selectionSubtreeRoots(Set(ids))
         let source = roots.compactMap { document.find($0) }
         let prepared = host.prepareBlocksForTransfer(source, in: document)
