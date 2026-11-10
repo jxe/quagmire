@@ -1003,9 +1003,6 @@ public struct EditorView: View {
             onHeadingChevronLongPress: {
                 handleHeadingChevronLongPress(block)
             },
-            onTemplateButtonPress: {
-                if !readOnly { instantiateTemplateButton(blockID: block.id) }
-            },
             onLinkPreviewLoaded: { url, preview in linkPreviews[url] = preview },
             host: host,
             onTapOutsideText: {
@@ -1126,12 +1123,12 @@ public struct EditorView: View {
         return false
     }
 
-    /// iOS: the gutter beside a toggle or template button is part of its
+    /// iOS: the gutter beside a toggle is part of its
     /// disclosure's touch target, as it already is for headings.
     func iosGutterTogglesDisclosure(_ block: Block) -> Bool {
         #if os(iOS)
         switch block.kind {
-        case .toggle, .templateButton: return true
+        case .toggle: return true
         default: return false
         }
         #else
@@ -1328,8 +1325,6 @@ public struct EditorView: View {
             return "Divider"
         case .toggle:
             return "Toggle"
-        case .templateButton:
-            return "Template button"
         case .documentLink:
             return "DocumentLink"
         case .image:
@@ -1391,27 +1386,6 @@ public struct EditorView: View {
             return .todo(text: AttributedString(), done: false)
         default:
             return nil
-        }
-    }
-
-
-    private func instantiateTemplateButton(blockID: BlockID) {
-        guard let block = document.find(blockID),
-              case .templateButton = block.kind else { return }
-        let body = block.children
-        guard !body.isEmpty else { return }
-
-        // Instantiate by appending fresh-id copies of the template's body as
-        // siblings AFTER the template-button itself, at the same depth.
-        let copies = body.map { $0.withFreshIDs() }
-        let parentID = document.parent(of: blockID)
-        let siblings: [Block] = parentID.flatMap(document.find)?.children ?? document.children
-        guard let myIndex = siblings.firstIndex(where: { $0.id == blockID }) else { return }
-        mutate("Insert Template") {
-            document.insertSubtrees(copies, at: DropPath(parent: parentID, position: myIndex + 1))
-        }
-        if let first = copies.first {
-            transferFocus(to: .nav(cursor: first.id))
         }
     }
 
@@ -1917,8 +1891,7 @@ public struct EditorView: View {
     /// Toggle strikethrough across every text-bearing block the user has explicitly
     /// selected — parent rows only, never the implicit section children. If all of them
     /// are already fully struck, remove strikethrough; otherwise add it uniformly. Skips
-    /// blocks without an `AttributedString` body (code/divider/documentLink) and template
-    /// buttons (whose `withText` flattens formatting). Returns `true` if it acted.
+    /// blocks without an `AttributedString` body (code/divider/documentLink). Returns `true` if it acted.
     func toggleStrikethroughOnSelection() -> Bool {
         toggleInlineMarkOnSelection(
             attribute: InlineAttributes.StrikethroughAttribute.self,
@@ -1958,7 +1931,7 @@ public struct EditorView: View {
             switch block.kind {
             case .paragraph, .heading, .bullet, .numbered, .todo, .quote, .toggle:
                 return id
-            case .templateButton, .code, .divider, .documentLink, .image, .unsupported:
+            case .code, .divider, .documentLink, .image, .unsupported:
                 return nil
             }
         }
@@ -2027,7 +2000,7 @@ public struct EditorView: View {
     }
 
     /// Innermost collapsible-section ancestor of `blockID`. Walks the parent
-    /// chain and returns the first heading/toggle/templateButton encountered.
+    /// chain and returns the first heading/toggle encountered.
     private func enclosingCollapsibleSectionID(forBlockID blockID: BlockID) -> BlockID? {
         var current: BlockID? = document.parent(of: blockID)
         while let id = current {
@@ -2086,7 +2059,7 @@ public struct EditorView: View {
         switch block.kind {
         case .heading:
             return !isPageTitleBlock(block)
-        case .toggle, .templateButton:
+        case .toggle:
             return true
         default:
             return false
@@ -2099,8 +2072,6 @@ public struct EditorView: View {
             return !isPageTitleBlock(block) && state.collapsedHeadings.contains(block.id)
         case .toggle:
             return !state.expandedToggles.contains(block.id)
-        case .templateButton:
-            return !state.expandedTemplates.contains(block.id)
         default:
             return false
         }
@@ -2112,8 +2083,6 @@ public struct EditorView: View {
             return !isPageTitleID(id) && state.collapsedHeadings.contains(id)
         case .toggle:
             return !state.expandedToggles.contains(id)
-        case .templateButton:
-            return !state.expandedTemplates.contains(id)
         default:
             return false
         }
@@ -2125,8 +2094,6 @@ public struct EditorView: View {
             return isCollapsibleSection(block) && !state.collapsedHeadings.contains(block.id)
         case .toggle:
             return state.expandedToggles.contains(block.id)
-        case .templateButton:
-            return state.expandedTemplates.contains(block.id)
         default:
             return false
         }
@@ -2138,8 +2105,6 @@ public struct EditorView: View {
             state.collapsedHeadings.remove(block.id)
         case .toggle:
             state.expandedToggles.insert(block.id)
-        case .templateButton:
-            state.expandedTemplates.insert(block.id)
         default:
             break
         }
@@ -2151,8 +2116,6 @@ public struct EditorView: View {
             state.collapsedHeadings.insert(block.id)
         case .toggle:
             state.expandedToggles.remove(block.id)
-        case .templateButton:
-            state.expandedTemplates.remove(block.id)
         default:
             break
         }
@@ -2251,7 +2214,7 @@ public struct EditorView: View {
         return nil
     }
 
-    /// Expand any closed heading/toggle/templateButton ancestors so every id in `ids` is
+    /// Expand any closed heading/toggle ancestors so every id in `ids` is
     /// visible. Called after explicit indent/outdent commands that can land a
     /// selected block inside a collapsed container — without this, the selection
     /// is preserved by id but invisible to the user.
@@ -2318,7 +2281,7 @@ public struct EditorView: View {
                     : .offset(0)
                 transferFocus(to: .editor(candidate.id, initialCursor: cursor))
                 return .handled
-            case .code, .divider, .documentLink, .templateButton, .image, .unsupported:
+            case .code, .divider, .documentLink, .image, .unsupported:
                 i += delta
             }
         }
@@ -2980,7 +2943,7 @@ public struct EditorView: View {
 
         // Enter at end of a block that has children: add a child instead of a
         // sibling between the parent and its first child. Two flavors:
-        //   * Closed toggle/template — children are hidden, so insert a
+        //   * Closed toggle — children are hidden, so insert a
         //     sibling AFTER the whole collapsed section instead.
         //   * Anything else with children — insert a new FIRST child of the
         //     same kind as the existing first child.
@@ -3146,7 +3109,7 @@ public struct EditorView: View {
             return .numbered(text: text)
         case .todo:
             return .todo(text: text, done: false)
-        case .heading, .paragraph, .quote, .toggle, .templateButton, .code, .divider, .documentLink, .image, .unsupported:
+        case .heading, .paragraph, .quote, .toggle, .code, .divider, .documentLink, .image, .unsupported:
             return .paragraph(text: text)
         }
     }
@@ -3159,8 +3122,8 @@ public struct EditorView: View {
     ///    end). No-op if there's nothing to focus.
     /// 3. Non-empty paragraph → merge its text into the previous text-bearing block
     ///    (paragraph/heading/bullet/numbered/todo/quote/toggle). Cursor lands at the
-    ///    join point. If the previous block isn't text-bearing (code/divider/documentLink/
-    ///    templateButton) we ignore — the user can navigate up and delete it
+    ///    join point. If the previous block isn't text-bearing (code/divider/documentLink)
+    ///    we ignore — the user can navigate up and delete it
     ///    explicitly.
     /// Internal rather than private for the same reason as `splitBlock`: the
     /// merge row of the BlockID lifecycle contract (survivor keeps its id, the
@@ -3222,7 +3185,7 @@ public struct EditorView: View {
         switch previous.kind {
         case .paragraph, .heading, .bullet, .numbered, .todo, .quote, .toggle:
             break
-        case .code, .divider, .documentLink, .templateButton, .image, .unsupported:
+        case .code, .divider, .documentLink, .image, .unsupported:
             return .ignored
         }
         let previousLen = previous.text.characters.count

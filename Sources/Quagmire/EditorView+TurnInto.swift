@@ -8,7 +8,7 @@ import GameController
 // The 3-column grid that opens via Cmd-/ in nav mode (macOS), drag-handle tap
 // (macOS), or leading row swipe (iOS). Houses Turn Into (block-type swap),
 // Copy, and Indent/Outdent. The conversion methods (`convert`, `convertSingle`,
-// `convertBlockToDocument`, `convertBlockToTemplate`, `convertDocumentLink`) live
+// `convertBlockToDocument`, `convertDocumentLink`) live
 // here too — they're the actions the menu fires.
 
 enum BlockTurnInto: CaseIterable {
@@ -25,7 +25,6 @@ enum BlockTurnInto: CaseIterable {
     case heading2
     case heading3
     case divider
-    case template
 
     enum Category: CaseIterable {
         case lists
@@ -39,7 +38,7 @@ enum BlockTurnInto: CaseIterable {
         case .paragraph, .page: return .basic
         case .bullet, .numbered, .todo, .toggle: return .lists
         case .heading1, .heading2, .heading3: return .headings
-        case .divider, .template: return .structural
+        case .divider: return .structural
         }
     }
 
@@ -58,7 +57,6 @@ enum BlockTurnInto: CaseIterable {
         case .numbered: return "Number"
         case .todo: return "To-do"
         case .toggle: return "Toggle"
-        case .template: return "Template"
         case .heading1: return "H1"
         case .heading2: return "H2"
         case .heading3: return "H3"
@@ -74,7 +72,6 @@ enum BlockTurnInto: CaseIterable {
         case .numbered: return "list.number"
         case .todo: return "checkmark.square"
         case .toggle: return "arrowtriangle.right.fill"
-        case .template: return "plus.square.on.square"
         case .heading1: return "h.square"
         case .heading2: return "h.square"
         case .heading3: return "h.square"
@@ -90,7 +87,6 @@ enum BlockTurnInto: CaseIterable {
         case .numbered: return "1"
         case .todo: return "["
         case .toggle: return ">"
-        case .template: return "m"
         case .heading1: return "#"
         case .heading2: return "2"
         case .heading3: return "3"
@@ -175,9 +171,6 @@ extension EditorView {
         if target == .page {
             return convertBlockToDocument(blockID: blockID, preferredTitle: nil)
         }
-        if target == .template {
-            return convertBlockToTemplate(blockID: blockID)
-        }
         guard let block = document.find(blockID) else { return .ignored }
         if target == .divider {
             guard canReplaceEmptyBlockWithDivider(block) else { return .ignored }
@@ -185,7 +178,6 @@ extension EditorView {
                 document.mutate(blockID) { $0.kind = .divider }
             }
             state.expandedToggles.remove(blockID)
-            state.expandedTemplates.remove(blockID)
             return .handled
         }
         if case .documentLink = block.kind {
@@ -201,9 +193,6 @@ extension EditorView {
             }
         }
         state.expandedToggles.remove(blockID)
-        if target != .template {
-            state.expandedTemplates.remove(blockID)
-        }
         return .handled
     }
 
@@ -225,29 +214,7 @@ extension EditorView {
         }
         for replacement in replacements {
             state.expandedToggles.remove(replacement.id)
-            state.expandedTemplates.remove(replacement.id)
         }
-        return .handled
-    }
-
-    @discardableResult
-    fileprivate func convertBlockToTemplate(blockID: BlockID) -> KeyPress.Result {
-        guard let block = document.find(blockID) else { return .ignored }
-        guard let text = textForBlockTypeChange(block) else { return .ignored }
-        let label = cleanedTitle(String(text.characters)) ?? "Template"
-        let hasBody = !block.children.isEmpty
-        let defaultBody = Block.paragraph(text: AttributedString())
-
-        mutate("Turn Into") {
-            document.mutate(blockID) { existing in
-                existing.kind = .templateButton(label: label)
-                if !hasBody {
-                    existing.children = [defaultBody]
-                }
-            }
-        }
-        state.expandedToggles.remove(blockID)
-        state.expandedTemplates.insert(blockID)
         return .handled
     }
 
@@ -289,7 +256,7 @@ extension EditorView {
                 loaded.replaceSubrange(0...0, with: first.children)
             }
             // The documentLink's loaded blocks become the children of the new container
-            // (toggle / templateButton / list item etc.). For non-container kinds
+            // (toggle / list item etc.). For non-container kinds
             // they're inlined as siblings after the converted block.
             let replacement = blockForTurnInto(target, id: blockID, text: AttributedString(title))
             mutate("Turn Into") {
@@ -300,11 +267,6 @@ extension EditorView {
                 }
             }
             state.expandedToggles.remove(blockID)
-            if target == .template {
-                state.expandedTemplates.insert(blockID)
-            } else {
-                state.expandedTemplates.remove(blockID)
-            }
             if !(await host.inlineAndRetireDocument(reference, parent: document)) {
                 configuration.diagnostics.documentLink.error("convertDocumentLink: inlineAndRetireDocument failed after mutation — orphan document at \(reference.rawValue, privacy: .public)")
             }
@@ -324,8 +286,6 @@ extension EditorView {
             return .todo(text: text, done: false, id: id)
         case .toggle:
             return .toggle(title: text, id: id)
-        case .template:
-            return .templateButton(label: String(text.characters), id: id)
         case .heading1:
             return .heading(level: .h1, text: text, id: id)
         case .heading2:
@@ -351,8 +311,6 @@ extension EditorView {
              .quote(let t),
              .toggle(let t):
             return t
-        case .templateButton(let label):
-            return AttributedString(label)
         case .todo(let t, _):
             return t
         case .code, .divider, .documentLink, .image, .unsupported:
@@ -372,8 +330,6 @@ extension EditorView {
              .quote(let text),
              .toggle(let text):
             return String(text.characters).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .templateButton(let label):
-            return label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .code(let source, _):
             return source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .divider, .documentLink, .image, .unsupported:
@@ -727,9 +683,6 @@ extension EditorView {
                }) {
                 return false
             }
-            if target == .template, blocks.count > 1 {
-                return false
-            }
             return blocks.allSatisfy { canTurn($0, into: target) }
         }
     }
@@ -767,8 +720,6 @@ extension EditorView {
             return .todo
         case .toggle:
             return .toggle
-        case .templateButton:
-            return .template
         case .documentLink:
             return .page
         case .quote, .code, .divider, .image, .unsupported:
@@ -813,13 +764,11 @@ extension EditorView {
         switch target {
         case .page:
             return !isStructuralBlock(block)
-        case .template:
-            return textForBlockTypeChange(block) != nil
         case .divider:
             return canReplaceEmptyBlockWithDivider(block)
         default:
             switch block.kind {
-            case .paragraph, .bullet, .numbered, .todo, .quote, .heading, .toggle, .templateButton, .documentLink:
+            case .paragraph, .bullet, .numbered, .todo, .quote, .heading, .toggle, .documentLink:
                 return true
             case .code, .divider, .image, .unsupported:
                 return false

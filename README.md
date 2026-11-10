@@ -95,7 +95,7 @@ What the editor does for the end user, regardless of how the host wraps it:
   midline with hysteresis. Destination frames are frozen for the lifetime of
   the drag, so the animated insertion gap cannot move the target being tested;
   the live page origin still projects those frames through autoscroll.
-  Dropping onto a closed toggle, template button, or document-link row appends as a
+  Dropping onto a closed toggle or document-link row appends as a
   child instead of inserting between rows.
 
 **Indent**
@@ -134,8 +134,8 @@ to 8 `MentionItem`s. ↑/↓ navigates, Return inserts a document-link row,
 Esc dismisses.
 
 **Turn Into**
-Cmd-/ in nav mode (on a single block) opens a 3-column grid: H1/H2/H3,
-Bullet/Numbered/To-do, Text/Toggle/Page/Divider/Template. Each has a
+Cmd-/ in nav mode (on a single block) opens a row of block types:
+Bullet/Toggle/Number/To-do, Text/Page, H1/H2/H3, Divider. Each has a
 keyboard shortcut while the menu is open. On a document-link row, "Turn Into
 anything-but-page" inlines the child page's content (`loadDocumentBlocks(_:)`) and
 trashes the source file (`inlineAndRetireDocument(_:parent:)`).
@@ -216,7 +216,7 @@ needed. Cross-app drag falls through to the pasteboard codecs.
 - Drop blocks onto a document-link row → editor calls `appendToDocument` to move
   them into the child page.
 
-**Heading / toggle / template-button expand/collapse**
+**Heading / toggle expand/collapse**
 - Every heading except the leading page-title H1 has a disclosure chevron.
   Heading sections start expanded; collapsing one hides the body already
   defined by Markdown heading containment.
@@ -335,7 +335,6 @@ public enum BlockKind: Equatable, Sendable {
     case code(source: String, language: String?)
     case divider
     case toggle(title: AttributedString)
-    case templateButton(label: String)
     case documentLink(label: AttributedString, reference: DocumentReference)
     case image(source: String, alt: String)
     case unsupported(payload: String, display: String)
@@ -383,8 +382,8 @@ public enum HeadingLevel: Int, Comparable, Hashable, Sendable, CaseIterable {
   optional `id:` and `children:` parameters; defaults are a fresh
   `BlockID()` and an empty array.
 - **Containment is enforced.** `Block.canContain(_:)` describes which
-  kinds may hold which children: headings, toggles, list items, and
-  template buttons accept children; paragraphs / quotes / code /
+  kinds may hold which children: headings, toggles, and list items
+  accept children; paragraphs / quotes / code /
   dividers / document links / images do not. A heading at level L can contain
   any block except headings at level ≤ L (Notion-style heading scope).
 - **`Block.text: AttributedString`** projects the underlying kind's text

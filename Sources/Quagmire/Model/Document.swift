@@ -1024,7 +1024,7 @@ public final class Document: @MainActor Identifiable {
     /// Option-arrow movement is an outline reorder operation, not an implicit
     /// indent command. Headings are the one exception: because heading bodies
     /// render flush with their heading, sliding across a heading boundary may
-    /// enter the heading body. Structural containers (toggles, templates, list
+    /// enter the heading body. Structural containers (toggles, list
     /// items) are skipped as whole subtrees; Tab/Shift-Tab are the explicit
     /// hierarchy-changing commands for those.
     ///
@@ -1211,7 +1211,7 @@ public final class Document: @MainActor Identifiable {
 
     /// Move a contiguous slab of sibling subtrees up or down by one outline
     /// step. Requires all `ids` to be siblings under one parent. Headings act
-    /// as section envelopes; toggles/templates/list items are skipped as whole
+    /// as section envelopes; toggles/list items are skipped as whole
     /// structural subtrees unless the slab is explicitly inside them.
     @discardableResult
     public func slideSiblings(
@@ -1328,7 +1328,7 @@ public final class Document: @MainActor Identifiable {
 
     /// Walk siblings; for every heading, emit the heading (with its children
     /// stripped) followed by the recursively-flattened original children.
-    /// Non-heading containers (toggle/list-item/template) keep their fixed
+    /// Non-heading containers (toggle/list-item) keep their fixed
     /// children intact — they're opaque from heading-fold's perspective.
     private static func flattenHeadings(_ blocks: [Block]) -> [Block] {
         var out: [Block] = []

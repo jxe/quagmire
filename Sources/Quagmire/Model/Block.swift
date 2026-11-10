@@ -48,7 +48,6 @@ public enum BlockKind: Equatable, Sendable {
     case code(source: String, language: String?)
     case divider
     case toggle(title: AttributedString)
-    case templateButton(label: String)
     /// A block-level reference to another document, rendered as its own row.
     ///
     /// `label` is what the author wrote — the link text. `reference` is the
@@ -104,7 +103,7 @@ public struct Block: Identifiable, Equatable, Sendable {
     // MARK: Convenience constructors (one per kind, no children)
     //
     // The bare-leaf form is the common case in tests, autotransforms, and
-    // mid-edit splits. Container blocks (heading/toggle/templateButton/list
+    // mid-edit splits. Container blocks (heading/toggle/list
     // items) compose by setting `children` after construction.
 
     public static func paragraph(text: AttributedString = AttributedString(), id: BlockID = BlockID(), children: [Block] = []) -> Block {
@@ -150,10 +149,6 @@ public struct Block: Identifiable, Equatable, Sendable {
         Block(id: id, kind: .toggle(title: title), children: children)
     }
 
-    public static func templateButton(label: String, id: BlockID = BlockID(), children: [Block] = []) -> Block {
-        Block(id: id, kind: .templateButton(label: label), children: children)
-    }
-
     public static func documentLink(
         label: AttributedString,
         reference: DocumentReference,
@@ -174,7 +169,7 @@ public struct Block: Identifiable, Equatable, Sendable {
 
     /// Body text for text-bearing kinds; empty for code/divider/image/unsupported.
     /// A document link projects its authored label.
-    /// Toggle returns its title; templateButton returns its label as a plain `AttributedString`.
+    /// Toggle returns its title.
     public var text: AttributedString {
         switch kind {
         case .paragraph(let t),
@@ -186,8 +181,6 @@ public struct Block: Identifiable, Equatable, Sendable {
             return t
         case .toggle(let t):
             return t
-        case .templateButton(let label):
-            return AttributedString(label)
         case .documentLink(let label, _):
             return label
         case .code, .divider, .image, .unsupported:
@@ -197,7 +190,7 @@ public struct Block: Identifiable, Equatable, Sendable {
 
     /// Returns a copy with text replaced. No-op for kinds without an
     /// `AttributedString` body (code/divider/image/unsupported). Toggle replaces
-    /// its title; templateButton stringifies the label.
+    /// its title.
     public func withText(_ newText: AttributedString) -> Block {
         var copy = self
         switch kind {
@@ -215,8 +208,6 @@ public struct Block: Identifiable, Equatable, Sendable {
             copy.kind = .quote(text: newText)
         case .toggle:
             copy.kind = .toggle(title: newText)
-        case .templateButton:
-            copy.kind = .templateButton(label: String(newText.characters))
         case .documentLink(_, let reference):
             copy.kind = .documentLink(label: newText, reference: reference)
         case .code, .divider, .image, .unsupported:
@@ -251,7 +242,7 @@ public struct Block: Identifiable, Equatable, Sendable {
     /// containers accept by `canContain(_:)`.
     public var isContainer: Bool {
         switch kind {
-        case .heading, .bullet, .numbered, .todo, .toggle, .templateButton:
+        case .heading, .bullet, .numbered, .todo, .toggle:
             return true
         case .paragraph, .quote, .code, .divider, .documentLink, .image, .unsupported:
             return false
@@ -261,7 +252,7 @@ public struct Block: Identifiable, Equatable, Sendable {
     /// Whether `child.kind` is permitted as a direct child of this block.
     /// - Heading at level L can contain anything *except* a heading at level
     ///   ≤ L (such a heading would close this one's body in markdown).
-    /// - Toggle, templateButton, bullet, numbered, todo accept any kind.
+    /// - Toggle, bullet, numbered, todo accept any kind.
     /// - All others are leaves and accept nothing.
     public func canContain(_ child: Block) -> Bool {
         switch kind {
@@ -270,7 +261,7 @@ public struct Block: Identifiable, Equatable, Sendable {
                 return childLevel > myLevel
             }
             return true
-        case .toggle, .templateButton, .bullet, .numbered, .todo:
+        case .toggle, .bullet, .numbered, .todo:
             return true
         case .paragraph, .quote, .code, .divider, .documentLink, .image, .unsupported:
             return false
@@ -295,11 +286,6 @@ public extension Block {
         return false
     }
 
-    var isTemplateButton: Bool {
-        if case .templateButton = kind { return true }
-        return false
-    }
-
     var isListItem: Bool {
         switch kind {
         case .bullet, .numbered, .todo: return true
@@ -319,7 +305,7 @@ public extension Block {
     /// invariant governs which siblings can sit next to a heading.
     var isStructuralContainer: Bool {
         switch kind {
-        case .bullet, .numbered, .todo, .toggle, .templateButton:
+        case .bullet, .numbered, .todo, .toggle:
             return true
         case .heading, .paragraph, .quote, .code, .divider, .documentLink, .image, .unsupported:
             return false

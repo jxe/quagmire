@@ -126,7 +126,6 @@ extension EditorView {
         }
         for replacement in replacements {
             state.expandedToggles.remove(replacement.id)
-            state.expandedTemplates.remove(replacement.id)
         }
         return .handled
     }

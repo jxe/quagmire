@@ -89,7 +89,7 @@ public final class EditorState {
     /// has no path at all. Valid only while its target is current.
     var dropSlotHint: DropSlotHint? = nil
 
-    // Page-local view state. Toggles/templates default closed; ordinary
+    // Page-local view state. Toggles default closed; ordinary
     // headings default expanded. None of this is persisted to the document.
     //
     // The `didSet` observers call `structureDidChange()` so the editor's
@@ -99,9 +99,6 @@ public final class EditorState {
     // land in. Set mutations like `.insert(_:)` route through Swift's
     // `_modify` accessor, which runs `didSet` after each call.
     var expandedToggles: Set<BlockID> = [] {
-        didSet { structureDidChange() }
-    }
-    var expandedTemplates: Set<BlockID> = [] {
         didSet { structureDidChange() }
     }
     var collapsedHeadings: Set<BlockID> = [] {
@@ -115,7 +112,7 @@ public final class EditorState {
     private(set) var structureRevision: UInt64 = 0
 
     /// Fired when state that affects the visible-row layout changes
-    /// (heading/toggle/templateButton expand/collapse). Wired by `EditorView`
+    /// (heading/toggle expand/collapse). Wired by `EditorView`
     /// at mount; the editor invalidates its `BlockLayoutCache`'s
     /// structural-row cache from here.
     @ObservationIgnored
