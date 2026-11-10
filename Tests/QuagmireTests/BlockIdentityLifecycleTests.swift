@@ -111,6 +111,28 @@ struct BlockIdentityLifecycleTests {
         #expect(doc.children.map(\.id) == [b.id, a.id])
     }
 
+    /// Option-arrow while typing: the text still in the live editor moves
+    /// with the block, not the block's last committed (empty) text.
+    @Test func moveWhileEditingCarriesUncommittedText() {
+        let a = Block.paragraph(text: AttributedString("a"))
+        let b = Block.bullet(text: AttributedString())
+        let doc = Document(id: DocumentID("t"), children: [a, b])
+        let editor = Self.editor(doc)
+        var dirty = true
+        editor.undoController.flushActiveText = {
+            guard dirty else { return }
+            dirty = false
+            editor.undoController.transaction(name: "Type") {
+                doc.setText(b.id, AttributedString("typed"))
+            }
+        }
+
+        editor.moveBlocksInDocument([b.id], by: -1)
+
+        #expect(doc.children.map(\.id) == [b.id, a.id])
+        #expect(String(doc.children[0].text.characters) == "typed")
+    }
+
     @Test func reparentingOntoAContainerPreservesIDs() {
         let container = Block.toggle(title: AttributedString("container"))
         let moving = Block.paragraph(text: AttributedString("moving"))
