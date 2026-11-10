@@ -141,6 +141,9 @@ enum BlockKey: Sendable, Equatable {
     case shiftTab
     case escape
     case cmdK(preferredTitle: String?)
+    /// Open the block action menu (Turn Into and the rest) on this block,
+    /// from the iOS keyboard bar.
+    case showBlockMenu
     case navigateBack
     /// Up arrow pressed while the cursor is on the editor's first line. EditorView
     /// treats this as Esc + up: exit edit mode and select the previous block.
@@ -189,6 +192,1354 @@ struct BlockTextEditor: View {
     @Binding var text: AttributedString
 #if os(iOS)
     /// Side-channel held by reference so the SwiftUI keyboard toolbar can drive
+    /// mark toggles on the underlying UITextView's textStorage. Persists across
+    /// re-renders; `makeUIView` / `updateUIView` keep `textView` pointed at the
+    /// live view.
+    @State private var iosBridge = IOSEditorBridge()
+#endif
+    let font: Font
+    let fontSize: CGFloat
+    let bold: Bool
+    let lineSpacing: CGFloat
+    let theme: EditorTheme
+    @FocusState.Binding var focused: BlockID?
+    /// True for the actively-edited block. False on iOS only, for one tick, when
+    /// the row stays mounted during an inter-block focus transfer so the new
+    /// row's UITextView can grab first responder while this one is still in the
+    /// window (keeps the soft keyboard up across splits/merges). When false, the
+    /// underlying UITextView's `wantsFocus` is `false` and it doesn't fight the
+    /// new editor for first responder. See `iosTransitioningEditorID` in EditorView.
+    let isActive: Bool
+    let blockID: BlockID
+    let onKey: (BlockKey) -> KeyPress.Result
+    let onAutotransform: (BlockTransform, AttributedString) -> Void
+    let onOpenLink: (URL) -> Bool
+    /// Fires whenever the cursor sits after an in-progress inline completion
+    /// trigger (or transitions out of one — `nil` then).
+    let onCompletionTriggerChange: (InlineCompletionTrigger?) -> Void
+    /// When true, the editor unconditionally forwards ↑/↓/Return/Esc to `onKey` as
+    /// completion commands so EditorView can drive the popover. When false,
+    /// arrow keys behave normally (intra-block nav or exit-edit on boundary).
+    let completionActive: Bool
+    /// Called exactly once during the underlying NSView/UIView's `make…` to fetch
+    /// the cursor target for this mount. The host atomically reads-and-clears its
+    /// pending-cursor channel inside the closure, so a second mount of the same
+    /// block (e.g. nav-mode Enter back into it) sees nil and seeks to end.
+    let consumeInitialCursor: () -> InitialCursorTarget?
+    /// The page title: its leading emoji is drawn by the row, so the editor
+    /// keeps it hidden; see `TitleIcon`.
+    var hidesLeadingIcon: Bool = false
+    /// Host callouts' typing triggers (`EditorCallout.trigger`).
+    var calloutTriggers: [String] = []
+    /// Document-level undo controller. Native text-view undo stays disabled because its
+    /// entries outlive SwiftUI's mounted editor; coordinators instead checkpoint live
+    /// text after a short pause into this controller's stable document-level manager.
+    @Environment(\.documentUndoController) private var documentUndoController
+    /// The owning EditorView's channel for host-requested selections and the
+    /// live selection it reports back.
+    @Environment(\.liveTextSelection) private var liveTextSelection
+    #if os(macOS)
+    /// Single-slot handle to the active NSTextView. ContainedTextView assigns itself
+    /// when mounted and clears on unmount, so EditorView.transferFocus can grab
+    /// first-responder synchronously instead of via the async self-grab dance.
+    @Environment(\.macActiveTextView) private var macActiveTextView
+    #endif
+
+    init(
+        text: Binding<AttributedString>,
+        font: Font,
+        fontSize: CGFloat = 16,
+        bold: Bool = false,
+        lineSpacing: CGFloat,
+        theme: EditorTheme,
+        focused: FocusState<BlockID?>.Binding,
+        isActive: Bool = true,
+        blockID: BlockID,
+        onKey: @escaping (BlockKey) -> KeyPress.Result,
+        onAutotransform: @escaping (BlockTransform, AttributedString) -> Void = { _, _ in },
+        onOpenLink: @escaping (URL) -> Bool = { _ in false },
+        onCompletionTriggerChange: @escaping (InlineCompletionTrigger?) -> Void = { _ in },
+        completionActive: Bool = false,
+        consumeInitialCursor: @escaping () -> InitialCursorTarget? = { nil },
+        hidesLeadingIcon: Bool = false,
+        calloutTriggers: [String] = []
+    ) {
+        self._text = text
+        self.font = font
+        self.fontSize = fontSize
+        self.bold = bold
+        self.lineSpacing = lineSpacing
+        self.theme = theme
+        self._focused = focused
+        self.isActive = isActive
+        self.blockID = blockID
+        self.onKey = onKey
+        self.onAutotransform = onAutotransform
+        self.onOpenLink = onOpenLink
+        self.onCompletionTriggerChange = onCompletionTriggerChange
+        self.completionActive = completionActive
+        self.consumeInitialCursor = consumeInitialCursor
+        self.hidesLeadingIcon = hidesLeadingIcon
+        self.calloutTriggers = calloutTriggers
+    }
+
+    var body: some View {
+        #if os(macOS)
+        // The editor only mounts when its row is the active editing block (EditorView gates
+        // this via `isEditing`). Request focus from that active-row state — `@FocusState`
+        // writes from EditorView's `enterEditMode` are deferred and don't propagate before
+        // `makeNSView`/`viewDidMoveToWindow` fire, which previously left `wantsFocus=false`
+        // and the focus grab silently no-op'd.
+        MacBlockTextEditor(
+            text: $text,
+            fontSize: fontSize,
+            bold: bold,
+            lineSpacing: lineSpacing,
+            theme: theme,
+            isFocused: isActive,
+            onFocusChange: { newFocused in
+                if newFocused {
+                    focused = blockID
+                } else if focused == blockID {
+                    focused = nil
+                }
+            },
+            onKey: onKey,
+            onAutotransform: onAutotransform,
+            onOpenLink: onOpenLink,
+            onCompletionTriggerChange: onCompletionTriggerChange,
+            completionActive: completionActive,
+            consumeInitialCursor: consumeInitialCursor,
+            blockID: blockID,
+            documentUndoController: documentUndoController,
+            activeView: macActiveTextView,
+            liveSelection: liveTextSelection,
+            hidesLeadingIcon: hidesLeadingIcon,
+            calloutTriggers: calloutTriggers
+        )
+        .alignmentGuide(.firstTextBaseline) { _ in
+            // NSTextView with textContainerInset=.zero, lineFragmentPadding=0 puts its first
+            // baseline at the rounded font ascender, matching SwiftUI Text. Without this guide,
+            // SwiftUI uses the view's top as the baseline, which pushes the editor visually
+            // below a sibling marker in an HStack(alignment: .firstTextBaseline).
+            let nsFont = MacBlockTextEditor.resolveNSFont(size: fontSize, bold: bold, theme: theme)
+            return nsFont.ascender.rounded()
+        }
+        .onAppear {
+            focused = blockID
+        }
+        #else
+        // Mirrors the macOS path: when this row is the active editor we request
+        // focus unconditionally so the initial-mount grab in `didMoveToWindow`
+        // works (the `@FocusState` write from `enterEditMode` doesn't reliably
+        // propagate in time). During the one-tick inter-block transfer overlap,
+        // `isActive` is false on the just-vacated row so its UITextView doesn't
+        // fight the freshly-mounted one for first responder.
+        IOSBlockTextEditorView(
+            text: $text,
+            fontSize: fontSize,
+            bold: bold,
+            lineSpacing: lineSpacing,
+            theme: theme,
+            isFocused: isActive,
+            onFocusChange: { newFocused in
+                if newFocused {
+                    focused = blockID
+                } else if focused == blockID {
+                    focused = nil
+                }
+            },
+            blockID: blockID,
+            bridge: iosBridge,
+            onKey: onKey,
+            onAutotransform: onAutotransform,
+            onOpenLink: onOpenLink,
+            onCompletionTriggerChange: onCompletionTriggerChange,
+            completionActive: completionActive,
+            consumeInitialCursor: consumeInitialCursor,
+            documentUndoController: documentUndoController,
+            liveSelection: liveTextSelection,
+            hidesLeadingIcon: hidesLeadingIcon,
+            calloutTriggers: calloutTriggers
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .alignmentGuide(.firstTextBaseline) { _ in
+            // UITextView with textContainerInset=.zero and lineFragmentPadding=0
+            // puts its first baseline at `font.ascender` from the top of the view.
+            // SwiftUI's `Text` puts its first baseline at `lineHeight - |descender|`
+            // — i.e. `ascender + leading`. Using `ascender` here (what macOS does
+            // with NSFont) leaves a sub-pixel gap on iOS for fonts with non-zero
+            // leading (Inter ≈ 0.7pt at 16pt), which shows up as the list marker
+            // hopping down ~0.5pt on focus. Match `Text`'s formula instead.
+            let uiFont = IOSBlockTextEditorView.resolveUIFont(size: fontSize, bold: bold, theme: theme)
+            return uiFont.lineHeight - abs(uiFont.descender)
+        }
+        .onAppear {
+            focused = blockID
+        }
+        // The keyboard accessory bar is set as the UITextView's `inputAccessoryView`
+        // inside `IOSBlockTextEditorView` — SwiftUI's `.toolbar(placement: .keyboard)`
+        // doesn't reach a UIKit-hosted text view.
+        #endif
+    }
+}
+
+#if os(macOS)
+
+/// NSTextView-based single-line(ish) editor. Sized to its content height; firstTextBaseline
+/// alignment matches a sibling `Text` because we strip both `textContainerInset` and the
+/// per-fragment padding.
+struct MacBlockTextEditor: NSViewRepresentable {
+    @Binding var text: AttributedString
+    let fontSize: CGFloat
+    let bold: Bool
+    let lineSpacing: CGFloat
+    let theme: EditorTheme
+    let isFocused: Bool
+    let onFocusChange: (Bool) -> Void
+    let onKey: (BlockKey) -> KeyPress.Result
+    let onAutotransform: (BlockTransform, AttributedString) -> Void
+    let onOpenLink: (URL) -> Bool
+    let onCompletionTriggerChange: (InlineCompletionTrigger?) -> Void
+    let completionActive: Bool
+    let consumeInitialCursor: () -> InitialCursorTarget?
+    let blockID: BlockID
+    let documentUndoController: DocumentUndoController?
+    let activeView: MacActiveTextView?
+    var liveSelection: LiveTextSelection? = nil
+    var hidesLeadingIcon = false
+    var calloutTriggers: [String] = []
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> ContainedTextView {
+        let view = ContainedTextView()
+        view.coordinator = context.coordinator
+        view.delegate = context.coordinator
+        view.activeView = activeView
+        view.liveSelection = liveSelection
+        view.blockID = blockID
+        view.hidesLeadingIcon = hidesLeadingIcon
+        view.isRichText = true
+        view.linkTextAttributes = [
+            .foregroundColor: theme.platformForeground,
+            .underlineStyle: 0,
+        ]
+        // NSTextView's native typing-undo registers actions that hold strong refs to the
+        // NSTextView itself; SwiftUI's view lifecycle (one-editor-at-a-time, unmount on
+        // Esc/cursor-out) frees those entries' inner state and the next Cmd-Z crashes
+        // with `_undoRedoTextOperation:` on a freed pointer. We disable NSTextView's
+        // local manager entirely and route everything through the document-level
+        // `DocumentUndoController` (registered on first text change of each session).
+        view.allowsUndo = false
+        view.drawsBackground = false
+        view.isAutomaticDashSubstitutionEnabled = false
+        view.textContainerInset = .zero
+        view.textContainer?.lineFragmentPadding = 0
+        view.isVerticallyResizable = true
+        view.isHorizontallyResizable = false
+        view.autoresizingMask = [.width]
+        loadAttributedString(into: view)
+        applyTypingAttributes(to: view)
+        context.coordinator.lastFontSize = fontSize
+        context.coordinator.lastBold = bold
+        context.coordinator.lastLineSpacing = lineSpacing
+        context.coordinator.lastKnownBindingPlain = String(text.characters)
+        view.wantsFocus = isFocused
+        view.pendingInitialCursor = consumeInitialCursor()
+        // Wire the synchronous-commit closure eagerly at mount, not in
+        // `textDidBeginEditing`. NSTextView only fires the begin-editing delegate
+        // when characters are inserted — programmatic attribute changes
+        // (Cmd-B / Cmd-I / Cmd-E via `didChangeText()`) do NOT trigger it. Without
+        // eager wiring, a Cmd-B → Esc flow leaves `flushActiveText` nil and the
+        // formatting never reaches the model. `[weak coordinator, weak view]` so
+        // unmounting the row cleans up.
+        documentUndoController?.flushActiveText = { [weak coordinator = context.coordinator, weak view] in
+            guard let coordinator, let view else { return }
+            coordinator.commitLiveText(view)
+        }
+        documentUndoController?.cancelActiveTextCheckpoint = { [weak coordinator = context.coordinator] in
+            coordinator?.cancelCheckpoint()
+        }
+        documentUndoController?.hasActiveTextChanges = { [weak coordinator = context.coordinator] in
+            coordinator?.textStorageDirty == true
+        }
+        documentUndoController?.synchronizeActiveText = { [weak coordinator = context.coordinator, weak view] document in
+            guard let coordinator, let view,
+                  let restored = document.find(blockID)?.text else { return }
+            coordinator.synchronizeText(in: view, to: restored)
+        }
+        documentUndoController?.insertTextIntoActiveEditor = { [weak coordinator = context.coordinator, weak view] text in
+            guard let coordinator, let view else { return false }
+            view.clearVoicePreview()
+            let insertion = inlineDictationInsertion(text, in: view.string, replacing: view.selectedRange())
+            guard !insertion.isEmpty else { return false }
+            view.insertText(insertion, replacementRange: view.selectedRange())
+            coordinator.commitLiveText(view)
+            return true
+        }
+        documentUndoController?.previewTextInActiveEditor = { [weak view] text in
+            guard let view else { return false }
+            if text.isEmpty { view.clearVoicePreview() } else { view.showVoicePreview(text) }
+            return true
+        }
+        return view
+    }
+
+    func updateNSView(_ view: ContainedTextView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.linkHost = context.environment.editorHost
+        context.coordinator.linkDocument = context.environment.editorDocument
+        // Reload from the binding only when (a) the binding actually changed since we
+        // last touched it (external mutation: undo, autotransform replacement, etc.) or
+        // (b) base font props changed (paragraph → heading). The "binding lagging
+        // because the user is typing" case — `tv.string` ahead of `text` — must NOT
+        // trigger a reload; between checkpoints the binding intentionally lags behind,
+        // and reloading here would clobber the live text + cursor.
+        let bindingPlain = String(text.characters)
+        let bindingChangedExternally = context.coordinator.lastKnownBindingPlain != bindingPlain
+        let baseFontDrift = context.coordinator.lastFontSize != fontSize
+            || context.coordinator.lastBold != bold
+            || context.coordinator.lastLineSpacing != lineSpacing
+        if bindingChangedExternally || baseFontDrift {
+            if bindingChangedExternally {
+                context.coordinator.cancelCheckpoint()
+                context.coordinator.textStorageDirty = false
+            }
+            loadAttributedString(into: view)
+            context.coordinator.lastFontSize = fontSize
+            context.coordinator.lastBold = bold
+            context.coordinator.lastLineSpacing = lineSpacing
+            context.coordinator.lastKnownBindingPlain = bindingPlain
+        }
+        applyTypingAttributes(to: view)
+        view.wantsFocus = isFocused
+        if isFocused {
+            if let window = view.window, window.firstResponder !== view {
+                // Recheck inside the dispatch: the view can detach from this window
+                // (or move to another) between scheduling and firing — `Esc`, switching
+                // blocks, or a doc switch can unmount the row before the async runs.
+                // Calling makeFirstResponder on a view that's no longer in the captured
+                // window logs an AppKit error and nils out first responder.
+                DispatchQueue.main.async { [weak view, weak window] in
+                    guard let view, let window else { return }
+                    view.claimRequestedFocus(in: window)
+                }
+            }
+        }
+    }
+
+    private func loadAttributedString(into view: ContainedTextView) {
+        let ns = InlineMarksBridge.toNS(text, baseFontSize: fontSize, baseBold: bold, lineSpacing: lineSpacing, theme: theme)
+        view.textStorage?.setAttributedString(ns)
+        view.hideTitleIcon()
+    }
+
+    private func applyTypingAttributes(to view: ContainedTextView) {
+        view.linkIconAdvance = LinkIcons.advance(baseFontSize: fontSize, baseBold: bold, theme: theme)
+        view.linkIconImage = LinkIcons.image(theme: theme)
+        // NB: don't write `view.font =` here. NSTextView's font setter applies across the
+        // entire text storage, which would stomp the per-range bold/italic font traits
+        // that `InlineMarksBridge.toggleMark` writes. The base font is already applied per-
+        // range by `loadAttributedString` (via toNS).
+        view.defaultParagraphStyle = InlineMarksBridge.paragraphStyle(baseFontSize: fontSize, baseBold: bold, lineSpacing: lineSpacing, theme: theme)
+        view.typingAttributes = InlineMarksBridge.baseTypingAttributes(baseFontSize: fontSize, baseBold: bold, lineSpacing: lineSpacing, theme: theme)
+    }
+
+    nonisolated static func resolveNSFont(size: CGFloat, bold: Bool, theme: EditorTheme) -> NSFont {
+        InlineMarksBridge.bodyFont(size: size, bold: bold, italic: false, theme: theme)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: MacBlockTextEditor
+        /// Whether typing last reported an `@` or `:` completion. Caret moves
+        /// only update or close one, so a click after an old `@` doesn't open
+        /// a menu. The editor may close the menu while this is still true; it
+        /// then refuses to reopen on anything but a one-word query.
+        var completionMenuOpen = false
+        var lastFontSize: CGFloat?
+        var lastBold: Bool?
+        var lastLineSpacing: CGFloat?
+        /// Plain text we last knew the binding to hold. Updated on commit and on
+        /// any external-mutation reload in `updateNSView`. While typing we don't
+        /// touch the binding, so this stays equal to the binding's `String(text)`
+        /// even though `tv.string` has drifted ahead. `updateNSView` uses this to
+        /// distinguish "binding lagging because user typed" (skip reload) from
+        /// "binding changed externally" (reload).
+        var lastKnownBindingPlain: String?
+        /// True once textStorage has been edited since our last commit; cleared at
+        /// the end of `commitLiveText`. The "binding moved under us" guard relies
+        /// on the binding's getter changing after an external mutation, but
+        /// BlockRow's `textBinding` captures `block` by value and stays frozen
+        /// once the row swaps to read-only Text — so the post-split unmount
+        /// `textDidEndEditing` would otherwise re-write the stale textStorage
+        /// through that frozen binding and clobber the truncated head.
+        var textStorageDirty: Bool = false
+        private var checkpointTask: Task<Void, Never>?
+        init(_ parent: MacBlockTextEditor) { self.parent = parent }
+
+        deinit {
+            checkpointTask?.cancel()
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let tv = notification.object as? NSTextView else { return }
+            parent.documentUndoController?.noteEditingActivity()
+            textStorageDirty = true
+            let isComposing = tv.hasMarkedText()
+            if !isComposing {
+                let cursor = tv.selectedRange().location
+                // Build the attributed snapshot from textStorage (not `tv.string`) so
+                // marks the user applied earlier in this edit — bold/italic/code etc. —
+                // survive the autotransform. Same fix shape as splitBlock.
+                let attrSnapshot = InlineMarksBridge.toModel(
+                    tv.textStorage ?? NSTextStorage(),
+                    baseBold: parent.bold
+                )
+                if let result = detectPrefixAutotransform(text: attrSnapshot, cursor: cursor, calloutTriggers: parent.calloutTriggers) {
+                    // Autotransform replaces the block via `mutate(...)`, which now
+                    // commits the active editor first — so the pre-mutation snapshot
+                    // captures the typed prefix and Cmd-Z restores it cleanly.
+                    parent.onAutotransform(result.transform, result.remainingText)
+                    return
+                }
+                if let result = detectInlineStyleAutotransform(text: attrSnapshot, cursor: cursor) {
+                    applyInlineAutotransform(result, in: tv)
+                    reportMentionTrigger(in: tv, composing: false)
+                    scheduleCheckpoint(for: tv)
+                    return
+                }
+                scheduleCheckpoint(for: tv)
+            } else {
+                cancelCheckpoint()
+            }
+            // Otherwise: live text stays in NSTextView's textStorage. We do NOT write the
+            // binding per keystroke — that would force a full `EditorView.body` re-eval per
+            // character. Commit happens on blur (`textDidEndEditing`) and centrally in
+            // `EditorView.mutate(...)` via `flushActiveText` for any structural op.
+            reportMentionTrigger(in: tv, composing: isComposing)
+        }
+
+        /// Sync NSTextView's live attributed text into the document binding, registering
+        /// one undo entry for the current typing burst if anything changed. Called from:
+        /// - `textDidChange` before autotransform fires (so the snapshot has live text).
+        /// - `textDidEndEditing` (blur — the normal commit point).
+        /// - Pre-structural-op key paths in `ContainedTextView.keyDown` (Enter, Backspace,
+        ///   Tab, Cmd-K, paste, etc.) so the model is current before `splitBlock` /
+        ///   `deleteEmptyBlock` / `changeIndent` / `mutate(...)` run.
+        func commitLiveText(_ tv: NSTextView) {
+            cancelCheckpoint()
+            // Nothing has touched textStorage since our last sync — skip. Catches
+            // the unmount-driven duplicate commit after split / autotransform /
+            // Cmd-K, where the frozen textBinding would otherwise re-write stale
+            // textStorage back over the freshly-mutated model.
+            if !textStorageDirty { return }
+            // A voice preview is marked text the block doesn't hold yet.
+            let nsAttr = (tv as? ContainedTextView)?.textStorageExcludingVoicePreview
+                ?? tv.textStorage ?? NSTextStorage()
+            let newText = InlineMarksBridge.toModel(nsAttr, baseBold: parent.bold)
+            let oldText = parent.text
+            let oldPlain = String(oldText.characters)
+            // If the binding moved out from under us since our last sync, a structural
+            // op (splitBlock, autotransform, Cmd-K, etc.) has already mutated the model
+            // for this block. Our NSTextStorage still holds pre-op text and writing it
+            // would clobber the new model state — the canonical case is split duplicating
+            // the tail back into the head's row on the unmount-driven textDidEndEditing.
+            // Reconcile our snapshot to what the model now holds and bail.
+            if let last = lastKnownBindingPlain, oldPlain != last {
+                lastKnownBindingPlain = oldPlain
+                textStorageDirty = false
+                return
+            }
+            let newPlain = String(newText.characters)
+            let changed = oldPlain != newPlain || !attributedStringMarksEqual(oldText, newText)
+            if changed {
+                if let controller = parent.documentUndoController {
+                    controller.transaction(name: "Type") {
+                        parent.text = newText
+                    }
+                } else {
+                    parent.text = newText
+                }
+            }
+            lastKnownBindingPlain = newPlain
+            textStorageDirty = false
+            // No separate emit step needed: `controller.transaction(...)`
+            // above already fired `Document.didCommitTransaction` with the
+            // typing diff. Top-level commits — blur, explicit flush, view
+            // tear-down — go through the same path.
+        }
+
+        func cancelCheckpoint() {
+            checkpointTask?.cancel()
+            checkpointTask = nil
+        }
+
+        private func scheduleCheckpoint(for tv: NSTextView) {
+            cancelCheckpoint()
+            checkpointTask = Task { @MainActor [weak self, weak tv] in
+                try? await Task.sleep(for: typingCheckpointDelay)
+                guard !Task.isCancelled, let self, let tv else { return }
+                self.checkpointTask = nil
+                self.commitLiveText(tv)
+            }
+        }
+
+        func synchronizeText(in tv: NSTextView, to restoredText: AttributedString) {
+            cancelCheckpoint()
+            let currentPlain = tv.string
+            let restoredPlain = String(restoredText.characters)
+            let selection = caretRangeAfterTextReplacement(
+                current: currentPlain,
+                restored: restoredPlain,
+                currentSelection: tv.selectedRange()
+            )
+            let restored = InlineMarksBridge.toNS(
+                restoredText,
+                baseFontSize: parent.fontSize,
+                baseBold: parent.bold,
+                lineSpacing: parent.lineSpacing,
+            theme: parent.theme
+            )
+            tv.textStorage?.setAttributedString(restored)
+            (tv as? ContainedTextView)?.hideTitleIcon()
+            tv.setSelectedRange(selection)
+            tv.typingAttributes = InlineMarksBridge.baseTypingAttributes(
+                baseFontSize: parent.fontSize,
+                baseBold: parent.bold,
+                lineSpacing: parent.lineSpacing,
+            theme: parent.theme
+            )
+            lastKnownBindingPlain = restoredPlain
+            textStorageDirty = false
+            tv.invalidateIntrinsicContentSize()
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let tv = notification.object as? NSTextView else { return }
+            leaveTitleIconAtCaret(in: tv)
+            leaveLinkAtCaret(in: tv)
+            // Cursor moved without a text change — re-evaluate the mention trigger so
+            // arrow-keying out of the @-region dismisses the popover. Defer the
+            // SwiftUI state write: this delegate also fires synchronously from
+            // `updateNSView` paths that set `selectedRange`, which run inside
+            // SwiftUI's view-update pass.
+            let composing = tv.hasMarkedText()
+            let plain = tv.string
+            let selected = tv.selectedRange()
+            let cursor = selected.location
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.parent.liveSelection?.report(selected, in: self.parent.blockID)
+                // A caret move only keeps or closes a menu that typing
+                // opened; clicking somewhere after an old `@` must not open one.
+                let trigger = composing || !self.completionMenuOpen
+                    ? nil
+                    : detectInlineCompletionTrigger(plain: plain, cursor: cursor)
+                self.completionMenuOpen = trigger != nil
+                self.parent.onCompletionTriggerChange(trigger)
+            }
+        }
+
+        /// Text typed after the hidden title icon takes the row's own typing
+        /// attributes, not the icon's invisible ones.
+        private func leaveTitleIconAtCaret(in tv: NSTextView) {
+            let selected = tv.selectedRange()
+            guard let prefix = (tv as? ContainedTextView)?.titleIconPrefixLength, prefix > 0,
+                  selected.location == prefix, selected.length == 0 else { return }
+            tv.typingAttributes = InlineMarksBridge.baseTypingAttributes(
+                baseFontSize: parent.fontSize,
+                baseBold: parent.bold,
+                lineSpacing: parent.lineSpacing,
+                theme: parent.theme
+            )
+        }
+
+        /// The caret steps over page links; see `AtomicLinks`.
+        func textView(
+            _ textView: NSTextView,
+            willChangeSelectionFromCharacterRange oldSelectedCharRange: NSRange,
+            toCharacterRange newSelectedCharRange: NSRange
+        ) -> NSRange {
+            guard !textView.hasMarkedText(), let storage = textView.textStorage else { return newSelectedCharRange }
+            let snapped = AtomicLinks.snapSelection(from: oldSelectedCharRange, to: newSelectedCharRange, in: storage)
+            return TitleIcon.clampSelection(snapped, prefixLength: (textView as? ContainedTextView)?.titleIconPrefixLength ?? 0)
+        }
+
+        /// A delete that reaches into a page link removes the whole link.
+        func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            guard let replacementString, !textView.hasMarkedText(), let storage = textView.textStorage else { return true }
+            guard let clamped = TitleIcon.clampEdit(
+                affectedCharRange,
+                replacement: replacementString,
+                prefixLength: (textView as? ContainedTextView)?.titleIconPrefixLength ?? 0
+            ) else { return false }
+            let expanded = AtomicLinks.expandEdit(clamped, in: storage)
+            guard expanded != affectedCharRange else { return true }
+            textView.insertText(replacementString, replacementRange: expanded)
+            return false
+        }
+
+        /// Text typed at the end of a link does not extend it; see
+        /// `InlineMarksBridge.typingAttributesLeavingLink`.
+        private func leaveLinkAtCaret(in tv: NSTextView) {
+            let selected = tv.selectedRange()
+            guard selected.length == 0,
+                  !tv.hasMarkedText(),
+                  let storage = tv.textStorage,
+                  let attrs = InlineMarksBridge.typingAttributesLeavingLink(
+                    tv.typingAttributes,
+                    at: selected.location,
+                    in: storage,
+                    baseFontSize: parent.fontSize,
+                    baseBold: parent.bold,
+                    theme: parent.theme
+                  ) else { return }
+            tv.typingAttributes = attrs
+        }
+
+        private func applyInlineAutotransform(_ result: InlineAutotransformResult, in tv: NSTextView) {
+            let ns = InlineMarksBridge.toNS(
+                result.text,
+                baseFontSize: parent.fontSize,
+                baseBold: parent.bold,
+                lineSpacing: parent.lineSpacing,
+            theme: parent.theme
+            )
+            tv.textStorage?.setAttributedString(ns)
+            (tv as? ContainedTextView)?.hideTitleIcon()
+            tv.setSelectedRange(NSRange(location: result.cursor, length: 0))
+            tv.typingAttributes = InlineMarksBridge.baseTypingAttributes(
+                baseFontSize: parent.fontSize,
+                baseBold: parent.bold,
+                lineSpacing: parent.lineSpacing,
+            theme: parent.theme
+            )
+            textStorageDirty = true
+            tv.invalidateIntrinsicContentSize()
+        }
+
+        /// Resolve page links for the context menu, as the editor does for clicks.
+        weak var linkHost: (any EditorHost)?
+        weak var linkDocument: Document?
+
+        /// A page link under the pointer leads the menu with ways to open it.
+        func textView(_ textView: NSTextView, menu: NSMenu, for _: NSEvent, at charIndex: Int) -> NSMenu? {
+            guard let host = linkHost, let document = linkDocument, !host.documentOpenTargets.isEmpty,
+                  let storage = textView.textStorage, charIndex >= 0, charIndex < storage.length else { return menu }
+            let value = storage.attribute(.link, at: charIndex, effectiveRange: nil)
+            guard let url = (value as? URL) ?? (value as? String).flatMap(URL.init(string:)),
+                  let reference = host.resolveReference(from: url, in: document),
+                  host.lookupDocument(reference).can(.navigate) else { return menu }
+            var items: [NSMenuItem] = [LinkMenuItem("Open Link") { host.openDocument(reference) }]
+            if host.documentOpenTargets.contains(.newTab) {
+                items.append(LinkMenuItem("Open Link in New Tab") { host.openDocument(reference, at: .newTab(selecting: true)) })
+            }
+            if host.documentOpenTargets.contains(.newWindow) {
+                items.append(LinkMenuItem("Open Link in New Window") { host.openDocument(reference, at: .newWindow) })
+            }
+            items.append(.separator())
+            for (index, item) in items.enumerated() { menu.insertItem(item, at: index) }
+            return menu
+        }
+
+        func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+            let url: URL?
+            if let value = link as? URL {
+                url = value
+            } else if let value = link as? String {
+                url = URL(string: value)
+            } else {
+                url = nil
+            }
+            guard let url else { return false }
+            return parent.onOpenLink(url)
+        }
+
+        private func reportMentionTrigger(in tv: NSTextView, composing: Bool) {
+            let trigger = composing
+                ? nil
+                : detectInlineCompletionTrigger(plain: tv.string, cursor: tv.selectedRange().location)
+            completionMenuOpen = trigger != nil
+            parent.onCompletionTriggerChange(trigger)
+        }
+
+        func textDidBeginEditing(_ notification: Notification) {
+            // Break coalescing across edit-session boundaries — typing in block A then
+            // clicking into block B should not merge into one undo entry. Defer the
+            // SwiftUI focus write: NSTextView fires this delegate synchronously from
+            // `makeFirstResponder` calls that may originate inside a view-update pass.
+            //
+            // `flushActiveText` is wired eagerly in `makeNSView`, not here —
+            // this delegate doesn't fire for programmatic attribute changes
+            // (Cmd-B / Cmd-I via `didChangeText()`), so a Cmd-B-then-Esc with no
+            // intervening typing would otherwise leave the commit hook nil.
+            parent.documentUndoController?.breakCoalescing()
+            Task { @MainActor [weak self] in
+                self?.parent.onFocusChange(true)
+            }
+        }
+
+        func textDidEndEditing(_ notification: Notification) {
+            // Commit any final partial burst before the native editor unmounts.
+            if let tv = notification.object as? NSTextView {
+                commitLiveText(tv)
+            }
+            // Don't clear `flushActiveText` here. In fullscreen mode the Esc-notification
+            // path (host NSEvent monitor → `.escape` command → `transferFocus(.nav)`)
+            // commits AFTER first responder resigns — clearing the closure here would
+            // turn that commit into a no-op. The closure captures coordinator + view
+            // weakly, so unmounting the row still cleans it up.
+            parent.documentUndoController?.breakCoalescing()
+            Task { @MainActor [weak self] in
+                self?.parent.onFocusChange(false)
+            }
+        }
+    }
+}
+
+/// NSTextView subclass that intercepts the M4 key set before NSTextView's default handling.
+/// Returns YES from `performKeyEquivalent(_:)` and short-circuits `keyDown(_:)` for the
+/// keys our coordinator wants to consume.
+final class ContainedTextView: NSTextView {
+    weak var coordinator: MacBlockTextEditor.Coordinator?
+    /// Whether the marked text is a live voice transcript; see
+    /// `showVoicePreview(_:)`.
+    var showsVoicePreview = false
+
+    override func resignFirstResponder() -> Bool {
+        // Resigning would commit the preview as typed text.
+        clearVoicePreview()
+        return super.resignFirstResponder()
+    }
+
+    // MARK: Block drags from another window
+
+    /// A block dragged from another window is a block drop on the page, not
+    /// text for this view: hand it to the nearest enclosing view that takes
+    /// drops (the editor page's drop target), which places it by the pointer.
+    private func blockDropTarget(for sender: NSDraggingInfo) -> NSView? {
+        guard sender.draggingPasteboard.availableType(from: [MacExternalBlockDrag.pasteboardType]) != nil else { return nil }
+        var view = superview
+        while let candidate = view {
+            if !(candidate is NSTextView), !candidate.registeredDraggedTypes.isEmpty { return candidate }
+            view = candidate.superview
+        }
+        return self
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let target = blockDropTarget(for: sender) else { return super.draggingEntered(sender) }
+        return target === self ? [] : target.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let target = blockDropTarget(for: sender) else { return super.draggingUpdated(sender) }
+        return target === self ? [] : target.draggingUpdated(sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        if let sender, let target = blockDropTarget(for: sender) {
+            if target !== self { target.draggingExited(sender) }
+            return
+        }
+        super.draggingExited(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let target = blockDropTarget(for: sender) else { return super.prepareForDragOperation(sender) }
+        return target !== self && target.prepareForDragOperation(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let target = blockDropTarget(for: sender) else { return super.performDragOperation(sender) }
+        return target !== self && target.performDragOperation(sender)
+    }
+
+    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        if let sender, let target = blockDropTarget(for: sender) {
+            if target !== self { target.concludeDragOperation(sender) }
+            return
+        }
+        super.concludeDragOperation(sender)
+    }
+    /// Single-slot active-NSTextView handle on the owning EditorView. We assign
+    /// `activeView.view = self` in `viewDidMoveToWindow` and clear it on tear-down so
+    /// EditorView.transferFocus can grab us synchronously.
+    weak var activeView: MacActiveTextView?
+    /// The owning EditorView's channel for host-requested selections. Attached
+    /// and detached alongside `activeView`.
+    weak var liveSelection: LiveTextSelection?
+    /// Set in `makeNSView`; never changes during a view's lifetime (one editor mount
+    /// per (BlockID, edit-session)). Used to verify "is this view for the BlockID
+    /// transferFocus wants?".
+    var blockID: BlockID?
+    /// Set by `updateNSView` whenever the SwiftUI focus state targets this block. Picked up
+    /// in `viewDidMoveToWindow` so the second-chance focus grab works on initial mount.
+    var wantsFocus: Bool = false
+    /// If non-nil, the cursor is placed at this target on initial focus. Cleared
+    /// after consumption so subsequent focus grabs (e.g. coming back from another
+    /// block) seek to end instead.
+    var pendingInitialCursor: InitialCursorTarget?
+    /// Idempotency latch on `applyPendingCursorPositionOrSeekToEnd`. Both
+    /// `viewDidMoveToWindow` and `updateNSView` schedule a focus-grab + apply on
+    /// initial mount; without this latch the second one runs after the first has
+    /// already consumed `pendingInitialCursor`, falls into the seek-to-end branch
+    /// and overwrites the just-set cursor position.
+    private var didApplyInitialCursor = false
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        // Tear-down: about to detach from the window. Drop the active-view slot so
+        // a late transferFocus(to: .editor(id)) can't grab a doomed view. Only clear
+        // if we still hold the slot — a remount of a different block may have
+        // already overwritten it.
+        if newWindow == nil, let activeView, activeView.view === self {
+            activeView.view = nil
+        }
+        if newWindow == nil { liveSelection?.detach(self) }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            activeView?.view = self
+            liveSelection?.attach(self)
+        }
+        if wantsFocus, let window = window, window.firstResponder !== self {
+            // Same reasoning as updateNSView's async grab: the view can detach from
+            // this window between scheduling and firing — bail unless we're still
+            // hosted by the same window.
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let self, let window else { return }
+                self.claimRequestedFocus(in: window)
+            }
+        }
+    }
+
+    /// Recheck the request when a queued focus grab runs. The row may still
+    /// be attached for one render after Escape has switched to navigation.
+    func claimRequestedFocus(in window: NSWindow) {
+        guard wantsFocus, self.window === window else { return }
+        if window.firstResponder !== self {
+            window.makeFirstResponder(self)
+        }
+        applyPendingCursorPositionOrSeekToEnd()
+    }
+
+    func relinquishFocus() {
+        wantsFocus = false
+        if let window, window.firstResponder === self {
+            window.makeFirstResponder(nil)
+        }
+    }
+
+    /// Applies `pendingInitialCursor` if set (placing the cursor at the click point or
+    /// the explicit character offset), or falls back to seeking the cursor to the end
+    /// of the text. Idempotent — subsequent calls during the same view's lifetime are
+    /// no-ops, so a second async focus-grab can't drag the cursor back to end.
+    func applyPendingCursorPositionOrSeekToEnd() {
+        if didApplyInitialCursor { return }
+        didApplyInitialCursor = true
+        if let target = pendingInitialCursor {
+            pendingInitialCursor = nil
+            let len = (string as NSString).length
+            let idx: Int
+            switch target {
+            case .point(let p): idx = characterIndexForInsertion(at: p)
+            case .offset(let o): idx = max(0, min(o, len))
+            case .range(let range):
+                setSelectedRange(clampedSelection(range, length: len))
+                return
+            }
+            setSelectedRange(NSRange(location: idx, length: 0))
+        } else {
+            setSelectedRange(NSRange(location: (string as NSString).length, length: 0))
+        }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if let onKey = coordinator?.parent.onKey {
+            // While the mention popover is open, intercept menu-nav keys before the
+            // editor's normal handling so EditorView can drive selection / commit.
+            if coordinator?.parent.completionActive == true {
+                switch event.keyCode {
+                case 126: // Up
+                    if onKey(.completionUp) == .handled { return }
+                case 125: // Down
+                    if onKey(.completionDown) == .handled { return }
+                case 36, 76: // Return / numpad Enter
+                    if onKey(.completionCommit) == .handled { return }
+                case 53: // Escape
+                    if onKey(.completionDismiss) == .handled { return }
+                case 48: // Tab — accept the highlighted entry, mirroring Notion.
+                    if onKey(.completionCommit) == .handled { return }
+                default:
+                    break
+                }
+            }
+            // Live-text commits are handled centrally by `EditorView.mutate(...)`
+            // (which calls `flushActiveText?()` first) and by `transferFocus(...)`
+            // (same hook). Every BlockKey routed below either triggers a `mutate`
+            // (Enter/Backspace/Tab/Cmd-K → split/delete/indent/convert) or a
+            // `transferFocus` (Up/Down/Left/Right exit), so we don't need to
+            // commit explicitly here. Cmd-[ (navigateBack) is the exception —
+            // it doesn't mutate the model or change focus through transferFocus,
+            // so commit so the outgoing doc carries the typed text.
+            switch event.keyCode {
+            case 36, 76: // Return, numpad Enter
+                // Shift- or Option-Return is a line break inside the block.
+                if !event.modifierFlags.isDisjoint(with: [.shift, .option]),
+                   event.modifierFlags.isDisjoint(with: [.command, .control]) {
+                    insertText("\n", replacementRange: selectedRange())
+                    return
+                }
+                let range = selectedRange()
+                let selStart = range.location
+                let selEnd = range.location + range.length
+                if onKey(.enter(selectionStart: selStart, selectionEnd: selEnd)) == .handled { return }
+            case 51: // Delete (backspace)
+                // Fire `.backspaceAtStart` whenever the cursor is at the very start
+                // of the row with no selection — the page handler decides what to do
+                // based on block type and whether the row is empty (unbullet, merge,
+                // delete-block).
+                let range = selectedRange()
+                if range.location == 0, range.length == 0 {
+                    if onKey(.backspaceAtStart) == .handled { return }
+                }
+            case 48: // Tab
+                // Reserved for indent/outdent; never insert a literal tab character.
+                let shift = event.modifierFlags.contains(.shift)
+                _ = onKey(shift ? .shiftTab : .tab)
+                return
+            case 53: // Escape
+                // cancelOperation handles Esc via NSTextView's normal routing — keyDown
+                // never fires for Esc on NSTextView (it's intercepted as a command).
+                if onKey(.escape) == .handled { return }
+            case 40: // K
+                if event.modifierFlags.contains(.command) {
+                    // Carry the live text through the BlockKey: when the user typed
+                    // into a freshly created row and presses Cmd-K, EditorView's
+                    // `document.children` snapshot is stale within this event handler
+                    // (same pattern as the cmd-enter fix), so `convertBlockToDocument`
+                    // can't recover the typed text from `document.blocks[i]`. Read
+                    // it directly from the live NSTextView instead.
+                    let preferred: String?
+                    let range = selectedRange()
+                    if range.length > 0, let textRange = Range(range, in: string) {
+                        preferred = String(string[textRange])
+                    } else {
+                        preferred = string.isEmpty ? nil : string
+                    }
+                    if onKey(.cmdK(preferredTitle: preferred)) == .handled { return }
+                }
+            case 33: // [ — Cmd-[ → navigate back
+                if event.modifierFlags.contains(.command) {
+                    // Navigate-back leaves the page; commit so the outgoing doc is
+                    // current. This path doesn't go through `mutate` or
+                    // `transferFocus`, so the central commit hook doesn't fire here.
+                    coordinator?.commitLiveText(self)
+                    if onKey(.navigateBack) == .handled { return }
+                }
+            case 11: // B — Cmd-B → bold
+                if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) {
+                    toggleInlineMark(.bold)
+                    return
+                }
+            case 34: // I — Cmd-I → italic
+                if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) {
+                    toggleInlineMark(.italic)
+                    return
+                }
+            case 14: // E — Cmd-E → inline code (matching Notion)
+                if event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.shift) {
+                    toggleInlineMark(.code)
+                    return
+                }
+            case 1: // S — Cmd-Shift-S → strikethrough (matching Notion)
+                if event.modifierFlags.contains([.command, .shift]) {
+                    toggleInlineMark(.strikethrough)
+                    return
+                }
+            case 126: // Up arrow
+                if !event.modifierFlags.contains([.shift, .option]),
+                   cursorIsOnFirstLine() {
+                    if onKey(.exitEditUp) == .handled { return }
+                }
+            case 125: // Down arrow
+                if !event.modifierFlags.contains([.shift, .option]),
+                   cursorIsOnLastLine() {
+                    if onKey(.exitEditDown) == .handled { return }
+                }
+            case 123: // Left arrow
+                // Plain Left at offset 0 with no selection hops to the end of the
+                // previous editable block. Any modifier (shift/option/cmd/ctrl)
+                // means selection-extension or word/line nav — let NSTextView handle.
+                if event.modifierFlags.isDisjoint(with: [.shift, .option, .command, .control]) {
+                    let range = selectedRange()
+                    if range.location == 0, range.length == 0 {
+                        if onKey(.exitEditLeft) == .handled { return }
+                    }
+                }
+            case 124: // Right arrow
+                if event.modifierFlags.isDisjoint(with: [.shift, .option, .command, .control]) {
+                    let range = selectedRange()
+                    let length = textStorage?.length ?? 0
+                    if range.location == length, range.length == 0 {
+                        if onKey(.exitEditRight) == .handled { return }
+                    }
+                }
+            default:
+                break
+            }
+        }
+        super.keyDown(with: event)
+    }
+
+    /// Toggles an inline mark on the current selection. No-op if the selection is empty —
+    /// pre-typing toggles via `typingAttributes` aren't wired yet (M6 follow-up).
+    func toggleInlineMark(_ mark: InlineMark) {
+        guard let storage = textStorage,
+              let parent = coordinator?.parent else { return }
+        let range = selectedRange()
+        guard range.length > 0 else {
+            typingAttributes = InlineMarksBridge.typingAttributes(
+                toggling: mark,
+                current: typingAttributes,
+                baseFontSize: parent.fontSize,
+                baseBold: parent.bold,
+                lineSpacing: parent.lineSpacing,
+            theme: parent.theme
+            )
+            return
+        }
+        InlineMarksBridge.toggleMark(mark, on: range, in: storage, baseFontSize: parent.fontSize, baseBold: parent.bold, theme: parent.theme)
+        didChangeText()
+    }
+
+    /// Whether the insertion point is on the first wrapped line of the editor's content.
+    /// Single-line content trivially returns true. Used to gate `exitEditUp` so that an up
+    /// arrow in the middle of a multi-line paragraph still moves intra-block.
+    func cursorIsOnFirstLine() -> Bool {
+        guard let lm = layoutManager, let tc = textContainer else { return true }
+        if (textStorage?.length ?? 0) == 0 { return true }
+        let cursor = selectedRange().location
+        let glyphRange = lm.glyphRange(forCharacterRange: NSRange(location: cursor, length: 0), actualCharacterRange: nil)
+        var firstLineRange = NSRange()
+        _ = lm.lineFragmentRect(forGlyphAt: 0, effectiveRange: &firstLineRange, withoutAdditionalLayout: false)
+        _ = tc
+        return NSLocationInRange(glyphRange.location, firstLineRange) || glyphRange.location == firstLineRange.location
+    }
+
+    func cursorIsOnLastLine() -> Bool {
+        guard let lm = layoutManager else { return true }
+        let length = textStorage?.length ?? 0
+        if length == 0 { return true }
+        let cursor = selectedRange().location
+        let glyphRange = lm.glyphRange(forCharacterRange: NSRange(location: cursor, length: 0), actualCharacterRange: nil)
+        var lastLineRange = NSRange()
+        let lastGlyph = max(0, lm.numberOfGlyphs - 1)
+        _ = lm.lineFragmentRect(forGlyphAt: lastGlyph, effectiveRange: &lastLineRange, withoutAdditionalLayout: false)
+        return NSLocationInRange(glyphRange.location, lastLineRange) || glyphRange.location >= lastLineRange.location
+    }
+
+    override var intrinsicContentSize: NSSize {
+        guard let lm = layoutManager, let tc = textContainer else {
+            return super.intrinsicContentSize
+        }
+        lm.ensureLayout(for: tc)
+        let used = lm.usedRect(for: tc)
+        // Preserve fractional line spacing. SwiftUI handles alignment to the
+        // display's pixels; rounding to whole points adds a half-point below
+        // even line counts on Retina when lineSpacing is 3.5pt.
+        return NSSize(width: NSView.noIntrinsicMetric, height: used.height)
+    }
+
+    override func didChangeText() {
+        refreshLinkIconSpacing()
+        super.didChangeText()
+        invalidateIntrinsicContentSize()
+    }
+
+    // MARK: Page-link icons
+
+    /// Set from the row's typography; see `LinkIcons`.
+    var linkIconAdvance: CGFloat = 0
+    var linkIconImage: NSImage?
+
+    /// Re-reserve the icon gaps after an edit moved, made or removed a link start.
+    func refreshLinkIconSpacing() {
+        guard let storage = textStorage, !hasMarkedText() else { return }
+        LinkIcons.applySpacing(to: storage, advance: linkIconAdvance)
+        TitleIcon.hide(prefixLength: titleIconPrefixLength, in: storage)
+        needsDisplay = true
+    }
+
+    // MARK: Page-title icon
+
+    /// Set for the page title; see `TitleIcon`.
+    var hidesLeadingIcon = false
+    /// Length of the hidden icon at the start of the text. Fixed for a loaded
+    /// text: edits can't reach it, and an emoji typed at the start stays text
+    /// until the title reloads.
+    private(set) var titleIconPrefixLength = 0
+
+    func hideTitleIcon() {
+        guard hidesLeadingIcon, let storage = textStorage else {
+            titleIconPrefixLength = 0
+            return
+        }
+        titleIconPrefixLength = TitleIcon.prefixLength(of: storage.string)
+        TitleIcon.hide(prefixLength: titleIconPrefixLength, in: storage)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        drawLinkIcons()
+    }
+
+    private func drawLinkIcons() {
+        guard let image = linkIconImage, let storage = textStorage, let window else { return }
+        let text = storage.string as NSString
+        for start in LinkIcons.iconStarts(in: storage) {
+            // A link that wrapped to the start of a line leaves its gap at the
+            // end of the line above, on the character in front of it.
+            guard var origin = characterOrigin(at: start, in: window) else { continue }
+            if start > 0, text.character(at: start - 1) != 0x0A,
+               origin.x < linkIconAdvance - 0.5,
+               let before = characterOrigin(at: start - 1, in: window) {
+                origin = (before.x + before.width, before.baseline, 0)
+            }
+            let rect = LinkIcons.iconRect(
+                linkMinX: origin.x,
+                baseline: origin.baseline,
+                advance: linkIconAdvance,
+                imageSize: image.size,
+                baselineOffsetFromBottom: image.size.height * LinkIcons.macSymbolBaselineFraction
+            )
+            image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
+    }
+
+    /// The leading edge (x), baseline (y) and width of the character at `index`,
+    /// in view coordinates.
+    private func characterOrigin(at index: Int, in window: NSWindow) -> (x: CGFloat, baseline: CGFloat, width: CGFloat)? {
+        var actual = NSRange()
+        let screenRect = firstRect(forCharacterRange: NSRange(location: index, length: 1), actualRange: &actual)
+        guard screenRect.width > 0 || screenRect.height > 0 else { return nil }
+        let delta = baselineDeltaForCharacter(at: index)
+        let windowRect = window.convertFromScreen(screenRect)
+        let rect = convert(windowRect, from: nil)
+        // `baselineDelta` is measured down from the top of the line.
+        return (rect.minX, rect.minY + delta, rect.width)
+    }
+
+    /// NSTextView's default paste validation rejects pasteboards that carry only
+    /// image data (PNG/TIFF/file URLs) — its `readablePasteboardTypes` covers
+    /// strings/RTF/RTFD/HTML, not images. Without this override, Cmd-V over an
+    /// image-only pasteboard beeps and our `paste(_:)` override never runs.
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(NSText.paste(_:)),
+           !readPasteboardImages(NSPasteboard.general).isEmpty {
+            return true
+        }
+        return super.validateMenuItem(menuItem)
+    }
+
+    /// Intercept Cmd-V / paste action. NSTextView routes both the menu item and the
+    /// keyboard shortcut through `paste(_:)`. We hand the raw pasteboard string up to
+    /// EditorView via the `.paste` BlockKey; if it splices multi-block content it
+    /// returns `.handled` and we skip super. Single-paragraph pastes return `.ignored`
+    /// and fall through to the native handler so cursor placement + native typing-undo
+    /// coalescing both stay correct.
+    override func paste(_ sender: Any?) {
+        if let onKey = coordinator?.parent.onKey {
+            // Image-on-pasteboard takes precedence over text. Cmd-Shift-4 puts a PNG/TIFF
+            // representation alongside no string at all; copying an image from a browser
+            // puts both — in both cases the user expects an image, not the URL. Live-text
+            // commit happens centrally in `EditorView.mutate(...)` if the paste splices
+            // blocks; single-paragraph string paste returns `.ignored` and falls through
+            // to the rich-text sanitize path (no model snapshot, binding stays stale
+            // until blur as usual).
+            let images = readPasteboardImages(NSPasteboard.general)
+            if !images.isEmpty {
+                if onKey(.imagesPasted(images)) == .handled {
+                    return
+                }
+            }
+            if let str = NSPasteboard.general.string(forType: .string) {
+                if linkSelection(toPasted: str) {
+                    return
+                }
+                if onKey(.paste(str, rich: PasteboardRichContent(NSPasteboard.general))) == .handled {
+                    return
+                }
+            }
+        }
+        // Single-paragraph fallthrough. If the pasteboard carries a rich representation
+        // (RTF/HTML — common for browser, Pages, Notion, Mail copies), strip every
+        // attribute that doesn't round-trip to markdown and re-render in the row's
+        // typography before insertion. Plain-text-only pastes go to super.paste, which
+        // inserts using the row's typingAttributes.
+        if let parent = coordinator?.parent,
+           let rich = readPasteboardRichText(NSPasteboard.general) {
+            let sanitized = InlineMarksBridge.sanitize(
+                rich,
+                baseFontSize: parent.fontSize,
+                baseBold: parent.bold,
+                lineSpacing: parent.lineSpacing, theme: parent.theme)
+            insertText(sanitized, replacementRange: selectedRange())
+            return
+        }
+        super.paste(sender)
+    }
+
+    /// Pasting a URL over selected text links that text instead of replacing it.
+    /// Returns false, leaving the paste to the usual paths, when `pasted` isn't a
+    /// URL or the selection isn't text to link.
+    func linkSelection(toPasted pasted: String) -> Bool {
+        guard let parent = coordinator?.parent, let storage = textStorage else { return false }
+        let range = selectedRange()
+        guard range.length > 0,
+              let url = InlineMarksBridge.linkTarget(pasted: pasted, over: (storage.string as NSString).substring(with: range)) else { return false }
+        let linked = InlineMarksBridge.linking(
+            storage.attributedSubstring(from: range),
+            to: url,
+            baseFontSize: parent.fontSize,
+            baseBold: parent.bold,
+            lineSpacing: parent.lineSpacing,
+            theme: parent.theme
+        )
+        insertText(linked, replacementRange: range)
+        return true
+    }
+
+    /// NSTextView routes Esc via `cancelOperation(_:)` rather than firing it through
+    /// `keyDown`'s normal switch. Hook that path explicitly so our `.escape` handler
+    /// (exit edit mode, return to nav mode) runs. We resign first responder to nil first
+    /// so the window's first-responder slot is cleared before SwiftUI re-renders — without
+    /// this, NSTextView remains nominal first responder during the unmount and SwiftUI
+    /// can't successfully set the page container as the new first responder, leaving
+    /// arrow-key nav unbound.
+    override func cancelOperation(_ sender: Any?) {
+        if coordinator?.parent.completionActive == true,
+           let onKey = coordinator?.parent.onKey,
+           onKey(.completionDismiss) == .handled {
+            // Esc while the mention popover is open dismisses the menu but leaves the
+            // editor focused — don't resign first responder.
+            return
+        }
+        // Order matters: let `.escape` run while this view is still first responder
+        // and `flushActiveText` is still wired. `handleEditorKey(.escape)` calls
+        // `flushActiveText` to flush live text (with marks) into the binding,
+        // then transitions to nav mode. Only after that do we resign — resigning
+        // first would synchronously fire `textDidEndEditing` and re-renders may
+        // race the commit.
+        if let onKey = coordinator?.parent.onKey, onKey(.escape) == .handled {
+            relinquishFocus()
+            return
+        }
+        super.cancelOperation(sender)
+    }
+}
+
+#endif
+
+// MARK: - iOS
+
+#if os(iOS)
+
+/// What the keyboard accessory bar shows, kept in step with the text view's
+/// selection by the coordinator.
+@MainActor
+final class KeyboardAccessoryModel: ObservableObject {
+    @Published var hasSelection = false
+    @Published var activeMarks: Set<InlineMark> = []
+
+    func update(from tv: UITextView) {
+        let range = tv.selectedRange
+        let selecting = range.length > 0 && range.location + range.length <= tv.textStorage.length
+        let marks: Set<InlineMark> = selecting
+            ? Set([InlineMark.bold, .italic, .code, .strikethrough].filter {
+                InlineMarksBridge.rangeHasMark($0, range: range, storage: tv.textStorage)
+            })
+            : []
+        if hasSelection != selecting { hasSelection = selecting }
+        if activeMarks != marks { activeMarks = marks }
+    }
+}
+
+/// SwiftUI accessory bar hosted as the UITextView's `inputAccessoryView`.
+/// It changes with the selection: with only a caret it offers the block's
+/// structure (outdent, indent, Turn Into, @ link); with text selected it
+/// offers the inline marks, each lit when the selection carries it. The
+/// closures are refreshed by `updateUIView` so each render swaps in the
+/// freshest `onKey` / `bridge` references.
+struct KeyboardAccessoryBar: View {
+    @ObservedObject var model: KeyboardAccessoryModel
+    var onShiftTab: () -> Void
+    var onTab: () -> Void
+    var onToggleMark: (InlineMark) -> Void
+    var onTurnInto: () -> Void
+    var onMention: () -> Void
+    var onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 4) {
+                if model.hasSelection {
+                    markButton(.bold, "bold", "Bold")
+                    markButton(.italic, "italic", "Italic")
+                    markButton(.code, "chevron.left.forwardslash.chevron.right", "Code")
+                    markButton(.strikethrough, "strikethrough", "Strikethrough")
+                } else {
+                    barButton("decrease.indent", "Outdent", action: onShiftTab)
+                    barButton("increase.indent", "Indent", action: onTab)
+                    barButton("square.on.square.dashed", "Turn Into", action: onTurnInto)
+                    barButton("at", "Link to a page", action: onMention)
+                }
+            }
+            .padding(.horizontal, 8)
+            .animation(.easeInOut(duration: 0.12), value: model.hasSelection)
+            Spacer(minLength: 0)
+            barButton("keyboard.chevron.compact.down", "Hide Keyboard", action: onDismiss)
+                .padding(.trailing, 8)
+                .accessibilityIdentifier("keyboard-dismiss")
+        }
+        .frame(height: 44)
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+    }
+
+    private func barButton(_ systemImage: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 17))
+                .frame(width: 44, height: 36)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel(label)
+    }
+
+    private func markButton(_ mark: InlineMark, _ systemImage: String, _ label: String) -> some View {
+        let on = model.activeMarks.contains(mark)
+        return Button { onToggleMark(mark) } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 17, weight: on ? .semibold : .regular))
+                .frame(width: 44, height: 36)
+                .background(on ? Color.accentColor.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
+/// Side-channel held by reference so the SwiftUI keyboard toolbar can drive
     /// mark toggles on the underlying UITextView's textStorage. Persists across
     /// re-renders; `makeUIView` / `updateUIView` keep `textView` pointed at the
     /// live view.
@@ -1611,7 +2962,8 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
         // Build the keyboard accessory bar and host it on the UITextView. UIKit
         // shows this above the keyboard. SwiftUI's `.toolbar(placement: .keyboard)`
         // doesn't reach a UIViewRepresentable, so we set it directly.
-        let host = UIHostingController(rootView: makeAccessoryBar(for: tv))
+        context.coordinator.accessoryModel.update(from: tv)
+        let host = UIHostingController(rootView: makeAccessoryBar(for: tv, model: context.coordinator.accessoryModel))
         host.view.translatesAutoresizingMaskIntoConstraints = true
         host.view.autoresizingMask = [.flexibleWidth]
         // UIKit re-pins the inputAccessoryView's width to the keyboard's actual
@@ -1661,7 +3013,7 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
         // Refresh the accessory bar's closures so they capture the latest
         // `onKey` / `bridge` references — both are recreated on every parent
         // re-render.
-        context.coordinator.accessoryHost?.rootView = makeAccessoryBar(for: tv)
+        context.coordinator.accessoryHost?.rootView = makeAccessoryBar(for: tv, model: context.coordinator.accessoryModel)
 
         tv.wantsFocus = isFocused
         if isFocused, tv.window != nil, !tv.isFirstResponder {
@@ -1681,28 +3033,28 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
         }
     }
 
-    private func makeAccessoryBar(for tv: ContainedTextViewIOS) -> KeyboardAccessoryBar {
+    private func makeAccessoryBar(for tv: ContainedTextViewIOS, model: KeyboardAccessoryModel) -> KeyboardAccessoryBar {
         // Live-text commits flow through `EditorView.mutate(...)` (for ops that
         // change the model) and `transferFocus(...)` (for Esc → nav). The
         // accessory bar's actions all hit one of those paths through `onKey`,
         // so explicit commits aren't needed here.
         KeyboardAccessoryBar(
+            model: model,
             onShiftTab: { _ = onKey(.shiftTab) },
             onTab: { _ = onKey(.tab) },
-            onToggleMark: { mark in bridge.toggleMark(mark) },
-            onCmdK: {
-                let range = tv.selectedRange
-                let preferred: String? = {
-                    let ns = tv.textStorage.string as NSString
-                    if range.length > 0,
-                       range.location >= 0,
-                       range.location + range.length <= ns.length {
-                        return ns.substring(with: range)
-                    }
-                    let full = ns as String
-                    return full.isEmpty ? nil : full
-                }()
-                _ = onKey(.cmdK(preferredTitle: preferred))
+            onToggleMark: { [weak model, weak tv] mark in
+                bridge.toggleMark(mark)
+                if let tv { model?.update(from: tv) }
+            },
+            onTurnInto: { _ = onKey(.showBlockMenu) },
+            onMention: { [weak tv] in
+                guard let tv else { return }
+                // `@` opens the page menu only at a word start.
+                let ns = (tv.text ?? "") as NSString
+                let at = tv.selectedRange.location
+                let needsSpace = at > 0 && at <= ns.length
+                    && !(Character(UnicodeScalar(ns.character(at: at - 1)) ?? " ").isWhitespace)
+                tv.insertText(needsSpace ? " @" : "@")
             },
             onDismiss: {
                 tv.resignFirstResponder()
@@ -1738,6 +3090,8 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
         /// hosting controller needs an owner with the right lifecycle —
         /// the Coordinator lives as long as the Representable does.
         var accessoryHost: UIHostingController<KeyboardAccessoryBar>?
+        /// Selection state the accessory bar follows.
+        let accessoryModel = KeyboardAccessoryModel()
         /// See `MacBlockTextEditor.Coordinator.lastKnownBindingPlain` — same role on iOS.
         var lastKnownBindingPlain: String?
         /// See `MacBlockTextEditor.Coordinator.textStorageDirty` — same role on iOS.
@@ -1900,8 +3254,9 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
             let plain = textView.text ?? ""
             let selected = textView.selectedRange
             let cursor = selected.location
-            Task { @MainActor [weak self] in
+            Task { @MainActor [weak self, weak textView] in
                 guard let self else { return }
+                if let textView { self.accessoryModel.update(from: textView) }
                 self.parent.liveSelection?.report(selected, in: self.parent.blockID)
                 // A caret move only keeps or closes a menu that typing
                 // opened; clicking somewhere after an old `@` must not open one.

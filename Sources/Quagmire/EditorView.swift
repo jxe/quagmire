@@ -2805,6 +2805,11 @@ public struct EditorView: View {
             return .handled
         case .cmdK(let preferredTitle):
             return convertBlockToDocument(blockID: blockID, preferredTitle: preferredTitle)
+        case .showBlockMenu:
+            // Leave the text (committing it) and open the menu on the next
+            // tick, after the session-state change has cleared any old one.
+            handleHandleClick(blockID: blockID)
+            return .handled
         case .navigateBack:
             host.navigateBack()
             return .handled
