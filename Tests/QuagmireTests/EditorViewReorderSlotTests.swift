@@ -98,6 +98,52 @@ struct EditorViewReorderSlotTests {
             #expect(state.currentDropTarget == .insertAt(DropPath(parent: nil, position: 0)))
         }
     }
+
+    /// The lift shows the indent it will land at even with no sideways
+    /// travel: a nested bullet dragged below its list leaves the list, so
+    /// it must be drawn flush left there, not at its old indent.
+    @Test func liftIsDrawnAtTheDepthItWillLandAt() {
+        let k = Block.bullet(text: AttributedString("k"))
+        let a = Block.bullet(text: AttributedString("a"), children: [k])
+        let b = Block.paragraph(text: AttributedString("b"))
+        let d = Block.paragraph(text: AttributedString("d"))
+        let document = Document(id: DocumentID("test"), children: [a, b, d])
+        let state = EditorState()
+        let editor = EditorView(document: document, state: state, host: ReorderSlotTestHost())
+        let ids = [a.id, k.id, b.id, d.id]
+        editor.layoutCache.updateOrder(ids)
+        for id in ids { editor.layoutCache.setHeight(24, for: id) }
+        editor.layoutCache.contentWidth = 320
+        editor.layoutCache.beginReorderFrameSnapshot(rebaseOnNextOrderChange: true)
+        let lift = ReorderLift(
+            block: k,
+            ids: [k.id],
+            sourceParentID: a.id,
+            sourcePositions: 0...0,
+            draggedSubtreeIDs: [k.id],
+            sourceFrame: CGRect(x: 0, y: 24, width: 320, height: 24),
+            touchOffset: CGSize(width: 10, height: 12),
+            location: CGPoint(x: 10, y: 36),
+            pendingAnchor: false,
+            sourceDepth: 1
+        )
+        state.setReorderLift(lift)
+        editor.seedSourceDropTarget(for: lift, snapshot: document.children)
+        editor.layoutCache.updateOrder([a.id, b.id, d.id])
+
+        editor.applyDropTarget(at: 36, snapshot: document.children)
+        #expect(state.currentDropTarget == .insertAt(DropPath(parent: a.id, position: 0)))
+        #expect((state.reorderLift?.previewDepth ?? 1) == 1)
+
+        // Between b and d: a root paragraph slot.
+        editor.applyDropTarget(at: 36 + 24, snapshot: document.children)
+        guard case .insertAt(let path)? = state.currentDropTarget else {
+            Issue.record("expected an insertion")
+            return
+        }
+        #expect(path.parent == nil)
+        #expect(state.reorderLift?.previewDepth == 0)
+    }
 }
 
 @MainActor

@@ -378,7 +378,8 @@ struct ReorderLift: Equatable, Sendable {
     /// Levels the finger has asked for by moving sideways since pickup:
     /// negative is shallower, positive deeper, zero keeps the default depth.
     var sidewaysSteps: Int = 0
-    /// Depth the lift is drawn at while a sideways choice is in effect.
+    /// Depth the lift is drawn at: where an insertion would land (nil while
+    /// over a drop-onto target, which keeps the source depth).
     var previewDepth: Int?
     /// Top-level rows travelling together: one for a single-row drag, more
     /// when a multi-row selection was lifted.
