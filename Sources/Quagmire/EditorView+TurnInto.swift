@@ -28,8 +28,8 @@ enum BlockTurnInto: CaseIterable {
     case template
 
     enum Category: CaseIterable {
-        case basic
         case lists
+        case basic
         case headings
         case structural
     }

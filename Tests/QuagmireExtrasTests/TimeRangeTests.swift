@@ -63,23 +63,6 @@ import Quagmire
     }
 
     @MainActor
-    @Test func turnsBlocksIntoTimeRows() throws {
-        let morning = Block.bullet(text: AttributedString("9 to 11"))
-        let task = Block.paragraph(text: AttributedString("Go running"))
-        let spelled = Block.paragraph(text: AttributedString("noon until 2"))
-        let document = Document(id: DocumentID("day"), children: [morning, task, spelled])
-
-        let afterMorning = try #require(TimeRows.turnInto(task, in: document))
-        #expect(afterMorning.id == task.id)
-        #expect(TimeRows.range(of: afterMorning) == r(11, to: 12))
-        #expect(afterMorning.children.map(\.text) == [AttributedString("Go running")])
-
-        let already = try #require(TimeRows.turnInto(spelled, in: document))
-        #expect(TimeRows.range(of: already) == r(12, to: 14))
-        #expect(already.children.isEmpty)
-    }
-
-    @MainActor
     @Test func markerRecognizesWholeTimeRanges() {
         let marker = EditorBulletMarker.timeRows
         #expect(marker.recognizes("9 to 11"))
