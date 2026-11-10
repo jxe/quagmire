@@ -141,6 +141,9 @@ enum BlockKey: Sendable, Equatable {
     case shiftTab
     case escape
     case cmdK(preferredTitle: String?)
+    /// Open the block action menu (Turn Into and the rest) on this block,
+    /// from the iOS keyboard bar.
+    case showBlockMenu
     case navigateBack
     /// Up arrow pressed while the cursor is on the editor's first line. EditorView
     /// treats this as Esc + up: exit edit mode and select the previous block.
@@ -1450,41 +1453,89 @@ final class ContainedTextView: NSTextView {
 
 #if os(iOS)
 
-/// SwiftUI accessory bar hosted as the UITextView's `inputAccessoryView`. The
+/// What the keyboard accessory bar shows, kept in step with the text view's
+/// selection by the coordinator.
+@MainActor
+final class KeyboardAccessoryModel: ObservableObject {
+    @Published var hasSelection = false
+    @Published var activeMarks: Set<InlineMark> = []
+
+    func update(from tv: UITextView) {
+        let range = tv.selectedRange
+        let selecting = range.length > 0 && range.location + range.length <= tv.textStorage.length
+        let marks: Set<InlineMark> = selecting
+            ? Set([InlineMark.bold, .italic, .code, .strikethrough].filter {
+                InlineMarksBridge.rangeHasMark($0, range: range, storage: tv.textStorage)
+            })
+            : []
+        if hasSelection != selecting { hasSelection = selecting }
+        if activeMarks != marks { activeMarks = marks }
+    }
+}
+
+/// SwiftUI accessory bar hosted as the UITextView's `inputAccessoryView`.
+/// It changes with the selection: with only a caret it offers the block's
+/// structure (outdent, indent, Turn Into, @ link); with text selected it
+/// offers the inline marks, each lit when the selection carries it. The
 /// closures are refreshed by `updateUIView` so each render swaps in the
 /// freshest `onKey` / `bridge` references.
 struct KeyboardAccessoryBar: View {
+    @ObservedObject var model: KeyboardAccessoryModel
     var onShiftTab: () -> Void
     var onTab: () -> Void
     var onToggleMark: (InlineMark) -> Void
-    var onCmdK: () -> Void
+    var onTurnInto: () -> Void
+    var onMention: () -> Void
     var onDismiss: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 18) {
-                    Button(action: onShiftTab) { Image(systemName: "decrease.indent") }
-                    Button(action: onTab) { Image(systemName: "increase.indent") }
-                    Divider().frame(height: 20)
-                    Button { onToggleMark(.bold) } label: { Image(systemName: "bold") }
-                    Button { onToggleMark(.italic) } label: { Image(systemName: "italic") }
-                    Button { onToggleMark(.code) } label: { Image(systemName: "chevron.left.forwardslash.chevron.right") }
-                    Button { onToggleMark(.strikethrough) } label: { Image(systemName: "strikethrough") }
-                    Divider().frame(height: 20)
-                    Button(action: onCmdK) { Image(systemName: "rectangle.stack.badge.plus") }
+            HStack(spacing: 4) {
+                if model.hasSelection {
+                    markButton(.bold, "bold", "Bold")
+                    markButton(.italic, "italic", "Italic")
+                    markButton(.code, "chevron.left.forwardslash.chevron.right", "Code")
+                    markButton(.strikethrough, "strikethrough", "Strikethrough")
+                } else {
+                    barButton("decrease.indent", "Outdent", action: onShiftTab)
+                    barButton("increase.indent", "Indent", action: onTab)
+                    barButton("square.on.square.dashed", "Turn Into", action: onTurnInto)
+                    barButton("at", "Link to a page", action: onMention)
                 }
-                .padding(.horizontal, 12)
             }
-            Button(action: onDismiss) {
-                Image(systemName: "keyboard.chevron.compact.down")
-            }
-            .padding(.horizontal, 12)
-            .accessibilityIdentifier("keyboard-dismiss")
+            .padding(.horizontal, 8)
+            .animation(.easeInOut(duration: 0.12), value: model.hasSelection)
+            Spacer(minLength: 0)
+            barButton("keyboard.chevron.compact.down", "Hide Keyboard", action: onDismiss)
+                .padding(.trailing, 8)
+                .accessibilityIdentifier("keyboard-dismiss")
         }
         .frame(height: 44)
         .frame(maxWidth: .infinity)
-        .background(.thickMaterial)
+        .background(.bar)
+    }
+
+    private func barButton(_ systemImage: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 17))
+                .frame(width: 44, height: 36)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel(label)
+    }
+
+    private func markButton(_ mark: InlineMark, _ systemImage: String, _ label: String) -> some View {
+        let on = model.activeMarks.contains(mark)
+        return Button { onToggleMark(mark) } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 17, weight: on ? .semibold : .regular))
+                .frame(width: 44, height: 36)
+                .background(on ? Color.accentColor.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 
@@ -1611,7 +1662,8 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
         // Build the keyboard accessory bar and host it on the UITextView. UIKit
         // shows this above the keyboard. SwiftUI's `.toolbar(placement: .keyboard)`
         // doesn't reach a UIViewRepresentable, so we set it directly.
-        let host = UIHostingController(rootView: makeAccessoryBar(for: tv))
+        context.coordinator.accessoryModel.update(from: tv)
+        let host = UIHostingController(rootView: makeAccessoryBar(for: tv, model: context.coordinator.accessoryModel))
         host.view.translatesAutoresizingMaskIntoConstraints = true
         host.view.autoresizingMask = [.flexibleWidth]
         // UIKit re-pins the inputAccessoryView's width to the keyboard's actual
@@ -1661,7 +1713,7 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
         // Refresh the accessory bar's closures so they capture the latest
         // `onKey` / `bridge` references — both are recreated on every parent
         // re-render.
-        context.coordinator.accessoryHost?.rootView = makeAccessoryBar(for: tv)
+        context.coordinator.accessoryHost?.rootView = makeAccessoryBar(for: tv, model: context.coordinator.accessoryModel)
 
         tv.wantsFocus = isFocused
         if isFocused, tv.window != nil, !tv.isFirstResponder {
@@ -1681,28 +1733,28 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
         }
     }
 
-    private func makeAccessoryBar(for tv: ContainedTextViewIOS) -> KeyboardAccessoryBar {
+    private func makeAccessoryBar(for tv: ContainedTextViewIOS, model: KeyboardAccessoryModel) -> KeyboardAccessoryBar {
         // Live-text commits flow through `EditorView.mutate(...)` (for ops that
         // change the model) and `transferFocus(...)` (for Esc → nav). The
         // accessory bar's actions all hit one of those paths through `onKey`,
         // so explicit commits aren't needed here.
         KeyboardAccessoryBar(
+            model: model,
             onShiftTab: { _ = onKey(.shiftTab) },
             onTab: { _ = onKey(.tab) },
-            onToggleMark: { mark in bridge.toggleMark(mark) },
-            onCmdK: {
-                let range = tv.selectedRange
-                let preferred: String? = {
-                    let ns = tv.textStorage.string as NSString
-                    if range.length > 0,
-                       range.location >= 0,
-                       range.location + range.length <= ns.length {
-                        return ns.substring(with: range)
-                    }
-                    let full = ns as String
-                    return full.isEmpty ? nil : full
-                }()
-                _ = onKey(.cmdK(preferredTitle: preferred))
+            onToggleMark: { [weak model, weak tv] mark in
+                bridge.toggleMark(mark)
+                if let tv { model?.update(from: tv) }
+            },
+            onTurnInto: { _ = onKey(.showBlockMenu) },
+            onMention: { [weak tv] in
+                guard let tv else { return }
+                // `@` opens the page menu only at a word start.
+                let ns = (tv.text ?? "") as NSString
+                let at = tv.selectedRange.location
+                let needsSpace = at > 0 && at <= ns.length
+                    && !(Character(UnicodeScalar(ns.character(at: at - 1)) ?? " ").isWhitespace)
+                tv.insertText(needsSpace ? " @" : "@")
             },
             onDismiss: {
                 tv.resignFirstResponder()
@@ -1738,6 +1790,8 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
         /// hosting controller needs an owner with the right lifecycle —
         /// the Coordinator lives as long as the Representable does.
         var accessoryHost: UIHostingController<KeyboardAccessoryBar>?
+        /// Selection state the accessory bar follows.
+        let accessoryModel = KeyboardAccessoryModel()
         /// See `MacBlockTextEditor.Coordinator.lastKnownBindingPlain` — same role on iOS.
         var lastKnownBindingPlain: String?
         /// See `MacBlockTextEditor.Coordinator.textStorageDirty` — same role on iOS.
@@ -1900,8 +1954,9 @@ struct IOSBlockTextEditorView: UIViewRepresentable {
             let plain = textView.text ?? ""
             let selected = textView.selectedRange
             let cursor = selected.location
-            Task { @MainActor [weak self] in
+            Task { @MainActor [weak self, weak textView] in
                 guard let self else { return }
+                if let textView { self.accessoryModel.update(from: textView) }
                 self.parent.liveSelection?.report(selected, in: self.parent.blockID)
                 // A caret move only keeps or closes a menu that typing
                 // opened; clicking somewhere after an old `@` must not open one.
