@@ -560,18 +560,22 @@ extension EditorView {
         #endif
     }
 
-    /// While a sideways choice is in effect the lift is drawn at the depth it
-    /// will land at, with a tick each time that depth changes.
+    /// The lift is drawn at the depth an insertion will land at, so the
+    /// indent it shows is the indent it drops at, whether that depth came
+    /// from the slot itself or from a sideways choice. Sideways choices tick
+    /// each time the depth changes.
     private func updateSidewaysPreviewDepth(for target: DropTarget, snapshot: [Block]) {
         guard var lift = state.reorderLift else { return }
         var depth: Int?
-        if lift.sidewaysSteps != 0, case .insertAt(let path) = target {
+        if case .insertAt(let path) = target {
             depth = visualDropDepth(for: path, rows: rowsBeforeReorderSourceRemoval(snapshot: snapshot))
         }
         guard lift.previewDepth != depth else { return }
         lift.previewDepth = depth
         state.setReorderLift(lift)
-        Haptics.selection(enabled: configuration.isHapticFeedbackEnabled)
+        if lift.sidewaysSteps != 0 {
+            Haptics.selection(enabled: configuration.isHapticFeedbackEnabled)
+        }
     }
 
     /// The depth a block inserted at `path` is drawn at.
