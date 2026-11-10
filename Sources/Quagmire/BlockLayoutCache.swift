@@ -15,7 +15,6 @@ enum VisibleRowKind: Equatable {
     case code
     case divider
     case toggle
-    case templateButton
     case documentLink(reference: DocumentReference)
     case image
     case unsupported
@@ -40,8 +39,6 @@ enum VisibleRowKind: Equatable {
             self = .divider
         case .toggle:
             self = .toggle
-        case .templateButton:
-            self = .templateButton
         case .documentLink(_, let reference):
             self = .documentLink(reference: reference)
         case .image:
@@ -62,7 +59,7 @@ enum VisibleRowKind: Equatable {
 
     var isCollapsedContainer: Bool {
         switch self {
-        case .toggle, .templateButton:
+        case .toggle:
             return true
         default:
             return false
@@ -71,7 +68,7 @@ enum VisibleRowKind: Equatable {
 }
 
 /// Tree-aware visible-row layout entry. One per displayed block, in
-/// document-preorder, with rows under collapsed headings/toggles/templateButtons
+/// document-preorder, with rows under collapsed headings/toggles
 /// elided. Carries id, kind, depth, parent, slot, and prev-sibling metadata so
 /// `ForEach`-time consumers don't need a second walk to compute spacing
 /// / drop targets. Lifted out of `EditorView` so `BlockLayoutCache` can
@@ -87,7 +84,7 @@ struct VisibleRow {
 }
 
 /// Tree-preorder walk that emits one `VisibleRow` per visible block,
-/// skipping any subtree under a closed heading/toggle/templateButton.
+/// skipping any subtree under a closed heading/toggle.
 /// `isCollapsed` is injected because expand state lives on
 /// `EditorState`, which this file deliberately doesn't import — keeps
 /// the cache + walker decoupled from the editor's session model.
@@ -143,7 +140,7 @@ private func appendVisible(
     }
 }
 
-/// Set of block IDs hidden under a collapsed heading/toggle/templateButton.
+/// Set of block IDs hidden under a collapsed heading/toggle.
 /// The container itself stays visible; only its descendants hide.
 func hiddenBlockIDs(in blocks: [Block], isCollapsed: (Block) -> Bool) -> Set<BlockID> {
     var hidden: Set<BlockID> = []

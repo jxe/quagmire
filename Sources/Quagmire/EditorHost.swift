@@ -578,7 +578,7 @@ private enum EditorPlainTextCodec {
         func append(_ block: Block) {
             switch block.kind {
             case .paragraph, .heading, .bullet, .numbered, .todo, .quote,
-                 .toggle, .templateButton:
+                 .toggle:
                 lines.append(String(block.text.characters))
             case .code(let source, _):
                 lines.append(source)

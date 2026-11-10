@@ -186,7 +186,6 @@ struct BlockRow: View, Equatable {
     var onClickAtPoint: (CGPoint) -> Void { actions.onClickAtPoint }
     var onToggleExpansion: () -> Void { actions.onToggleExpansion }
     var onHeadingChevronLongPress: () -> Void { actions.onHeadingChevronLongPress }
-    var onTemplateButtonPress: () -> Void { actions.onTemplateButtonPress }
     var onLinkPreviewLoaded: (URL, LinkPreview) -> Void { actions.onLinkPreviewLoaded }
     var host: EditorHost { actions.host }
     var onTapOutsideText: () -> Void { actions.onTapOutsideText }
@@ -360,9 +359,6 @@ struct BlockRow: View, Equatable {
 
         case .toggle:
             toggleRow()
-
-        case .templateButton:
-            templateButtonRow()
 
         case .documentLink(let label, let reference):
             documentLinkRow(storedLabel: label, lookup: documentLookups[reference.rawValue] ?? .pending)
@@ -700,60 +696,6 @@ struct BlockRow: View, Equatable {
         #endif
     }
 
-    private func templateButtonRow() -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: theme.listMarkerGap) {
-            Image(systemName: "chevron.right")
-                .font(.system(size: theme.chevronSize, weight: .medium))
-                .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                .foregroundStyle(theme.foreground)
-                .frame(width: theme.bulletMarkerColumnWidth, height: theme.listMarkerFrameHeight, alignment: .trailing)
-                .alignmentGuide(.firstTextBaseline) { dimensions in
-                    dimensions[VerticalAlignment.center] + theme.bulletMarkerBaselineOffset
-                }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        onToggleExpansion()
-                    }
-                }
-
-            if isEditing {
-                HStack(spacing: 7) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                    editableText(font: theme.body(), fontSize: 16, bold: false, lineSpacing: theme.bodyLineSpacing)
-                }
-                .foregroundStyle(theme.foreground)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(theme.selectionBackground.opacity(0.75))
-                .clipShape(RoundedRectangle(cornerRadius: 5))
-            } else {
-                HStack(spacing: 7) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                    InlineRenderer.swiftUIText(block.text, theme: theme, baseFont: theme.body(), resolvingPageTitle: { documentLookups[$0]?.title })
-                        .font(theme.body())
-                        .lineSpacing(theme.bodyLineSpacing)
-                        .textRenderer(InlineCodeChipRenderer(theme: theme))
-                }
-                .foregroundStyle(theme.foreground)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(theme.selectionBackground.opacity(0.75))
-                .clipShape(RoundedRectangle(cornerRadius: 5))
-                .contentShape(RoundedRectangle(cornerRadius: 5))
-                .onTapGesture {
-                    if !isReadOnly { onTemplateButtonPress() }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // The title is the button itself, so the target stops at the gap.
-        .overlay(alignment: .topLeading) { disclosureTouchTarget(titleReach: 0) }
-        .padding(.leading, CGFloat(depth) * theme.indentStep)
-    }
-
     private func documentLinkRow(storedLabel: AttributedString, lookup: DocumentLookup) -> some View {
         documentLinkRowBody(storedLabel: storedLabel, lookup: lookup, depth: depth, theme: theme)
             .overlay(alignment: .leading) {
@@ -893,7 +835,6 @@ struct BlockRowActions {
     let onClickAtPoint: (CGPoint) -> Void
     let onToggleExpansion: () -> Void
     let onHeadingChevronLongPress: () -> Void
-    let onTemplateButtonPress: () -> Void
     let onLinkPreviewLoaded: (URL, LinkPreview) -> Void
     let host: EditorHost
     let onTapOutsideText: () -> Void
@@ -1408,33 +1349,6 @@ struct BlockRowPreview: View, Equatable {
                         dimensions[VerticalAlignment.center] + theme.bulletMarkerBaselineOffset
                     }
                 text(font: theme.body(), fontSize: 16, lineSpacing: theme.bodyLineSpacing)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, CGFloat(depth) * theme.indentStep)
-
-        case .templateButton:
-            HStack(alignment: .firstTextBaseline, spacing: theme.listMarkerGap) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: theme.chevronSize, weight: .medium))
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .foregroundStyle(theme.foreground)
-                    .frame(width: theme.bulletMarkerColumnWidth, height: theme.listMarkerFrameHeight, alignment: .trailing)
-                    .alignmentGuide(.firstTextBaseline) { dimensions in
-                        dimensions[VerticalAlignment.center] + theme.bulletMarkerBaselineOffset
-                    }
-                HStack(spacing: 7) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                    InlineRenderer.swiftUIText(block.text, theme: theme, baseFont: theme.body(), resolvingPageTitle: { documentLookups[$0]?.title })
-                        .font(theme.body())
-                        .lineSpacing(theme.bodyLineSpacing)
-                        .textRenderer(InlineCodeChipRenderer(theme: theme))
-                }
-                .foregroundStyle(theme.foreground)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(theme.selectionBackground.opacity(0.75))
-                .clipShape(RoundedRectangle(cornerRadius: 5))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, CGFloat(depth) * theme.indentStep)

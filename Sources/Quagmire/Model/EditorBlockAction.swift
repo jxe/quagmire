@@ -138,7 +138,7 @@ private extension Block {
     var hasReplaceableText: Bool {
         switch kind {
         case .paragraph, .heading, .bullet, .numbered, .todo, .quote,
-             .toggle, .templateButton:
+             .toggle:
             true
         case .code, .divider, .documentLink, .image, .unsupported:
             false

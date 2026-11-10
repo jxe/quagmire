@@ -212,16 +212,15 @@ struct EditorViewToggleExpansionTests {
         #expect(rows.contains(where: { $0.id == targetChild.id }))
     }
 
-    @Test func turnIntoToggleStartsClosedAndClearsTemplateExpansion() {
+    @Test func turnIntoToggleStartsClosed() {
         let doc = Document(
             id: DocumentID("test"),
             children: [
-                .templateButton(label: "Details")
+                .paragraph(text: AttributedString("Details"))
             ]
         )
         let state = EditorState()
         let id = doc.children[0].id
-        state.expandedTemplates.insert(id)
         let editor = EditorView(document: doc, state: state, host: TestHost())
         editor.installUndoApply()
 
@@ -233,7 +232,6 @@ struct EditorViewToggleExpansionTests {
         }
         #expect(String(title.characters) == "Details")
         #expect(!state.expandedToggles.contains(id))
-        #expect(!state.expandedTemplates.contains(id))
     }
 
     @Test func autotransformToggleStartsClosed() {

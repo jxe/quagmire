@@ -305,7 +305,7 @@ public struct EditorTheme: Equatable, Sendable {
     var indentStep: CGFloat { layout.indentStep }
     var listMarkerGap: CGFloat { layout.listMarkerGap }
     /// Width of the marker column for every list-style row (bullet/numbered/
-    /// todo/toggle/templateButton/documentLink). Unified across kinds so list-text
+    /// todo/toggle/documentLink). Unified across kinds so list-text
     /// columns line up regardless of marker shape, and so an indented paragraph
     /// at depth N+1 aligns exactly with list text at depth N. Marker glyphs are
     /// right-aligned within the column.
@@ -407,7 +407,7 @@ enum BlockSpacing {
     /// buffer). See `intrinsicTopPadding` / `intrinsicBottomPadding`.
     static func intrinsicTopPadding(_ block: Block) -> CGFloat {
         switch block.kind {
-        case .bullet, .numbered, .todo, .documentLink, .toggle, .templateButton: return 5
+        case .bullet, .numbered, .todo, .documentLink, .toggle: return 5
         case .code: return 16
         case .heading: return 0
         default: return 3
@@ -416,7 +416,7 @@ enum BlockSpacing {
 
     static func intrinsicBottomPadding(_ block: Block) -> CGFloat {
         switch block.kind {
-        case .bullet, .numbered, .todo, .documentLink, .toggle, .templateButton: return 5
+        case .bullet, .numbered, .todo, .documentLink, .toggle: return 5
         case .code: return 16
         case .heading: return 0
         default: return 3
@@ -433,7 +433,7 @@ enum BlockSpacing {
     static func dragHandleYOffset(_ block: Block) -> CGFloat {
         switch block.kind {
         case .heading: return 2
-        case .bullet, .numbered, .todo, .documentLink, .toggle, .templateButton: return 2
+        case .bullet, .numbered, .todo, .documentLink, .toggle: return 2
         case .code: return 8
         case .paragraph, .quote, .divider, .image: return 0
         // Unsupported blocks render as a fenced preview, same shape as code.
@@ -464,7 +464,7 @@ enum BlockSpacing {
         case .divider: return 12
         case .image: return 8
         case .unsupported: return 8
-        case .documentLink, .bullet, .numbered, .todo, .toggle, .templateButton: return 1
+        case .documentLink, .bullet, .numbered, .todo, .toggle: return 1
         }
     }
 
@@ -482,7 +482,7 @@ enum BlockSpacing {
         case .divider: return 12
         case .image: return 8
         case .unsupported: return 8
-        case .documentLink, .bullet, .numbered, .todo, .toggle, .templateButton: return 0
+        case .documentLink, .bullet, .numbered, .todo, .toggle: return 0
         }
     }
 
@@ -500,7 +500,7 @@ enum BlockSpacing {
 
     private static func isListItem(_ kind: VisibleRowKind) -> Bool {
         switch kind {
-        case .bullet, .numbered, .todo, .documentLink, .toggle, .templateButton:
+        case .bullet, .numbered, .todo, .documentLink, .toggle:
             return true
         default:
             return false

@@ -111,7 +111,7 @@ private extension Block {
         switch kind {
         case .paragraph, .heading, .bullet, .numbered, .todo, .quote, .toggle:
             true
-        case .templateButton, .code, .divider, .documentLink, .image, .unsupported:
+        case .code, .divider, .documentLink, .image, .unsupported:
             false
         }
     }
