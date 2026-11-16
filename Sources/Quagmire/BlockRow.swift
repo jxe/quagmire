@@ -558,7 +558,7 @@ struct BlockRow: View, Equatable {
     private func calloutRow(symbol: String, tint: Color) -> some View {
         let done = model.calloutDone
         return HStack(alignment: .firstTextBaseline, spacing: theme.listMarkerGap) {
-            // A done callout reads like a checked to-do: a check, the text struck through and muted.
+            // A done callout reads like a checked to-do: a check, and the text muted (struck through unless a detail leads).
             // The symbol sits in the bullets' column and the text lines up with theirs.
             Button(action: onCalloutToggle) {
                 Image(systemName: done ? "checkmark.circle.fill" : symbol)
@@ -573,10 +573,20 @@ struct BlockRow: View, Equatable {
                 dimensions[VerticalAlignment.center] + theme.bulletMarkerBaselineOffset
             }
             // The text takes every width the trailing controls leave; a host's
-            // detail line (a run's result) goes under it, never beside it.
+            // detail line (a run's result) goes under it, never beside it. A
+            // done callout with a detail leads with it: the result is what's
+            // new, and the request drops beneath it, small and muted.
+            let detail = calloutDetail()
             VStack(alignment: .leading, spacing: 4) {
-                editableText(font: theme.body(), fontSize: 16, bold: false, lineSpacing: theme.bodyLineSpacing, strikethrough: done, muted: done)
-                if let detail = calloutDetail() { detail }
+                if done, let detail {
+                    // Body type for a host's text that leaves its font unset.
+                    detail.font(theme.body()).foregroundStyle(theme.foreground)
+                        .fixedSize(horizontal: false, vertical: true)
+                    editableText(font: theme.body(size: 13), fontSize: 13, bold: false, lineSpacing: theme.bodyLineSpacing, muted: true)
+                } else {
+                    editableText(font: theme.body(), fontSize: 16, bold: false, lineSpacing: theme.bodyLineSpacing, strikethrough: done, muted: done)
+                    if let detail { detail }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
