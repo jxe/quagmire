@@ -322,6 +322,51 @@ struct DocumentMutationTests {
         #expect(doc.children[2].children.count == 1)
     }
 
+    @Test func slideHeadingUpStopsJustUnderPageTitle() {
+        // [H1 Title {a, b}, H1 Next {}, H1 Later {c}]
+        // Option-Up on Next lands it just under the title line; the title's
+        // old body follows it (and so joins its section), and a second
+        // Option-Up does nothing.
+        let doc = Document(
+            id: DocumentID("test"),
+            children: [
+                .heading(level: .h1, text: AttributedString("Title"), children: [
+                    .bullet(text: AttributedString("a")),
+                    .bullet(text: AttributedString("b"))
+                ]),
+                .heading(level: .h1, text: AttributedString("Next")),
+                .heading(level: .h1, text: AttributedString("Later"), children: [
+                    .bullet(text: AttributedString("c"))
+                ])
+            ]
+        )
+        let titleID = doc.children[0].id
+        let aID = doc.children[0].children[0].id
+        let bID = doc.children[0].children[1].id
+        let nextID = doc.children[1].id
+        let laterID = doc.children[2].id
+        #expect(doc.slideSiblings([nextID], by: -1))
+        #expect(doc.children.map(\.id) == [titleID, nextID, laterID])
+        #expect(doc.children[0].children.isEmpty)
+        #expect(doc.children[1].children.map(\.id) == [aID, bID])
+        #expect(!doc.canSlideSiblings([nextID], by: -1))
+    }
+
+    @Test func slideUpNeverPassesAbovePageTitle() {
+        // [H1 Title {a, b}] — a at the top of the title body stays put.
+        let doc = Document(
+            id: DocumentID("test"),
+            children: [
+                .heading(level: .h1, text: AttributedString("Title"), children: [
+                    .bullet(text: AttributedString("a")),
+                    .bullet(text: AttributedString("b"))
+                ])
+            ]
+        )
+        let aID = doc.children[0].children[0].id
+        #expect(!doc.canSlideSiblings([aID], by: -1))
+    }
+
     @Test func slideSiblingsUpAtTopExitsParentAfterPreviousStructuralContainer() {
         // [bullet A {x}, bullet B {y, z}]
         // Slide-up y from top of B exits B and lands after A. Option-arrow

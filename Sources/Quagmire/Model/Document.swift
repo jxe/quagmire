@@ -1017,6 +1017,9 @@ public final class Document: @MainActor Identifiable {
         let orderedIDs: [BlockID]
         let movedBlocks: [Block]
         let target: DropPath
+        /// The slab lands just under the page title's line, ahead of the
+        /// title's body, instead of trading places with the title.
+        var landsUnderPageTitle = false
     }
 
     /// Resolve a contiguous sibling slab move without mutating the document.
@@ -1203,6 +1206,23 @@ public final class Document: @MainActor Identifiable {
             }
         }
 
+        // Nothing moves above the page title (a leading H1). A heading slab
+        // that would trade places with it lands just under the title line
+        // instead, ahead of the title's body; anything else stops.
+        if delta < 0, target.parent == nil, target.position == 0,
+           let title = children.first, title.headingLevel == .h1,
+           !ids.contains(title.id) {
+            guard parentID == nil, first == 1, movedBlocksAreHeadings,
+                  !title.children.isEmpty
+            else { return nil }
+            return SlidePlan(
+                orderedIDs: orderedIDs,
+                movedBlocks: movedBlocks,
+                target: DropPath(parent: nil, position: 1),
+                landsUnderPageTitle: true
+            )
+        }
+
         // Moving down, a heading slab may land in a heading body it can't
         // belong to (stepping out of a list item); containment lifts it out.
         guard canDrop(ids: orderedIDs, to: target, liftingHeadings: delta > 0) else { return nil }
@@ -1226,6 +1246,14 @@ public final class Document: @MainActor Identifiable {
         ) else { return false }
         recordMovedBlocks(plan.movedBlocks)
         for id in plan.orderedIDs { removeSubtree(id) }
+        if plan.landsUnderPageTitle, let title = children.first {
+            // Title line, then the slab, then the title's old body; heading
+            // containment folds that body into the slab's last section.
+            children = [title.withChildren([])] + plan.movedBlocks
+                + title.children + Array(children.dropFirst())
+            enforceHeadingContainment()
+            return true
+        }
         return insertSubtrees(plan.movedBlocks, at: plan.target)
     }
 
