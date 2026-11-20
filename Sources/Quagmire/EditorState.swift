@@ -40,6 +40,10 @@ public final class EditorState {
     /// carry it out (`edit(_:selection:)`, `select(_:)`, `endEditing()`).
     var hostFocusRequest: HostFocusRequest? = nil
 
+    /// The empty line a title-only page opens editing. It is not in the undo
+    /// history and has not been saved; leaving it still empty removes it.
+    var provisionalBlock: BlockID? = nil
+
     /// The live editor's last reported caret or selection; read through
     /// `textSelection`, which ignores it outside edit mode.
     var liveTextRange: LiveTextRange? = nil

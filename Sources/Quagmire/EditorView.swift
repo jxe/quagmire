@@ -665,10 +665,16 @@ public struct EditorView: View {
                 liveTextSelection.onChange = { [state] range, block in
                     state.noteTextSelection(range.location..<(range.location + range.length), in: block)
                 }
+                let hadHostFocusRequest = state.hostFocusRequest != nil
                 performHostFocusRequest()
+                #if os(macOS)
+                if !readOnly, !hadHostFocusRequest { startTypingInTitleOnlyPage() }
+                #endif
             }
             .onChange(of: state.hostFocusRequest) { _, _ in performHostFocusRequest() }
+            .onChange(of: state.editingBlock) { _, _ in settleProvisionalBlock() }
             .onDisappear {
+                settleProvisionalBlock(closing: true)
                 finishLockedPinch()
                 blockActionTask?.cancel()
                 blockActionTask = nil
@@ -1459,6 +1465,45 @@ public struct EditorView: View {
         }
         guard point.y > frame.maxY + 12 else { return }
         insertParagraph(at: document.children.count)
+    }
+
+    /// A page that holds only its title (a page just made with Cmd-K or New
+    /// Page) opens with a caret on an empty line under the title, so the
+    /// keyboard can start typing the body straight away. Any other page opens
+    /// in navigation mode with nothing selected.
+    func startTypingInTitleOnlyPage() {
+        guard state.cursor == nil, state.editingBlock == nil else { return }
+        var editable: [Block] = []
+        document.walk { block, _, _ in
+            if !document.isRegionBlock(block.id) { editable.append(block) }
+        }
+        guard editable.count == 1, let title = editable.first,
+              title.headingLevel == .h1,
+              document.children.contains(where: { $0.id == title.id })
+        else { return }
+        // Inserted outside a transaction: no undo step and no save. The first
+        // commit of typed text saves it; leaving it empty removes it again.
+        let line = Block.paragraph(text: AttributedString())
+        guard document.insertSubtree(line, at: DropPath(parent: title.id, position: 0)) else { return }
+        layoutCache.invalidateStructure()
+        state.provisionalBlock = line.id
+        transferFocus(to: .editor(line.id, initialCursor: nil))
+    }
+
+    /// Once editing leaves the provisional line (or the page closes), drop it
+    /// if it is still empty, without an undo step. When nothing was committed
+    /// meanwhile the document is back to what was loaded, so the host has
+    /// nothing to save.
+    func settleProvisionalBlock(closing: Bool = false) {
+        guard let id = state.provisionalBlock, closing || state.editingBlock != id else { return }
+        state.provisionalBlock = nil
+        if closing { undoController.flushActiveText?() }
+        guard let block = document.find(id), case .paragraph(let text) = block.kind,
+              text.characters.isEmpty, block.children.isEmpty else { return }
+        let undoManager = undoController.undoManager
+        undoManager.disableUndoRegistration()
+        defer { undoManager.enableUndoRegistration() }
+        document.transaction(name: "Remove Empty Line") { _ = document.removeSubtree(id) }
     }
 
     private func lastVisibleBlock() -> Block? {
