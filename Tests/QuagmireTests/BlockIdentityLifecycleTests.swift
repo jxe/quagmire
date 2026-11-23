@@ -365,6 +365,26 @@ struct BlockIdentityLifecycleTests {
         #expect(!pastedIDs.contains(shared))
     }
 
+    @Test func pasteOnOpenToggleGoesInsideAndOnClosedToggleGoesAfter() {
+        let child = Block.paragraph(text: AttributedString("child"))
+        let toggle = Block.toggle(title: AttributedString("toggle"), children: [child])
+        let doc = Document(id: DocumentID("t"), children: [toggle])
+        let state = EditorState()
+        let editor = Self.editor(doc, state)
+
+        // Closed (default): pasted block lands after the toggle, past its hidden child.
+        #expect(editor.spliceParsedBlocksAfter(toggle.id, parsed: [.paragraph(text: AttributedString("a"))], focusLast: false))
+        #expect(doc.children.count == 2)
+        #expect(doc.children[0].children.count == 1)
+
+        // Open: pasted block becomes the toggle's first child.
+        state.expandedToggles.insert(toggle.id)
+        #expect(editor.spliceParsedBlocksAfter(toggle.id, parsed: [.paragraph(text: AttributedString("b"))], focusLast: false))
+        #expect(doc.children.count == 2)
+        #expect(doc.children[0].children.count == 2)
+        #expect(doc.children[0].children[1].id == child.id)
+    }
+
     @Test func withFreshIDsRemintsRecursively() {
         let original = Block.bullet(text: AttributedString("root"), children: [
             .bullet(text: AttributedString("child"), children: [

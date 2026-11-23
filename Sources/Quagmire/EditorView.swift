@@ -2747,8 +2747,8 @@ public struct EditorView: View {
 
     /// Splice host-parsed blocks into the document after `anchorID` (or at the end
     /// of the document if `anchorID == nil` / not found). Placement: if the anchor
-    /// has children, the blocks become its first children; otherwise they become
-    /// its next siblings. Depth is structural, so nothing is shifted — the
+    /// has children and is not a collapsed section, the blocks become its first
+    /// children; otherwise they become its next siblings. Depth is structural, so nothing is shifted — the
     /// subtrees land as the host handed them over. Returns true and either
     /// selects (`focusLast == false`, nav-mode) or enters edit mode on
     /// (`focusLast == true`, edit-mode paste) the last spliced block.
@@ -2765,11 +2765,13 @@ public struct EditorView: View {
         let parsed = incoming.map { $0.withFreshIDs() }
 
         // Tree analog of "after the anchor's section": if the anchor has
-        // children, splice as the FIRST CHILDREN of the anchor; otherwise
-        // splice as the next siblings of the anchor under its parent.
+        // visible children, splice as the FIRST CHILDREN of the anchor;
+        // otherwise (no children, or a collapsed toggle/heading whose
+        // children are hidden) splice as the next siblings of the anchor
+        // under its parent, after its hidden subtree.
         let dropPath: DropPath
         if let anchorID, !document.isRegionBlock(anchorID), let anchor = document.find(anchorID) {
-            if !anchor.children.isEmpty {
+            if !anchor.children.isEmpty, !isCollapsedSection(anchor) {
                 dropPath = DropPath(parent: anchorID, position: 0)
             } else {
                 let parentID = document.parent(of: anchorID)
