@@ -356,7 +356,7 @@ extension EditorView {
             let inRegion = targetIDs.contains(where: document.isRegionBlock)
             let indentTargets = inRegion ? [] : indentActions(for: targetIDs)
             let hostActions = inRegion ? [] : applicableBlockActions(anchorID: blockID, targetIDs: targetIDs)
-            let regionPage = inRegion ? relocatableRegionLink(targetIDs) : nil
+            let regionPages = inRegion ? relocatableRegionLinks(targetIDs) : nil
             VStack(alignment: .leading, spacing: 8) {
                 Button("Close") {
                     actionSheet = nil
@@ -445,7 +445,7 @@ extension EditorView {
                                 toggleSectionExpansion(heading)
                             }
                         }
-                        if let regionPage {
+                        if let regionPages {
                             compactMenuButton(
                                 title: "Move to",
                                 systemImage: "folder",
@@ -453,7 +453,7 @@ extension EditorView {
                                 keyboardShortcutModifiers: [.command, .shift],
                                 keyboardShortcutLabel: "⇧⌘P"
                             ) {
-                                relocateRegionLink(regionPage)
+                                relocateRegionLinks(regionPages)
                             }
                         } else if !inRegion, host.supportsMoveDestinationPicker {
                             compactMenuButton(
@@ -485,7 +485,7 @@ extension EditorView {
                                 systemImage: "folder"
                             ) {
                                 Task { @MainActor in
-                                    if await host.relocateDocument(reference, from: document) {
+                                    if await host.relocateDocuments([reference], to: nil, from: document) {
                                         showActionToast("Page moved")
                                     }
                                 }
@@ -568,19 +568,35 @@ extension EditorView {
         }
     }
 
-    /// The page a lone region link names, when its host can move that page.
-    /// Moving a region row moves its page, as no edit reaches the row.
-    func relocatableRegionLink(_ targetIDs: [BlockID]) -> DocumentReference? {
-        guard targetIDs.count == 1, document.isRegionBlock(targetIDs[0]),
-              case .documentLink(_, let reference)? = document.find(targetIDs[0])?.kind,
-              host.lookupDocument(reference).can(.relocate) else { return nil }
-        return reference
+    /// The pages that region links name, in document order, when every
+    /// target is such a link and its host can move each page. A selected
+    /// region heading stands for all of its links. Moving region rows moves
+    /// their pages, as no edit reaches the rows.
+    func relocatableRegionLinks(_ targetIDs: [BlockID]) -> [DocumentReference]? {
+        var ids: [BlockID] = []
+        for id in targetIDs {
+            guard document.isRegionBlock(id) else { return nil }
+            if let region = document.regions.first(where: { $0.id == id }) {
+                ids.append(contentsOf: region.blocks.map(\.id))
+            } else {
+                ids.append(id)
+            }
+        }
+        var references: [DocumentReference] = []
+        for id in ids {
+            guard case .documentLink(_, let reference)? = document.find(id)?.kind,
+                  host.lookupDocument(reference).can(.relocate) else { return nil }
+            if !references.contains(reference) { references.append(reference) }
+        }
+        return references.isEmpty ? nil : references
     }
 
-    func relocateRegionLink(_ reference: DocumentReference) {
+    /// Move region links' pages, under `destination` or wherever the host's
+    /// picker says.
+    func relocateRegionLinks(_ references: [DocumentReference], to destination: DocumentReference? = nil) {
         Task { @MainActor in
-            if await host.relocateDocument(reference, from: document) {
-                showActionToast("Page moved")
+            if await host.relocateDocuments(references, to: destination, from: document) {
+                showActionToast(references.count == 1 ? "Page moved" : "\(references.count) pages moved")
             }
         }
     }

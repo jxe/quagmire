@@ -512,7 +512,8 @@ extension EditorView {
                 destinationID = parentID
                 fadesOut = true
             case .intoDocument(let rowID, let reference):
-                if isCopy {
+                // Region rows dropped on a link move their pages under it.
+                if currentReorderCopyIntent() || (fromRegion && relocatableRegionLinks(ids) == nil) {
                     Task { await copyBlocks(ids: ids, intoDocument: reference) }
                 } else {
                     Task { await moveBlocks(ids: ids, intoDocument: reference) }
@@ -1214,7 +1215,7 @@ extension EditorView {
                 }
             case .intoDocument(_, let reference):
                 let ids = drag.ids
-                if isCopy {
+                if currentReorderCopyIntent() || (fromRegion && relocatableRegionLinks(ids) == nil) {
                     Task { await copyBlocks(ids: ids, intoDocument: reference) }
                 } else {
                     Task { await moveBlocks(ids: ids, intoDocument: reference) }
@@ -1427,6 +1428,14 @@ extension EditorView {
     /// remove them from this document. Tree shape and relative nesting are
     /// preserved verbatim — the destination receives the subtrees as-is.
     func moveBlocks(ids: [BlockID], intoDocument reference: DocumentReference) async {
+        // Region rows are not the document's to give away: moving them moves
+        // the pages they name under the destination page.
+        if ids.contains(where: document.isRegionBlock) {
+            if let references = relocatableRegionLinks(document.selectionSubtreeRoots(Set(ids))) {
+                relocateRegionLinks(references, to: reference)
+            }
+            return
+        }
         let roots = document.selectionSubtreeRoots(Set(ids))
         let ordered = roots.sorted { (a, b) in
             (document.documentOrder(of: a) ?? .max) < (document.documentOrder(of: b) ?? .max)

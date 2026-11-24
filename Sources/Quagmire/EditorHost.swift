@@ -309,10 +309,17 @@ public protocol EditorHost: AnyObject {
     /// sets no regions never receives this.
     func receiveBlocks(_ blocks: [Block], inRegion region: DocumentRegion, of document: Document) -> Bool
 
-    /// Present the host-owned structural destination flow for one eligible
-    /// linked page. False means cancelled or failed; the editor never mutates
-    /// the referring block as part of this operation.
-    func relocateDocument(_ reference: DocumentReference, from document: Document) async -> Bool
+    /// Move eligible linked pages (each advertising `.relocate`) under a new
+    /// parent page. With a `destination` the pages go under that page, as when
+    /// region rows are dropped on a link or a sidebar row; with nil the host
+    /// presents its own destination picker once for all of them. False means
+    /// cancelled or failed; the editor never mutates the referring blocks as
+    /// part of this operation.
+    func relocateDocuments(
+        _ references: [DocumentReference],
+        to destination: DocumentReference?,
+        from document: Document
+    ) async -> Bool
 
     /// Ask the host to present its picker for a "Move to" action. The editor
     /// passes the moving block ids plus a list of in-document destinations
@@ -469,7 +476,7 @@ public extension DocumentLinksUnsupported {
     func loadDocumentBlocks(_ reference: DocumentReference) async -> [Block]? { nil }
     func inlineAndRetireDocument(_ reference: DocumentReference, parent: Document) async -> Bool { false }
     func appendToDocument(_ reference: DocumentReference, _ blocks: [Block]) async -> Bool { false }
-    func relocateDocument(_ reference: DocumentReference, from document: Document) async -> Bool { false }
+    func relocateDocuments(_ references: [DocumentReference], to destination: DocumentReference?, from document: Document) async -> Bool { false }
 }
 
 /// Moving and copying blocks does not require host-side transformation.

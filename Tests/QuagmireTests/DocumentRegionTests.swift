@@ -117,23 +117,49 @@ struct DocumentRegionTests {
         let (document, body, link, region) = fixture()
         let host = RegionTestHost()
         let editor = EditorView(document: document, state: EditorState(), host: host)
-        #expect(editor.relocatableRegionLink([link.id]) == DocumentReference("child"))
-        #expect(editor.relocatableRegionLink([region.id]) == nil)
-        #expect(editor.relocatableRegionLink([body.id]) == nil)
-        editor.relocateRegionLink(DocumentReference("child"))
+        #expect(editor.relocatableRegionLinks([link.id]) == [DocumentReference("child")])
+        #expect(editor.relocatableRegionLinks([region.id]) == [DocumentReference("child")])
+        #expect(editor.relocatableRegionLinks([body.id]) == nil)
+        #expect(editor.relocatableRegionLinks([body.id, link.id]) == nil)
+        editor.relocateRegionLinks([DocumentReference("child")])
         for _ in 0..<20 where host.relocated.isEmpty { await Task.yield() }
         #expect(host.relocated == [DocumentReference("child")])
+        #expect(host.destinations == [nil])
         #expect(document.find(link.id) != nil)
+    }
+
+    @Test func movingSeveralRegionLinksIntoAPageMovesTheirPages() async {
+        let (document, body, link, _) = fixture()
+        let second = Block.documentLink(label: AttributedString("Second"), reference: DocumentReference("second"))
+        let region = DocumentRegion(id: BlockID(), title: AttributedString("Subpages"), blocks: [link, second])
+        document.setRegions([region])
+        let host = RegionTestHost()
+        let editor = EditorView(document: document, state: EditorState(), host: host)
+        #expect(editor.relocatableRegionLinks([link.id, second.id])
+            == [DocumentReference("child"), DocumentReference("second")])
+        await editor.moveBlocks(ids: [link.id, second.id], intoDocument: DocumentReference("parent"))
+        for _ in 0..<20 where host.relocated.isEmpty { await Task.yield() }
+        #expect(host.relocated == [DocumentReference("child"), DocumentReference("second")])
+        #expect(host.destinations == [DocumentReference("parent")])
+        #expect(host.appended.isEmpty)
+        #expect(document.children.map(\.id) == [body.id])
     }
 }
 
 @MainActor
 private final class RegionTestHost: EditorHostDefaults {
     var relocated: [DocumentReference] = []
+    var destinations: [DocumentReference?] = []
+    var appended: [Block] = []
 
     func lookupDocument(_: DocumentReference) -> DocumentLookup { .present(title: "Child") }
-    func relocateDocument(_ reference: DocumentReference, from _: Document) async -> Bool {
-        relocated.append(reference)
+    func relocateDocuments(_ references: [DocumentReference], to destination: DocumentReference?, from _: Document) async -> Bool {
+        relocated.append(contentsOf: references)
+        destinations.append(destination)
+        return true
+    }
+    func appendToDocument(_: DocumentReference, _ blocks: [Block]) async -> Bool {
+        appended.append(contentsOf: blocks)
         return true
     }
     var accepts = false
