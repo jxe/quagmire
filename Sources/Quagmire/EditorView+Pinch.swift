@@ -589,23 +589,43 @@ extension EditorView {
             return
         }
 
+        // The pinch stays off until this task clears, so every path clears
+        // it, and a recorder that never answers is given up on rather than
+        // leaving the pinch off until the app relaunches.
         pinchDictationCompletionTask = Task { @MainActor in
-            let began = await beginTask.value
-            guard !Task.isCancelled else {
-                if began { pinchDictation.cancel() }
-                return
-            }
-            guard began else {
+            defer { pinchDictationCompletionTask = nil }
+            let began = await EditorPinchDictation.answer(
+                within: EditorPinchDictation.beginDeadline,
+                fallback: false
+            ) { await beginTask.value }
+            guard began, !Task.isCancelled else {
+                configuration.diagnostics.pinch.error(
+                    "pinch dictation did not start in time; inserting without it"
+                )
+                // A start that lands late must not leave the microphone on.
+                Task { @MainActor in
+                    if await beginTask.value { pinchDictation.cancel() }
+                }
                 pinchDictationDraft = nil
                 applyPinchDictationCompletion(.failed, to: blockID)
-                pinchDictationCompletionTask = nil
                 return
             }
-            let completion = await pinchDictation.finish()
-            guard !Task.isCancelled else { return }
+            let answer = await EditorPinchDictation.answer(
+                within: EditorPinchDictation.finishDeadline,
+                fallback: EditorPinchDictation.Completion?.none
+            ) { await pinchDictation.finish() }
+            let completion: EditorPinchDictation.Completion
+            if let answer {
+                completion = answer
+            } else {
+                configuration.diagnostics.pinch.error(
+                    "pinch dictation did not finish in time; cancelling it"
+                )
+                pinchDictation.cancel()
+                completion = .failed
+            }
             applyPinchDictationCompletion(completion, to: blockID)
             pinchDictationDraft = nil
-            pinchDictationCompletionTask = nil
         }
     }
 

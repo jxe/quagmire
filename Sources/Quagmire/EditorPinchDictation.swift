@@ -48,4 +48,40 @@ public final class EditorPinchDictation {
     }
     func finish() async -> Completion { await finishAction() }
     func cancel() { cancelAction() }
+
+    /// How long a released pinch waits for a recorder still starting up.
+    static let beginDeadline: Duration = .seconds(5)
+    /// How long a released pinch waits for the host's final transcript. The
+    /// pinch is off while it waits, so a host that never answers must not
+    /// keep it off for good.
+    static let finishDeadline: Duration = .seconds(20)
+
+    /// `operation`'s answer, or `fallback` if it has not answered within
+    /// `deadline`. The operation keeps running after a timeout; its late
+    /// answer is dropped.
+    static func answer<T: Sendable>(
+        within deadline: Duration,
+        fallback: T,
+        _ operation: @escaping @MainActor () async -> T
+    ) async -> T {
+        let race = FirstAnswer<T>()
+        return await withCheckedContinuation { continuation in
+            race.continuation = continuation
+            Task { @MainActor in race.resume(await operation()) }
+            Task { @MainActor in
+                try? await Task.sleep(for: deadline)
+                race.resume(fallback)
+            }
+        }
+    }
+}
+
+@MainActor
+private final class FirstAnswer<T: Sendable> {
+    var continuation: CheckedContinuation<T, Never>?
+
+    func resume(_ value: T) {
+        continuation?.resume(returning: value)
+        continuation = nil
+    }
 }

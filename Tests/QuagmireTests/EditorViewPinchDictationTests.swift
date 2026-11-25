@@ -5,6 +5,25 @@ import Testing
 @MainActor
 @Suite("EditorView pinch dictation")
 struct EditorViewPinchDictationTests {
+    @Test func aHostThatNeverAnswersGivesTheFallbackAtTheDeadline() async {
+        let answer = await EditorPinchDictation.answer(
+            within: .milliseconds(50),
+            fallback: EditorPinchDictation.Completion?.none
+        ) {
+            await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in }
+            return .noSpeech
+        }
+        #expect(answer == nil)
+    }
+
+    @Test func aPromptAnswerWinsOverTheDeadline() async {
+        let answer = await EditorPinchDictation.answer(
+            within: .seconds(5),
+            fallback: EditorPinchDictation.Completion.failed
+        ) { .transcript("hello") }
+        #expect(answer == .transcript("hello"))
+    }
+
     @Test func transcriptFillsInsertedBlockAndKeepsNavigationMode() {
         let block = Block.bullet(text: AttributedString())
         let document = Document(id: DocumentID("test"), children: [block])

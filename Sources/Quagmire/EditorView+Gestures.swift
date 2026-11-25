@@ -648,6 +648,13 @@ struct IOSPagePinchGestureBridge: UIViewRepresentable {
 
     func updateUIView(_ view: UIView, context: Context) {
         context.coordinator.parent = self
+        // If the recognizer was never attached (no scroll view yet when the
+        // view reached its window) or its scroll view dropped it, attach
+        // again rather than leave the page without a pinch.
+        if view.window != nil, context.coordinator.recognizer?.view == nil {
+            context.coordinator.detach()
+            context.coordinator.attach(from: view)
+        }
         context.coordinator.recognizer?.isEnabled = isEnabled
     }
 
