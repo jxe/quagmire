@@ -175,6 +175,14 @@ extension View {
             .onScrollGeometryChange(for: CGFloat.self) { $0.containerSize.height } action: { _, new in
                 metrics.viewportHeight = new
             }
+            // A page under a unified toolbar scrolls beneath it: the content
+            // inset covers the toolbar and the offset rests at -inset at the
+            // top. Reorder and pinch math must see that inset, or they clamp
+            // the offset to 0 and snap the page by the toolbar height.
+            .onScrollGeometryChange(for: EdgeInsets.self) { $0.contentInsets } action: { _, new in
+                metrics.topInset = new.top
+                metrics.bottomInset = new.bottom
+            }
         #else
         self
         #endif
@@ -229,16 +237,45 @@ final class MacPageScrollController {
     weak var scrollView: NSScrollView?
     weak var owner: AnyObject?
 
+    /// Offsets are raw clip-view origins: a page under a toolbar rests at
+    /// `-insets.top` when scrolled to the top, not 0.
     @discardableResult
     func scroll(toY y: CGFloat) -> Bool {
         guard let scrollView else { return false }
         let clipView = scrollView.contentView
-        let documentHeight = scrollView.documentView?.bounds.height ?? 0
-        let maxOffset = max(0, documentHeight - clipView.bounds.height)
-        let clampedY = min(maxOffset, max(0, y))
+        let (minOffset, maxOffset) = offsetRange(of: scrollView)
+        let clampedY = min(maxOffset, max(minOffset, y))
         clipView.scroll(to: NSPoint(x: clipView.bounds.origin.x, y: clampedY))
         scrollView.reflectScrolledClipView(clipView)
         return true
+    }
+
+    /// Per-frame autoscroll step against the live clip view. The published
+    /// `PageScrollMetrics` lag a runloop turn behind, which would drop steps
+    /// when called every display refresh.
+    @discardableResult
+    func scroll(byY delta: CGFloat) -> Bool {
+        guard let scrollView else { return false }
+        let current = scrollView.contentView.bounds.origin.y
+        let (minOffset, maxOffset) = offsetRange(of: scrollView)
+        let next = min(maxOffset, max(minOffset, current + delta))
+        guard next != current else { return true }
+        return scroll(toY: next)
+    }
+
+    /// The clip view's offset right now. `onScrollGeometryChange` lags it,
+    /// and while a reorder reflows rows it can report offsets the page never
+    /// had.
+    var liveOffsetY: CGFloat? {
+        scrollView?.contentView.bounds.origin.y
+    }
+
+    private func offsetRange(of scrollView: NSScrollView) -> (CGFloat, CGFloat) {
+        let insets = scrollView.contentView.contentInsets
+        let documentHeight = scrollView.documentView?.bounds.height ?? 0
+        let minOffset = -insets.top
+        let maxOffset = max(minOffset, documentHeight - scrollView.contentView.bounds.height + insets.bottom)
+        return (minOffset, maxOffset)
     }
 }
 
@@ -306,7 +343,27 @@ struct MacScrollControllerReader: NSViewRepresentable {
                 }
                 current = view.superview
             }
-            return nil
+            // Mounted as the scroll view's background, this view sits beside
+            // the NSScrollView rather than inside it. Take the smallest
+            // scroll view in the window that covers this view's middle.
+            guard let root = window?.contentView else { return nil }
+            let rect = convert(bounds, to: nil)
+            let middle = CGPoint(x: rect.midX, y: rect.midY)
+            var best: NSScrollView?
+            var bestArea = CGFloat.infinity
+            var stack: [NSView] = [root]
+            while let view = stack.popLast() {
+                if let scrollView = view as? NSScrollView, !scrollView.isHidden {
+                    let frame = scrollView.convert(scrollView.bounds, to: nil)
+                    let area = frame.width * frame.height
+                    if frame.contains(middle), area < bestArea {
+                        best = scrollView
+                        bestArea = area
+                    }
+                }
+                stack.append(contentsOf: view.subviews)
+            }
+            return best
         }
     }
 }
@@ -338,8 +395,12 @@ final class PageScrollMetrics {
     /// measured against the *content area* (`viewportHeight - topInset -
     /// bottomInset`), not the raw viewport: `pageLocation` already shifts y=0
     /// to "top of content area", and for the bottom band to be symmetric the
-    /// edge must sit at the bottom of the content area too. Both default to 0
-    /// on macOS — viewport == content area there.
+    /// edge must sit at the bottom of the content area too.
+    ///
+    /// On macOS they are the scroll view's content insets (a unified toolbar
+    /// the page scrolls under). There the raw offset rests at `-topInset` at
+    /// the top, while locations, row frames and `viewportHeight` already
+    /// leave the inset out; only offset conversions use it.
     var topInset: CGFloat = 0
     var bottomInset: CGFloat = 0
 }

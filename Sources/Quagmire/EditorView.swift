@@ -1858,8 +1858,10 @@ public struct EditorView: View {
         guard case .navigating(let sel, _) = state.sessionState, let cursor = sel.cursor else { return }
         let viewportH = scrollMetrics.viewportHeight
         guard viewportH > 0 else { return }
-        let visibleTop = scrollMetrics.topInset
-        let visibleBottom = viewportH - scrollMetrics.bottomInset
+        // Row frames and the container height already leave out a
+        // toolbar's content inset on the Mac.
+        let visibleTop: CGFloat = 0
+        let visibleBottom = viewportH
         guard let frame = layoutCache.frame(of: cursor) else {
             // Unmeasured (off-screen, not yet materialized) — direction unknown,
             // so center the target.

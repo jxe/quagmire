@@ -196,6 +196,12 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     @State private var pinchAutoScrollVelocity: CGFloat = 0
     @State private var reorderAutoScroll = FrameTicker()
     @State private var reorderAutoScrollVelocity: CGFloat = 0
+    /// The lift (and whether it removed its source) whose source removal the
+    /// scroll offset already absorbed. Later order changes during the same
+    /// drag (rows materializing, the hole moving) must not re-anchor the page
+    /// to where the drag began: autoscroll has moved it since, and snapping
+    /// it back by the difference jumps the page under a still pointer.
+    @State private var anchoredReorderProjection: AnchoredReorderProjection<ID>?
     @State private var pressHintID: ID?
     /// When the last reorder gesture ended. The finger that lifted a row
     /// also completes a tap when it comes up, so taps in this window belong
@@ -518,6 +524,9 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         .task(id: settle?.token) {
             await landSettle()
         }
+        .onChange(of: activeLift == nil) { _, ended in
+            if ended { anchoredReorderProjection = nil }
+        }
         .onChange(of: rowOrder) { oldValue, newValue in
             applyRowOrder(newValue)
             if oldValue.ids != newValue.ids {
@@ -692,7 +701,15 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     /// same amount the source anchor moved in the projected stack. This keeps
     /// the lift near the finger and immediately materializes destinations.
     private func finishReorderProjectionChange() {
-        guard let lift = activeLift else { return }
+        guard let lift = activeLift else {
+            anchoredReorderProjection = nil
+            return
+        }
+        let projection = AnchoredReorderProjection(id: lift.id, removesSource: lift.projectedSourceSlot != nil)
+        guard anchoredReorderProjection != projection else {
+            resolveSeedlessDropTarget(for: lift)
+            return
+        }
         let projectedInternalMinY: CGFloat?
         if let projectedFrame = layoutCache.frame(of: lift.id) {
             projectedInternalMinY = projectedFrame.minY - layoutCache.contentOriginY
@@ -705,7 +722,12 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
             projectedInternalMinY = nil
         }
         guard let projectedInternalMinY else { return }
+        anchoredReorderProjection = projection
+        #if os(macOS)
+        let oldOffset = MacPageScrollController.shared.liveOffsetY ?? scrollMetrics.contentOffsetY
+        #else
         let oldOffset = scrollMetrics.contentOffsetY
+        #endif
         let nextEffectiveOffset = reorderAnchorPreservingOffset(
             sourceEffectiveOffset: lift.sourceEffectiveOffsetY,
             sourceInternalMinY: lift.sourceInternalMinY,
@@ -736,9 +758,13 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
             #endif
         }
 
-        // The gesture's first tick deliberately did not resolve a destination
-        // against the expanded-row snapshot. Now both the outline order and
-        // its scroll origin are current, so resolve the hole at the live finger.
+        resolveSeedlessDropTarget(for: lift)
+    }
+
+    /// The gesture's first tick deliberately did not resolve a destination
+    /// against the expanded-row snapshot. Now both the outline order and its
+    /// scroll origin are current, so resolve the hole at the live finger.
+    private func resolveSeedlessDropTarget(for lift: RowSurfaceLift<ID>) {
         if !lift.hasSeededDropTarget, let location = activeReorderLocation {
             actions.onReorderAutoscroll(location)
         }
@@ -808,7 +834,13 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
     }
 
     private func edgeScrollVelocity(for location: CGPoint, threshold: CGFloat, maxVelocity: CGFloat) -> CGFloat {
+        #if os(macOS)
+        // On the Mac both the location and the container height already
+        // leave out a toolbar's content inset.
+        let effectiveBottom = scrollMetrics.viewportHeight
+        #else
         let effectiveBottom = scrollMetrics.viewportHeight - scrollMetrics.topInset - scrollMetrics.bottomInset
+        #endif
         guard effectiveBottom > threshold * 2 else { return 0 }
 
         let topDistance = location.y
@@ -830,18 +862,23 @@ struct RowSurface<ID: Hashable, RowContent: View, LiftContent: View>: View {
         #if os(iOS)
         PageScrollController.shared.scroll(byY: deltaY)
         #else
-        let maxOffset = max(0, scrollMetrics.contentHeight - scrollMetrics.viewportHeight)
-        let nextOffset = min(maxOffset, max(0, scrollMetrics.contentOffsetY + deltaY))
-        guard nextOffset != scrollMetrics.contentOffsetY else { return }
         #if os(macOS)
-        if !MacPageScrollController.shared.scroll(toY: nextOffset) {
-            scrollPosition.scrollTo(point: CGPoint(x: 0, y: nextOffset))
-        }
-        #else
+        if MacPageScrollController.shared.scroll(byY: deltaY) { return }
+        #endif
+        let minOffset = -scrollMetrics.topInset
+        // `viewportHeight` leaves the insets out, so the last offset is
+        // content - viewport - topInset.
+        let maxOffset = max(minOffset, scrollMetrics.contentHeight - scrollMetrics.viewportHeight - scrollMetrics.topInset)
+        let nextOffset = min(maxOffset, max(minOffset, scrollMetrics.contentOffsetY + deltaY))
+        guard nextOffset != scrollMetrics.contentOffsetY else { return }
         scrollPosition.scrollTo(point: CGPoint(x: 0, y: nextOffset))
         #endif
-        #endif
     }
+}
+
+private struct AnchoredReorderProjection<ID: Hashable>: Equatable {
+    let id: ID
+    let removesSource: Bool
 }
 
 private struct ReorderSettleLanding {
